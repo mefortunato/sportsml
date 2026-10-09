@@ -6,34 +6,24 @@ ML for sports
 
 Requires [uv](https://docs.astral.sh/uv/).
 
-### CPU (default)
-
 ```sh
-uv lock && uv sync
+uv sync
 ```
 
-Installs PyTorch with CPU-only support. This is the default behavior — no extra flags needed.
-
-### CUDA 12.8
-
-```sh
-uv lock && uv sync --extra cu128 --no-group cpu
-```
-
-Installs PyTorch with CUDA 12.8 support. The `--no-group cpu` flag is required to disable the default CPU torch group, which conflicts with the `cu128` extra.
+This creates the virtual environment and installs all dependencies (including PyTorch with CUDA support on Linux/Windows).
 
 ## Running
 
-`uv run` requires the same flags to select the correct PyTorch variant.
-
-### CPU
+Commands can be run with `uv run`:
 
 ```sh
-uv run ...
+uv run sportsml --help
 ```
 
-### CUDA 12.8
+Alternatively, you can activate the virtual environment directly:
 
 ```sh
-uv run --extra cu128 --no-group cpu ...
+source .venv/bin/activate
+sportsml ...
+python ...
 ```

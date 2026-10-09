@@ -28,6 +28,7 @@ dependencies = [
     "pydantic",
     "scikit-learn",
     "seaborn",
+    "torch",
     "torch_geometric",
     "torchmetrics",
     "umap-learn",
@@ -44,42 +45,6 @@ nfl_mongo_upload = "sportsml.nfl.data.download:mongo_upload"
 odds_upload = "sportsml.odds.utils:mongo_upload"
 train = "sportsml.cli.train.train:train"
 predict = "sportsml.cli.predict.predict:predict"
-
-[project.optional-dependencies]
-cu128 = [
-  "torch",
-]
-
-[dependency-groups]
-cpu = [
-  "torch",
-]
-
-[tool.uv]
-conflicts = [
-  [
-    { group = "cpu" },
-    { extra = "cu128" },
-  ],
-]
-
-default-groups = ["cpu"]
-
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cpu", group = "cpu" },
-  { index = "pytorch-cu128", extra = "cu128" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
 
 [tool.ruff]
 line-length = 88

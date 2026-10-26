@@ -167,6 +167,7 @@
 						Take the model's side against the spread only when it disagrees with Vegas by more than a
 						few points. Above {pct(BREAKEVEN, 1)} would make money at −110.
 					</p>
+					<div class="scroll">
 					<table>
 						<thead>
 							<tr>
@@ -193,6 +194,7 @@
 							{/each}
 						</tbody>
 					</table>
+					</div>
 					{#if perf.edge_correlation}
 						{@const c = perf.edge_correlation}
 						<p class="muted small">
@@ -206,6 +208,7 @@
 
 			<div class="card">
 				<h2>Early season vs. the rest</h2>
+				<div class="scroll">
 				<table>
 					<thead>
 						<tr>
@@ -228,6 +231,7 @@
 						{/each}
 					</tbody>
 				</table>
+				</div>
 			</div>
 		</div>
 	</div>

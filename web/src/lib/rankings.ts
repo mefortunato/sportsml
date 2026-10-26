@@ -55,11 +55,11 @@ export function togglePin(pins: Pins, team: string): Pins {
 	return { ...rest, [team]: MAX_PINS };
 }
 
-/** Symmetric y extent around zero, rounded up to a tick step. */
+/** Symmetric y extent around zero: whole-number ticks, at most 5 per side. */
 export function yExtent(season: RankingSeason): { max: number; step: number } {
 	let largest = 0;
 	for (const t of season.teams)
 		for (const v of t.ratings) if (v !== null) largest = Math.max(largest, Math.abs(v));
-	const step = largest > 12 ? 5 : largest > 5 ? 2.5 : 1;
+	const step = [1, 2, 4, 5, 10, 20].find((s) => Math.ceil(largest / s) <= 5) ?? 50;
 	return { max: Math.max(step, Math.ceil(largest / step) * step), step };
 }

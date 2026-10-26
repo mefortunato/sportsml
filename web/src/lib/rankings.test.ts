@@ -49,6 +49,6 @@ describe('power rankings', () => {
 	});
 
 	it('uses a symmetric axis on round ticks', () => {
-		expect(yExtent(season)).toEqual({ max: 7.5, step: 2.5 });
+		expect(yExtent(season)).toEqual({ max: 8, step: 2 });
 	});
 });

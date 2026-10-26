@@ -21,11 +21,14 @@
 		ontoggle: (team: string) => void;
 	} = $props();
 
-	const W = 760;
-	const H = 400;
-	const M = { top: 14, right: 92, bottom: 34, left: 44 };
-	const plotW = W - M.left - M.right;
-	const plotH = H - M.top - M.bottom;
+	// drawn at the container's own width, so text stays 12px on phones too
+	let width = $state(760);
+	const W = $derived(Math.max(300, Math.round(width)));
+	const narrow = $derived(W < 560);
+	const H = $derived(narrow ? 320 : 400);
+	const M = $derived({ top: 14, right: narrow ? 74 : 92, bottom: 34, left: 40 });
+	const plotW = $derived(W - M.left - M.right);
+	const plotH = $derived(H - M.top - M.bottom);
 
 	const extent = $derived(yExtent(season));
 	const first = $derived(season.dates[0]);
@@ -40,7 +43,7 @@
 		return ticks;
 	});
 	const xTicks = $derived.by(() => {
-		const every = season.dates.length > 12 ? 2 : 1;
+		const every = Math.ceil(season.dates.length / (narrow ? 8 : 14));
 		return season.dates.filter((_, i) => i % every === 0 || i === season.dates.length - 1);
 	});
 
@@ -136,6 +139,7 @@
 
 <div
 	class="chart"
+	bind:clientWidth={width}
 	role="slider"
 	tabindex="0"
 	aria-label="{dateLabel} shown in the table below; left and right arrows step through {dateLabel.toLowerCase()}s"
@@ -159,7 +163,7 @@
 		{#each yTicks as tick (tick)}
 			<line class="grid" class:zero={tick === 0} x1={M.left} x2={M.left + plotW} y1={y(tick)} y2={y(tick)} />
 			<text class="tick" x={M.left - 8} y={y(tick)} text-anchor="end" dominant-baseline="middle"
-				>{tick === 0 ? '0' : signed(tick, extent.step < 1 ? 1 : 0)}</text
+				>{tick === 0 ? '0' : signed(tick, 0)}</text
 			>
 		{/each}
 		{#each xTicks as date (date)}

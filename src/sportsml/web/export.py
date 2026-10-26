@@ -14,7 +14,7 @@ Writes, under ``<output_dir>/data/``:
 * ``<sport>/performance.json`` and ``<sport>/rankings.json``.
 
 Team objects are written once per file (``"teams"``) and referenced as
-``{"$team": key}``; floats are rounded to 4 decimals.
+``{"$team": key}``; floats are rounded to 6 decimals.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _compact(value, teams: dict):
     if isinstance(value, list):
         return [_compact(v, teams) for v in value]
     if isinstance(value, float):
-        return round(value, 4)
+        return round(value, 6)
     return value
 
 

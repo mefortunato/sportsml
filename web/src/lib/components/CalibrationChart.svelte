@@ -6,10 +6,12 @@
 	// diagonal is perfect calibration.
 	let { series }: { series: { label: string; slot: number; bins: CalibrationBin[] }[] } = $props();
 
-	const W = 420;
-	const H = 380;
+	// drawn at the container's own width (square plot), so text stays 12px
+	let width = $state(420);
 	const M = { top: 12, right: 16, bottom: 40, left: 46 };
-	const size = Math.min(W - M.left - M.right, H - M.top - M.bottom);
+	const W = $derived(Math.max(260, Math.round(width)));
+	const size = $derived(W - M.left - M.right);
+	const H = $derived(size + M.top + M.bottom);
 	const x = (p: number) => M.left + p * size;
 	const y = (p: number) => M.top + (1 - p) * size;
 	const ticks = [0, 0.25, 0.5, 0.75, 1];
@@ -17,7 +19,7 @@
 	let hover = $state<{ label: string; slot: number; bin: CalibrationBin } | null>(null);
 </script>
 
-<div class="chart">
+<div class="chart" bind:clientWidth={width}>
 	<svg viewBox="0 0 {W} {H}" role="img" aria-label="Calibration of predicted win probabilities; the table below lists the same values">
 		{#each ticks as t (t)}
 			<line class="grid" x1={x(0)} x2={x(1)} y1={y(t)} y2={y(t)} />
@@ -93,6 +95,7 @@
 	.dot {
 		stroke: var(--surface);
 		stroke-width: 2;
+		pointer-events: none;
 	}
 	.tooltip {
 		position: absolute;

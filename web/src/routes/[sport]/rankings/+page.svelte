@@ -96,10 +96,12 @@
 						{@const slot = pins[row.team.team]}
 						<tr class:pinned={slot !== undefined}>
 							<td class="num tabular">{row.rank}</td>
-							<td>
+							<td class="team-cell">
 								<button class="team" onclick={() => toggle(row.team.team)} aria-pressed={slot !== undefined}>
 									<span class="swatch" style:background={slot ? `var(--series-${slot})` : 'transparent'}></span>
-									<TeamBadge team={row.team} label="name" size={22} />
+									<TeamBadge team={row.team} label="none" size={22} />
+									<span class="name full">{row.team.name}</span>
+									<span class="name short">{row.team.nickname ?? row.team.team}</span>
 								</button>
 							</td>
 							<td class="num tabular">{signed(row.rating)}</td>
@@ -179,7 +181,31 @@
 		width: 1%;
 		white-space: nowrap;
 	}
+	/* the name column takes the slack and truncates instead of widening */
+	.team-cell {
+		width: 100%;
+		max-width: 0;
+	}
+	.name {
+		font-weight: 600;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.short {
+		display: none;
+	}
+	@media (max-width: 640px) {
+		.full {
+			display: none;
+		}
+		.short {
+			display: inline;
+		}
+	}
 	.team {
+		overflow: hidden;
+		width: 100%;
 		display: flex;
 		align-items: center;
 		gap: 8px;

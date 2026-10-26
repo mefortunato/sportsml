@@ -205,13 +205,13 @@ def _revive(path):
 
 
 def _as_exported(value):
-    """An API response as the export writes it: no logos, 4-decimal floats."""
+    """An API response as the export writes it: no logos, 6-decimal floats."""
     if isinstance(value, dict):
         return {k: None if k == "logo" else _as_exported(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_as_exported(v) for v in value]
     if isinstance(value, float):
-        return round(value, 4)
+        return round(value, 6)
     return value
 
 

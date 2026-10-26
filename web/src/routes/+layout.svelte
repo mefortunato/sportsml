@@ -128,8 +128,11 @@
 			padding-block: 8px;
 		}
 		.pages {
-			margin-left: -10px;
+			margin-left: -8px;
 			flex-basis: 100%;
+		}
+		nav a {
+			padding: 6px 8px;
 		}
 	}
 	main {

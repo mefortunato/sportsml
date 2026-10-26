@@ -154,5 +154,6 @@ backtests
 web/node_modules
 web/build
 web/build-artifact
+web/static/data
 web/.svelte-kit
 webdata

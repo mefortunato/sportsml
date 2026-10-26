@@ -1,4 +1,4 @@
-// Shapes returned by the FastAPI backend (src/sportsml/web/api.py).
+// Shapes of the data `sportsml web export` writes (src/sportsml/web/snapshot.py).
 
 export type Side = 'home' | 'away';
 

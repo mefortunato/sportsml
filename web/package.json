@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
-    "build:artifact": "VITE_SPORTSML_DATA=static vite build && node scripts/artifact.js",
+    "build": "vite build && node -e \"require('fs').copyFileSync('build/404.html', 'build/index.html')\"",
+    "build:artifact": "VITE_SPORTSML_TARGET=artifact vite build && node scripts/artifact.js",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run"

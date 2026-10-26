@@ -1,9 +1,12 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
-// `npm run build:artifact`: a static build with no server (data from
-// `sportsml web export`), hash routing, and JS/CSS inlined into one page.
-const artifact = process.env.VITE_SPORTSML_DATA === 'static';
+// A static site: no server, data from `sportsml web export` (static/data).
+//   npm run build           GitHub Pages: path routing under BASE_PATH, with
+//                           404.html booting the app for deep links
+//   npm run build:artifact  one page (hash routing, JS/CSS inlined), e.g.
+//                           for a claude.ai artifact
+const artifact = process.env.VITE_SPORTSML_TARGET === 'artifact';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -19,8 +22,8 @@ const config = {
 				output: { bundleStrategy: 'inline' }
 			}
 		: {
-				// Single-page app: FastAPI serves index.html for every non-API path.
-				adapter: adapter({ fallback: 'index.html' })
+				adapter: adapter({ fallback: '404.html' }),
+				paths: { base: process.env.BASE_PATH ?? '' }
 			}
 };
 

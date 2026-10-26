@@ -108,56 +108,61 @@ Any model can be backtested from Python with
 
 ## Web app
 
-A FastAPI backend and a SvelteKit frontend, packaged in one Docker image:
+A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
 
 - **Upcoming games**: each game's Vegas line and the model's predicted
   margin on one chart, the win probability, and the model's pick against
   the spread.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
+- **Power rankings**: each team's average predicted margin against every
+  other team, week by week, with conference, division and final-four
+  filters.
+- **Model performance**: the walk-forward backtest against Vegas
+  (accuracy, Brier score, calibration, betting the model's edge).
 - **Beat the model**: a past game with its line and both teams' pre-game
   stats. Pick the side that covers, then see the final score and what the
-  model picked. Your record and the model's on the same games are kept in
-  your browser. The model's picks are its walk-forward backtest predictions,
-  made without seeing those games.
+  model picked. The model's picks are its walk-forward backtest predictions,
+  made without seeing those games. Your record is kept in your browser.
+
+Every page reads JSON files built next to the site; nothing is computed on
+request. Two GitHub Actions workflows keep them current:
+
+- **Train** (`.github/workflows/train.yml`, monthly in season and on
+  demand) runs `sportsml web build`: download, train the transformer,
+  backtest it and record weekly power rankings (~30 minutes). It publishes
+  the result as the `webdata` release asset.
+- **Site** (`.github/workflows/site.yml`, daily and after Monday night's
+  game) downloads that asset, runs `sportsml web export --refresh true`
+  (re-download results and refresh team state, no retraining), builds the
+  frontend and deploys it. A failed run leaves the last deployed site up.
+
+To set it up: in the repository settings, set **Pages → Source** to
+**GitHub Actions**, then run **Train** once from the Actions tab. It starts
+**Site** when it finishes.
+
+Locally:
 
 ```sh
-make build && make run          # docker: http://localhost:8000
+make webdata                    # train + backtest (slow) -> webdata/
+make site                       # fresh results -> web/static/data, site -> web/build
+make web-dev                    # hot reload on :5173 with that data
+make artifact                   # one-page build (hash routing) -> web/build-artifact/
 ```
 
-`docker/Dockerfile` builds the frontend, then runs `sportsml web build` to
-download data, train the transformer and backtest it (about 15-20 minutes,
-needs network access). At runtime the server re-downloads results every 6
-hours and refreshes team state; set `SPORTSML_REFRESH=0` to turn this off or
-change `SPORTSML_REFRESH_HOURS`.
+Limits of a static site:
 
-Without Docker:
+- Only precomputed views exist: upcoming weeks, their game views, past
+  seasons' rankings, the challenge pool.
+- The challenge answers ship with the site, so it runs on the honor
+  system.
+- The data is as fresh as the last Site run; line moves during the day are
+  not reflected.
 
-```sh
-make webdata                    # sportsml web build --output_dir webdata
-make web-build                  # frontend -> web/build
-make serve                      # http://localhost:8000
-make web-dev                    # frontend hot reload on :5173 (with `make serve` running)
-```
-
-The API lives under `/api` (`/api/sports`, `/api/{sport}/upcoming`,
-`/api/{sport}/games/{id}`, `/api/{sport}/challenge/next`). Interactive docs
-are at `/docs`. Everything is keyed by sport. To add a sport, give it a
-`SportView` (`src/sportsml/web/sports/<sport>.py`) with its stats, team
-metadata and score columns, add it to `BUILTIN_VIEWS`, and build it with
-`sportsml web build --sports '[nfl, <sport>]'`. The frontend needs no
-changes.
-
-### Static build
-
-`make artifact` builds the same frontend with no server behind it, for static
-hosting such as a claude.ai artifact. `sportsml web export` writes every API
-answer as JSON next to the page, and the challenge picks and scores games in
-the browser. The result is `web/build-artifact/`: `sportsml.html` (hash
-routing, JS and CSS inlined) plus `data/`. It is a fixed snapshot, so rebuild
-to update it. Team logos are left out because such hosts usually block
-external images, so teams show as colored chips. The challenge answers are
-in the published data.
+To add a sport, give it a `SportView` (`src/sportsml/web/sports/<sport>.py`)
+with its stats, team metadata and score columns, add it to `BUILTIN_VIEWS`,
+and build it with `sportsml web build --sports '[nfl, <sport>]'`. The
+frontend needs no changes.
 
 ## Sports and data sources
 
@@ -217,9 +222,9 @@ sportsml/
   nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
   inference/      predict command, matchup helpers
   backtest.py     walk-forward backtests, family registry, benchmark
-  web/            FastAPI app: per-sport views, snapshots, API, runtime refresh
+  web/            per-sport views, snapshots, static-site export
   cli.py          `sportsml <sport> ...` and `sportsml web ...`, generated from the registry
-web/              SvelteKit frontend (static build served by FastAPI at /)
+web/              SvelteKit frontend (static site; data from `sportsml web export`)
 ```
 
 A games table has one row per team per game, so every game appears twice:

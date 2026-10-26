@@ -3,7 +3,7 @@
 A :class:`SportView` is the web-side counterpart of
 :class:`sportsml.core.sport.Sport`: which stats to show, what a "date" is
 called, and where team names, colors and logos come from. Adding a sport to
-the app means registering one view; the API and frontend are generic.
+the app means registering one view; the export and frontend are generic.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class Stat:
     """A per-game stat shown in team comparisons.
 
     Attributes:
-        key: Identifier in API responses.
+        key: Identifier in the exported data.
         label: Display label.
         value: Per-row value from the team's perspective (games table rows).
         decimals: Digits shown.

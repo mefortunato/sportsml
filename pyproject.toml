@@ -10,7 +10,6 @@ requires-python = ">=3.10"
 license = "MIT"
 version = "0.4.0.dev1"
 dependencies = [
-    "fastapi",
     "httpx",
     "jsonargparse[signatures]",
     "kaggle",
@@ -29,7 +28,6 @@ dependencies = [
     "torch_geometric",
     "torchmetrics",
     "tqdm",
-    "uvicorn[standard]",
 ]
 
 [project.scripts]

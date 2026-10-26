@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickChallenge, revive, scoreAnswer, type ChallengeEntry } from './static-api';
+import { pickChallenge, revive, scoreAnswer, type ChallengeEntry } from './api';
 
 const entry = (id: string, covered: 'home' | 'away' | null = 'home') =>
 	({

@@ -1,4 +1,4 @@
-"""In-memory data behind the web API: one :class:`Snapshot` per sport.
+"""The data behind the web app's pages: one :class:`Snapshot` per sport.
 
 A snapshot directory (written by :mod:`sportsml.web.build`) holds:
 
@@ -60,7 +60,7 @@ def cover_side(margin: float, spread: float) -> str | None:
 
 
 class Snapshot:
-    """Everything the API serves for one sport, precomputed where possible.
+    """Everything the site shows for one sport (``web export`` writes it out).
 
     Upcoming-game predictions are computed once on construction; team
     summaries are computed per request from games strictly before the game
@@ -208,7 +208,7 @@ class Snapshot:
         )
 
     def _with_current_rankings(self, predictor: Predictor) -> pd.DataFrame:
-        """Baked rankings plus the current season's, from the served model.
+        """Baked rankings plus the current season's, from the saved model.
 
         One rating per team before each played date of the season and before
         its next date, from the games played until then (like the backtest).

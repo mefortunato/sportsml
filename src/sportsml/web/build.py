@@ -1,4 +1,4 @@
-"""``sportsml web build`` / ``sportsml web serve``."""
+"""``sportsml web build``: data, model and backtest for the web app."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def build(
     backtest_seasons: int = 5,
     max_epochs: int = 100,
 ) -> None:
-    """Prepare everything the web app serves, one directory per sport.
+    """Prepare everything the web app shows, one directory per sport.
 
     Downloads and processes the sport's games, trains the transformer, runs
     a walk-forward backtest of it over the last ``backtest_seasons``
@@ -102,21 +102,4 @@ def build(
         print(f"built {sport} -> {path}")
 
 
-def serve(
-    data_dir: str = "webdata",
-    static_dir: str | None = "web/build",
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    refresh: bool = True,
-    refresh_hours: float = 6.0,
-) -> None:
-    """Serve the API and the frontend build with uvicorn."""
-    import uvicorn
-
-    from .app import create_app
-
-    app = create_app(data_dir, static_dir, refresh=refresh, refresh_hours=refresh_hours)
-    uvicorn.run(app, host=host, port=port)
-
-
-__all__ = ["build", "serve"]
+__all__ = ["build"]

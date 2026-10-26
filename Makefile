@@ -2,9 +2,9 @@ VERSION ?= $(shell uv version --short)
 REGISTRY ?= ghcr.io/mefortunato/sportsml
 IMAGE ?= $(REGISTRY):$(VERSION)
 
-.PHONY: build push pull run cli webdata web-build serve web-dev artifact test lint format
+.PHONY: build push pull cli webdata site-data site web-dev artifact test lint format
 
-# --- Docker: the full web app (frontend + API + baked data) -----------------
+# --- Docker: the CLI / training image ------------------------------------------
 build:
 	docker build -t $(IMAGE) -f docker/Dockerfile .
 
@@ -14,31 +14,31 @@ push:
 pull:
 	docker pull $(IMAGE)
 
-# serve the app on http://localhost:8000; add DOCKER_ARGS="--gpus all" for GPU
-run:
-	docker run --rm -p 8000:8000 $(DOCKER_ARGS) $(IMAGE)
-
-# any CLI command inside the image, e.g. make cli ARGS="nfl predict"
+# any CLI command inside the image, e.g. make cli ARGS="nfl predict";
+# add DOCKER_ARGS="--gpus all" for GPU
 cli:
-	docker run -it --rm $(DOCKER_ARGS) -v $(CURDIR):/project -w /project $(IMAGE) \
-		sportsml $(ARGS)
+	docker run -it --rm $(DOCKER_ARGS) -v $(CURDIR):/project $(IMAGE) $(ARGS)
 
-# --- Local web app development -------------------------------------------------
+# --- Static site ----------------------------------------------------------------
+# train, backtest and rank (slow; the Train workflow does this on GitHub)
 webdata:
 	uv run sportsml web build --output_dir webdata
 
-web-build:
+# re-download results and export every page's data to web/static/data (fast;
+# the daily Site workflow does this)
+site-data:
+	uv run sportsml web export --data_dir webdata --output_dir web/static --refresh true
+
+# the site in web/build (set BASE_PATH=/sportsml to match GitHub Pages)
+site: site-data
 	cd web && npm ci && npm run build
 
-serve:
-	uv run sportsml web serve --data_dir webdata --static_dir web/build
-
-# frontend with hot reload on :5173, proxying /api to `make serve` on :8000
+# frontend with hot reload on :5173, reading web/static/data
 web-dev:
 	cd web && npm run dev
 
-# static build with no server (e.g. a claude.ai artifact): web/build-artifact/
-# holds sportsml.html plus data/ exported from webdata
+# one-page build (hash routing, inlined), e.g. for a claude.ai artifact:
+# web/build-artifact/ holds sportsml.html plus data/
 artifact:
 	cd web && npm ci && npm run build:artifact
 	uv run sportsml web export --data_dir webdata --output_dir web/build-artifact

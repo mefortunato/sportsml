@@ -1,16 +1,14 @@
 import json
+import random
 
 import numpy as np
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
 
 from sportsml.core.predictor import load_predictor
-from sportsml.web.api import SnapshotStore
-from sportsml.web.app import create_app, load_store
+from sportsml.web import export as export_module
 from sportsml.web.build import build
-from sportsml.web.export import export
-from sportsml.web.refresh import refresh_sport
+from sportsml.web.export import export, load_snapshots
 from sportsml.web.snapshot import Snapshot, cover_side
 
 from .conftest import make_games
@@ -30,35 +28,27 @@ def webdata(games, tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def client(webdata, tmp_path_factory):
-    static = tmp_path_factory.mktemp("static")
-    (static / "index.html").write_text("<html>app shell</html>")
-    (static / "app.js").write_text("console.log(1)")
-    app = create_app(webdata, static, refresh=False)
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture(scope="module")
-def snapshot(client):
-    return client.app.state.store.get("toy")
+def snapshot(webdata):
+    return Snapshot.load(webdata / "toy")
 
 
 def test_build_writes_snapshot_files(webdata):
     names = {p.name for p in (webdata / "toy").iterdir()}
     assert {"games.csv", "teams.json", "pool.csv", "meta.json", "model"} <= names
+    assert "rankings.csv" in names
     meta = json.loads((webdata / "toy" / "meta.json").read_text())
     assert meta["sport"] == "toy" and meta["backtest"]["seasons"] == [2023]
 
 
-def test_sports_list(client):
-    (info,) = client.get("/api/sports").json()
+def test_sport_info(snapshot):
+    info = snapshot.info()
     assert info["sport"] == "toy" and info["has_spread"]
     assert info["challenge_games"] > 0 and info["date_label"] == "Week"
+    assert list(load_snapshots(snapshot.model_dir.rsplit("/", 2)[0])) == ["toy"]
 
 
-def test_upcoming_games_have_spread_and_prediction(client):
-    week = client.get("/api/toy/upcoming").json()
+def test_upcoming_games_have_spread_and_prediction(snapshot):
+    week = snapshot.upcoming()
     assert (week["season"], week["date"], week["dates"]) == (2024, 12, [12])
     assert len(week["games"]) == 6
     for game in week["games"]:
@@ -69,9 +59,9 @@ def test_upcoming_games_have_spread_and_prediction(client):
         assert 0 < pred["win_prob"] < 1
 
 
-def test_game_view(client, snapshot):
-    upcoming_id = client.get("/api/toy/upcoming").json()["games"][0]["game_id"]
-    game = client.get(f"/api/toy/games/{upcoming_id}").json()
+def test_game_view(snapshot):
+    upcoming_id = snapshot.upcoming()["games"][0]["game_id"]
+    game = snapshot.game(upcoming_id)
     assert game["result"] is None and game["prediction"] is not None
     home = game["summaries"]["home"]
     assert home["current_season"] and home["games"] == 11
@@ -81,12 +71,12 @@ def test_game_view(client, snapshot):
     }  # fmt: skip
 
     past_id = snapshot.pool.index[0]
-    past = client.get(f"/api/toy/games/{past_id}").json()
+    past = snapshot.game(past_id)
     assert past["result"]["margin"] is not None
     assert past["prediction"]["margin"] == pytest.approx(
         snapshot.pool.loc[past_id, "pred_margin"]
     )
-    assert client.get("/api/toy/games/nope").status_code == 404
+    assert snapshot.game("nope") is None
 
 
 def test_summaries_only_use_earlier_games(snapshot, games, webdata):
@@ -110,8 +100,8 @@ def test_season_opener_falls_back_to_last_season(snapshot):
     assert summary["games"] == 12
 
 
-def test_challenge_hides_the_outcome(client, snapshot):
-    game = client.get("/api/toy/challenge/next").json()
+def test_challenge_hides_the_outcome(snapshot):
+    game = snapshot.challenge_next(random.Random(0))
     assert {"result", "prediction", "model"}.isdisjoint(game)
     assert game["game_id"] in snapshot.pool.index and game["spread"] is not None
     # the game itself never appears in either team's recent games
@@ -121,15 +111,14 @@ def test_challenge_hides_the_outcome(client, snapshot):
 
     keep = snapshot.pool.index[0]
     exclude = [g for g in snapshot.pool.index if g != keep]
-    again = client.get("/api/toy/challenge/next", params={"exclude": exclude})
-    assert again.json()["game_id"] == keep
+    assert snapshot.challenge_next(random.Random(0), exclude)["game_id"] == keep
 
 
 @pytest.mark.parametrize("pick", ["home", "away"])
-def test_challenge_answer_scores_player_and_model(client, snapshot, pick):
+def test_challenge_answer_scores_player_and_model(snapshot, pick):
     game_id = snapshot.pool.index[3]
     row = snapshot.pool.loc[game_id]
-    answer = client.post(f"/api/toy/challenge/{game_id}", json={"pick": pick}).json()
+    answer = snapshot.challenge_answer(game_id, pick)
 
     covered = "home" if row["margin"] > row["market_margin"] else "away"
     model_pick = "home" if row["pred_margin"] > row["market_margin"] else "away"
@@ -138,9 +127,6 @@ def test_challenge_answer_scores_player_and_model(client, snapshot, pick):
     assert answer["model"]["ats_pick"] == model_pick
     assert answer["model"]["correct"] == (model_pick == covered)
     assert answer["result"]["margin"] == row["margin"]
-
-    bad = client.post(f"/api/toy/challenge/{game_id}", json={"pick": "draw"})
-    assert bad.status_code == 422
 
 
 def test_pushes_are_left_out_of_the_pool(snapshot):
@@ -157,36 +143,28 @@ def test_pushes_are_left_out_of_the_pool(snapshot):
     assert cover_side(3, 3.0) == "push" and cover_side(4, 3.5) == "home"
 
 
-def test_frontend_routes_fall_back_to_the_app_shell(client):
-    assert client.get("/").text == "<html>app shell</html>"
-    assert client.get("/toy/games/2024_01_0_1").text == "<html>app shell</html>"
-    assert client.get("/app.js").text == "console.log(1)"
-    missing = client.get("/api/does/not/exist")
-    assert missing.status_code == 404 and "detail" in missing.json()
-
-
-def test_refresh_replaces_snapshot_and_survives_errors(webdata, games):
-    store = load_store(webdata)
-    before = store.get("toy")
-
+def test_export_refresh_uses_new_results_and_fails_loudly(
+    webdata, games, tmp_path, monkeypatch
+):
     newer = games.copy()
     late = newer.season.eq(2024) & newer.week.eq(12)
     newer.loc[late, "margin"] = np.where(newer.loc[late, "location"] >= 0, 3, -3)
-    assert refresh_sport(store, "toy", download=lambda sport: newer)
-    after = store.get("toy")
-    assert after is not before and after.meta["refreshed_at"]
-    assert after.upcoming()["games"] == []  # last week is now played
+    monkeypatch.setattr(export_module, "download_games", lambda sport: newer)
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "fresh"), refresh=True)
+    data = tmp_path / "fresh" / "data"
+    (info,) = json.loads((data / "sports.json").read_text())
+    assert info["refreshed_at"]
+    upcoming = json.loads((data / "toy" / "upcoming.json").read_text())["data"]
+    assert upcoming["default"]["games"] == []  # last week is now played
 
     def broken(sport):
         raise ConnectionError("offline")
 
-    assert not refresh_sport(store, "toy", download=broken)
-    assert store.get("toy") is after
-
-
-def test_unknown_sport(client):
-    assert client.get("/api/nba/upcoming").status_code == 404
-    assert isinstance(SnapshotStore().snapshots, dict)
+    # a failed download fails the run, so the last published site stays up
+    monkeypatch.setattr(export_module, "download_games", broken)
+    with pytest.raises(ConnectionError):
+        export(data_dir=str(webdata), output_dir=str(tmp_path / "x"), refresh=True)
+    assert not (tmp_path / "x").exists()
 
 
 def _revive(path):
@@ -205,7 +183,7 @@ def _revive(path):
 
 
 def _as_exported(value):
-    """An API response as the export writes it: no logos, 6-decimal floats."""
+    """A snapshot answer as the export writes it: no logos, 6-decimal floats."""
     if isinstance(value, dict):
         return {k: None if k == "logo" else _as_exported(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -215,47 +193,50 @@ def _as_exported(value):
     return value
 
 
-def test_export_matches_the_api(webdata, client, tmp_path):
+def _exported(value):
+    """Through JSON first: integer keys (seasons) become strings."""
+    return _as_exported(json.loads(json.dumps(value)))
+
+
+def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
     export(data_dir=str(webdata), output_dir=str(tmp_path))
     data = tmp_path / "data"
-    assert (
-        json.loads((data / "sports.json").read_text())
-        == client.get("/api/sports").json()
-    )
+    assert json.loads((data / "sports.json").read_text()) == [snapshot.info()]
 
     upcoming = _revive(data / "toy" / "upcoming.json")
-    assert upcoming["default"] == _as_exported(client.get("/api/toy/upcoming").json())
+    assert upcoming["default"] == _exported(snapshot.upcoming())
     for key, week in upcoming["by_date"].items():
         season, date = key.split("-")
-        api = client.get(f"/api/toy/upcoming?season={season}&date={date}").json()
-        assert week == _as_exported(api)
+        assert week == _exported(snapshot.upcoming(int(season), int(date)))
 
     games = _revive(data / "toy" / "games.json")
     ids = {g["game_id"] for week in upcoming["by_date"].values() for g in week["games"]}
     assert set(games) == ids
     for game_id, game in games.items():
-        assert game == _as_exported(client.get(f"/api/toy/games/{game_id}").json())
+        assert game == _exported(snapshot.game(game_id))
 
     challenge = _revive(data / "toy" / "challenge.json")
-    assert len(challenge) == client.get("/api/toy").json()["challenge_games"]
+    assert len(challenge) == snapshot.info()["challenge_games"]
     for entry in challenge[:10]:
         game_id = entry["game"]["game_id"]
+        assert entry["game"] == _exported(snapshot.challenge_game(game_id))
         for pick in ("home", "away"):
-            api = client.post(
-                f"/api/toy/challenge/{game_id}", json={"pick": pick}
-            ).json()
-            # the client adds the pick-dependent fields (static-api.ts scoreAnswer)
+            # the browser adds the pick-dependent fields (static-api.ts scoreAnswer)
             scored = {
                 **entry["answer"],
                 "pick": pick,
                 "correct": pick == entry["answer"]["covered"],
             }
-            assert scored == _as_exported(api)
+            assert scored == _exported(snapshot.challenge_answer(game_id, pick))
     assert "logo.png" not in (data / "toy" / "challenge.json").read_text()
+    assert _revive(data / "toy" / "rankings.json") == _exported(snapshot.rankings())
+    assert _revive(data / "toy" / "performance.json") == _exported(
+        snapshot.performance()
+    )
 
 
-def test_rankings_cover_backtest_and_current_season(client, snapshot, games):
-    rankings = client.get("/api/toy/rankings").json()
+def test_rankings_cover_backtest_and_current_season(snapshot, games):
+    rankings = snapshot.rankings()
     sources = {s["season"]: s["source"] for s in rankings["seasons"]}
     assert sources == {2024: "current", 2023: "backtest"}
     for season in rankings["seasons"]:
@@ -266,21 +247,21 @@ def test_rankings_cover_backtest_and_current_season(client, snapshot, games):
             # average margin vs every other team: antisymmetric, so they cancel
             assert abs(np.mean(ratings)) < 0.01
     current = next(s for s in rankings["seasons"] if s["source"] == "current")
-    upcoming_date = client.get("/api/toy/upcoming").json()["date"]
+    upcoming_date = snapshot.upcoming()["date"]
     assert current["dates"][-1] == upcoming_date
 
 
-def test_performance_summarizes_the_walk_forward_pool(client, snapshot):
+def test_performance_summarizes_the_walk_forward_pool(snapshot):
     from sportsml.backtest import summarize
 
-    perf = client.get("/api/toy/performance").json()
+    perf = snapshot.performance()
     results = snapshot.results
     expected = summarize(results, snapshot.schema)["overall"]["model"]
     assert perf["overall"]["model"]["accuracy"] == pytest.approx(expected["accuracy"])
     assert perf["seasons"] == [2023]
     decided = (results.dropna(subset=["market_margin"])["margin"] != 0).sum()
     assert sum(b["n"] for b in perf["calibration"]["model"]) == decided
-    assert set(perf["ats_by_season"]) == {"2023"}
+    assert set(perf["ats_by_season"]) == {2023}
 
 
 def test_nfl_playoffs_marks_the_last_four():

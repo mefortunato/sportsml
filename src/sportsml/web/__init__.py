@@ -1,1 +1,1 @@
-"""Web app: FastAPI backend (``create_app``) serving predictions per sport."""
+"""Web app data: per-sport snapshots exported as static JSON for the site."""

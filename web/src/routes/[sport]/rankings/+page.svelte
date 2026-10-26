@@ -35,17 +35,12 @@
 	const filterLabel = $derived(filter.division ?? filter.conference ?? null);
 	const isVisible = (team: string) => !visible || visible.has(team);
 
-	// A new season starts with its top visible teams highlighted. A filter
-	// change keeps the highlighted teams still in view (and their colors)
-	// and gives free slots to the top visible teams.
-	let pinnedSeason: number | null = null;
+	// Every season or filter change starts from that view's top teams; teams
+	// highlighted by hand last until the next change.
 	$effect(() => {
 		if (!season) return;
 		const top = rankAt(season, season.dates.length - 1).filter((r) => isVisible(r.team.team));
-		untrack(() => {
-			pins = reconcilePins(pinnedSeason === season.season ? pins : {}, top);
-			pinnedSeason = season.season;
-		});
+		untrack(() => (pins = reconcilePins({}, top)));
 	});
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);

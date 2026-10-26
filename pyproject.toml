@@ -10,45 +10,57 @@ requires-python = ">=3.10"
 license = "MIT"
 version = "0.4.0.dev1"
 dependencies = [
-    "altair",
     "httpx",
-    "ipywidgets",
-    "jupyter",
     "jsonargparse[signatures]",
     "kaggle",
     "lightning",
+    "mlflow",
     "nba_api",
     "networkx",
     "nflreadpy",
     "numpy",
-    "mlflow",
     "omegaconf",
     "pandas",
     "pyarrow",
-    "pydantic",
     "scikit-learn",
-    "seaborn",
+    "scipy",
     "torch",
     "torch_geometric",
     "torchmetrics",
-    "umap-learn",
-    "wandb>=0.25.1",
-    "weave>=0.52.36",
-    "sbrscrape>=0.0.12",
+    "tqdm",
 ]
 
 [project.scripts]
 sportsml = "sportsml.cli:cli"
-cfb_mongo_upload = "sportsml.cfb.data.download:mongo_upload"
-nba_mongo_upload = "sportsml.nba.data.download:mongo_upload"
-nfl_mongo_upload = "sportsml.nfl.data.download:mongo_upload"
-odds_upload = "sportsml.odds.utils:mongo_upload"
-train = "sportsml.cli.train.train:train"
-predict = "sportsml.cli.predict.predict:predict"
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+# exploration / notebook tooling; not needed by the package itself
+notebooks = [
+    "altair",
+    "ipywidgets",
+    "jupyter",
+    "sbrscrape>=0.0.12",
+    "seaborn",
+    "umap-learn",
+    "wandb>=0.25.1",
+    "weave>=0.52.36",
+]
+
+[tool.uv]
+default-groups = ["dev", "notebooks"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:torch_geometric.*",
+    "ignore::DeprecationWarning:torch.jit.*",
+    "ignore:Add type hints to the `predict` method:UserWarning",
+]
 
 [tool.ruff]
 line-length = 88
-target-version = "py38"
+target-version = "py310"
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`), pycodestyle (`E`), and isort (`I`)

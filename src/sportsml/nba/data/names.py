@@ -1,8 +1,9 @@
+# Team names used by sportsbooks / The Odds API -> nba_api abbreviation.
 odds_map = {
     "Atlanta Hawks": "ATL",
     "Boston Celtics": "BOS",
     "Brooklyn Nets": "BKN",
-    "Charlotte Hornets": "CHH",
+    "Charlotte Hornets": "CHA",
     "Chicago Bulls": "CHI",
     "Cleveland Cavaliers": "CLE",
     "Dallas Mavericks": "DAL",
@@ -15,7 +16,7 @@ odds_map = {
     "Los Angeles Lakers": "LAL",
     "Memphis Grizzlies": "MEM",
     "Miami Heat": "MIA",
-    "Milwaukee Bucks": "MIA",
+    "Milwaukee Bucks": "MIL",
     "Minnesota Timberwolves": "MIN",
     "New Orleans Pelicans": "NOP",
     "New York Knicks": "NYK",

@@ -1,3 +1,3 @@
-from .utils import long_to_wide
+from .utils import all_matchups, long_to_wide, predict, upcoming_matchups
 
-__all__ = ['long_to_wide']
+__all__ = ["all_matchups", "long_to_wide", "predict", "upcoming_matchups"]

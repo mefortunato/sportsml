@@ -1,4 +1,7 @@
+from ...core.schema import GameSchema
+
 STATS_COLUMNS = [
+    "points",
     "rushingTDs",
     "passingTDs",
     "kickReturnYards",
@@ -31,25 +34,18 @@ STATS_COLUMNS = [
     "thirdDownConv",
 ]
 
-CATEGORICAL_COLUMNS = [
-    "team",
-    "opp_team",
-    "home"
-]
-
 OPP_STATS_COLUMNS = [f"opp_{col}" for col in STATS_COLUMNS]
 
-FEATURE_COLUMNS = (
-    STATS_COLUMNS
-    + OPP_STATS_COLUMNS
-    + [f"{stat}_opp" for stat in STATS_COLUMNS + OPP_STATS_COLUMNS]
-    + ["home"]
+SCHEMA = GameSchema(
+    season="season",
+    # chronological week of the season; bowls come after the last regular week
+    date="week",
+    team="team",
+    opp="opp_team",
+    game_id="game_id",
+    target="result",
+    stats=tuple(STATS_COLUMNS + OPP_STATS_COLUMNS),
+    location="location",
+    categorical=("conference", "opp_conference"),
+    paired=(("conference", "opp_conference"),),
 )
-
-GRAPH_FEATURES = STATS_COLUMNS + OPP_STATS_COLUMNS
-
-TARGET_COLUMN = "result"
-SEASON_COLUMN = "season"
-DATE_COLUMN = "week"
-TEAM_COLUMN = "team"
-TEAM_OPP_COLUMN = "opp_team"

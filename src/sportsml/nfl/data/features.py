@@ -1,3 +1,5 @@
+from ...core.schema import GameSchema
+
 STATS_COLUMNS = [
     "completions",
     "attempts",
@@ -67,14 +69,12 @@ STATS_COLUMNS = [
     "fg_missed",
     "fg_blocked",
     "fg_long",
-    "fg_pct",
     "fg_made_0_19",
     "fg_made_20_29",
     "fg_made_30_39",
     "fg_made_40_49",
     "fg_made_50_59",
     "fg_made_60_",
-    "fg_missed_0_19",
     "fg_missed_20_29",
     "fg_missed_30_39",
     "fg_missed_40_49",
@@ -87,7 +87,6 @@ STATS_COLUMNS = [
     "pat_att",
     "pat_missed",
     "pat_blocked",
-    "pat_pct",
     "gwfg_made",
     "gwfg_att",
     "gwfg_missed",
@@ -97,50 +96,33 @@ STATS_COLUMNS = [
 
 OPP_STATS_COLUMNS = [f"opp_{col}" for col in STATS_COLUMNS]
 
-CATEGORICAL_COLUMNS = [
-    "team",
-    "opp_team",
-    "game_type",
-    "weekday",
-    "gametime",
-    "location",
-    "div_game",
-    "roof",
-    "surface",
-    "qb_name",
-    "opp_qb_name",
-    "coach",
-    "opp_coach",
-    "referee",
-    "stadium",
-]
+# Betting-market columns from the nflverse schedule. Only the next week's games
+# carry lines, and using them makes a model echo the market, so they are not
+# default features; pass them as `context` to opt in.
+MARKET_COLUMNS = ["spread_line", "total_line", "moneyline", "opp_moneyline"]
 
-META_COLUMNS = [
-    "rest",
-    "opp_rest",
-    "moneyline",
-    "opp_moneyline",
-    "spread_line",
-    "spread_odds",
-    "opp_spread_odds",
-    "total_line",
-    "under_odds",
-    "over_odds",
-    "temp",
-    "wind",
-]
-
-FEATURE_COLUMNS = (
-    STATS_COLUMNS
-    + OPP_STATS_COLUMNS
-    + [f"{stat}_opp" for stat in STATS_COLUMNS + OPP_STATS_COLUMNS]
-    + ["home", "rest", "opp_rest"]
+SCHEMA = GameSchema(
+    season="season",
+    date="week",
+    team="team",
+    opp="opp_team",
+    game_id="game_id",
+    target="result",
+    stats=tuple(STATS_COLUMNS + OPP_STATS_COLUMNS + ["score", "opp_score"]),
+    location="location",
+    context=("rest", "opp_rest", "div_game"),
+    categorical=("game_type", "roof", "surface"),
+    paired=(
+        ("score", "opp_score"),
+        ("rest", "opp_rest"),
+        ("moneyline", "opp_moneyline"),
+        ("spread_odds", "opp_spread_odds"),
+        ("qb_id", "opp_qb_id"),
+        ("qb_name", "opp_qb_name"),
+        ("coach", "opp_coach"),
+    ),
+    negated=("spread_line",),
+    display=("gameday", "gametime", *MARKET_COLUMNS),
+    market_spread="spread_line",
+    market_moneyline=("moneyline", "opp_moneyline"),
 )
-
-GRAPH_FEATURES = STATS_COLUMNS + OPP_STATS_COLUMNS
-
-TARGET_COLUMN = "result"
-SEASON_COLUMN = "season"
-DATE_COLUMN = "week"
-TEAM_COLUMN = "team"
-TEAM_OPP_COLUMN = "opp_team"

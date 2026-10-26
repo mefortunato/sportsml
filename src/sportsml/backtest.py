@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import pathlib
 import time
+import typing
 from collections.abc import Callable
 from typing import Literal
 
@@ -78,6 +79,75 @@ def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
         )["predictor"]
 
     return fit
+
+
+def transformer_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
+    from .models.lightning import default_trainer
+    from .models.transformer import default_model, fit_transformer
+
+    def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
+        trainer = default_trainer(
+            max_epochs=max_epochs,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        return fit_transformer(
+            games,
+            sport,
+            model=default_model(sport),
+            trainer=trainer,
+            train_seasons=split.train,
+            val_seasons=split.val,
+            test_seasons=split.test,
+            print_metrics=False,
+            **kwargs,
+        )["predictor"]
+
+    return fit
+
+
+def baseline_fitter(sport: str, name: str) -> Fitter:
+    from .models import baselines
+
+    fit_fn = {
+        "home": baselines.fit_home,
+        "point_diff": baselines.fit_point_diff,
+        "elo": baselines.fit_elo,
+    }[name]
+
+    def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
+        return fit_fn(
+            games, sport, print_metrics=False, **baselines.split_kwargs(split)
+        )["predictor"]
+
+    return fit
+
+
+Family = Literal["home", "point_diff", "elo", "sklearn", "gnn", "transformer"]
+FAMILIES: tuple[str, ...] = typing.get_args(Family)
+
+
+def family_fitter(
+    family: str,
+    sport: str,
+    model: sklearn.base.BaseEstimator | None = None,
+    max_epochs: int = 100,
+) -> Fitter:
+    """The :data:`Fitter` of a built-in model family.
+
+    ``model`` is the sklearn regressor for ``sklearn``; ``max_epochs`` caps
+    training of the neural families, which get a fresh default model and
+    trainer for every fit.
+    """
+    if family in ("home", "point_diff", "elo"):
+        return baseline_fitter(sport, family)
+    if family == "sklearn":
+        return sklearn_fitter(sport, model=model)
+    if family == "gnn":
+        return gnn_fitter(sport, max_epochs=max_epochs)
+    if family == "transformer":
+        return transformer_fitter(sport, max_epochs=max_epochs)
+    raise ValueError(f"unknown model family {family!r}; choose from {FAMILIES}")
 
 
 def no_vig_probability(moneyline, opp_moneyline) -> np.ndarray:
@@ -285,7 +355,7 @@ def complete_seasons(games: pd.DataFrame, schema: GameSchema) -> list[int]:
 def backtest(
     games: Table,
     sport: str,
-    family: Literal["sklearn", "gnn"] = "sklearn",
+    family: Family = "sklearn",
     seasons: list[int] | None = None,
     n_seasons: int = 5,
     model: sklearn.base.BaseEstimator | None = None,
@@ -298,10 +368,11 @@ def backtest(
     Args:
         games: Processed games table.
         sport: Sport name, e.g. ``"nfl"``.
-        family: ``"sklearn"`` or ``"gnn"``.
+        family: Model family: a naive baseline (``home``, ``point_diff``,
+            ``elo``) or ``sklearn`` / ``gnn`` / ``transformer``.
         seasons: Test seasons; default the last ``n_seasons`` complete ones.
         model: sklearn regressor (``family="sklearn"``); default random forest.
-        max_epochs: GNN training epochs per season (``family="gnn"``).
+        max_epochs: Training epochs per season for ``gnn`` / ``transformer``.
         output_dir: Write ``<family>_games.csv`` (one row per game) and
             ``<family>_summary.json`` here.
 
@@ -312,12 +383,7 @@ def backtest(
     schema = get_sport(sport).schema
     if seasons is None:
         seasons = complete_seasons(games, schema)[-n_seasons:]
-    if family == "sklearn":
-        fitter = sklearn_fitter(sport, model=model)
-    elif family == "gnn":
-        fitter = gnn_fitter(sport, max_epochs=max_epochs)
-    else:
-        raise ValueError(f"unknown model family {family!r}; use sklearn or gnn")
+    fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
 
     results = walk_forward(games, sport, fitter, seasons, verbose=print_summary)
     summary = {
@@ -336,3 +402,137 @@ def backtest(
     if print_summary:
         print(format_summary(summary))
     return {"results": results, "summary": summary}
+
+
+def compare(
+    results: dict[str, pd.DataFrame], schema: GameSchema, early_dates: int = 4
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Score several families' walk-forward results on their common games.
+
+    Returns:
+        ``(table, games)``: one row per source (each family, plus the market
+        when there is one) with RMSE, accuracy, Brier, log loss, early-season
+        Brier and, against the market, the paired Brier difference with its
+        95% CI, ATS win rate and edge correlation; and the per-game table
+        with every source's ``<source>_margin`` / ``<source>_prob``.
+    """
+    common = set.intersection(*(set(r[schema.game_id]) for r in results.values()))
+    first = next(iter(results.values()))
+    base_cols = [*schema.key_columns, schema.location, schema.target]
+    base_cols += ["market_margin", "market_prob"]
+    games = first[first[schema.game_id].isin(common)]
+    games = games[[c for c in dict.fromkeys(base_cols) if c and c in games]]
+    games = games.dropna(subset=[c for c in ("market_margin",) if c in games])
+    games = games.set_index(schema.game_id)
+
+    sources = {}
+    for name, frame in results.items():
+        frame = frame.set_index(schema.game_id).reindex(games.index)
+        games[f"{name}_margin"] = frame["pred_margin"]
+        games[f"{name}_prob"] = frame["win_prob"]
+        sources[name] = (f"{name}_margin", f"{name}_prob")
+    has_market = "market_margin" in games
+    if has_market:
+        sources["market"] = ("market_margin", "market_prob")
+    games = games.reset_index()
+
+    y = games[schema.target].to_numpy(dtype=float)
+    decided = y != 0
+    won = y > 0
+    date_rank = games.groupby(schema.season)[schema.date].rank(method="dense")
+    early = (date_rank <= early_dates).to_numpy()
+
+    def brier(prob):
+        return (prob - won) ** 2
+
+    rows = []
+    for name, (margin_col, prob_col) in sources.items():
+        margin = games[margin_col].to_numpy(dtype=float)
+        prob = games[prob_col].to_numpy(dtype=float)
+        row = {"source": name, **evaluate(y, margin, prob)}
+        row["early_brier"] = float(brier(prob)[decided & early].mean())
+        if has_market and name != "market":
+            diff = (brier(prob) - brier(games["market_prob"].to_numpy()))[decided]
+            half = 1.96 * diff.std(ddof=1) / np.sqrt(len(diff))
+            row |= {
+                "brier_vs_market": float(diff.mean()),
+                "brier_vs_market_ci95": float(half),
+            }
+            one = games.assign(pred_margin=margin)
+            ats = ats_record(one, schema, thresholds=(0,)).iloc[0]
+            row["ats_win_pct"] = float(ats["win_pct"])
+            row["edge_corr"] = edge_correlation(one, schema)["r"]
+        rows.append(row)
+    table = pd.DataFrame(rows).set_index("source").sort_values("brier")
+    table["n"] = table["n"].astype(int)
+    return table, games
+
+
+def benchmark(
+    games: Table,
+    sport: str,
+    families: list[Family] | None = None,
+    seasons: list[int] | None = None,
+    n_seasons: int = 5,
+    model: sklearn.base.BaseEstimator | None = None,
+    max_epochs: int = 100,
+    output_dir: str | None = None,
+    print_summary: bool = True,
+) -> dict:
+    """Walk-forward backtest of several families, compared on common games.
+
+    Args:
+        families: Families to run; default all (naive baselines included).
+        seasons / n_seasons / model / max_epochs: As in :func:`backtest`.
+        output_dir: Write ``benchmark.csv`` (the comparison table),
+            ``benchmark.json`` and ``benchmark_games.csv`` (every source's
+            prediction for every game).
+
+    Returns:
+        ``{"table", "games", "results"}``; ``results`` maps each family to its
+        :func:`walk_forward` output.
+    """
+    games = read_table(games)
+    schema = get_sport(sport).schema
+    families = list(families or FAMILIES)
+    if seasons is None:
+        seasons = complete_seasons(games, schema)[-n_seasons:]
+
+    results = {}
+    for family in families:
+        if print_summary:
+            print(f"== {family}", flush=True)
+        fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
+        results[family] = walk_forward(
+            games, sport, fitter, seasons, verbose=print_summary
+        )
+    table, per_game = compare(results, schema)
+
+    if output_dir:
+        path = pathlib.Path(output_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        table.to_csv(path / "benchmark.csv")
+        per_game.to_csv(path / "benchmark_games.csv", index=False)
+        (path / "benchmark.json").write_text(
+            json.dumps(
+                {
+                    "sport": sport,
+                    "seasons": [int(s) for s in seasons],
+                    "table": table.reset_index().to_dict("records"),
+                },
+                indent=2,
+                default=float,
+            )
+        )
+    if print_summary:
+        columns = ["n", "rmse", "accuracy", "brier", "log_loss", "early_brier"]
+        columns += [
+            c
+            for c in ("brier_vs_market", "brier_vs_market_ci95", "ats_win_pct")
+            if c in table
+        ]
+        print(
+            f"\nSeasons {seasons}, {len(per_game)} common games, sorted by Brier\n"
+            + table[columns].to_string(float_format=lambda v: f"{v:.4f}")
+        )
+    return {"table": table, "games": per_game, "results": results}

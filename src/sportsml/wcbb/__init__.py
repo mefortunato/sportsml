@@ -7,4 +7,5 @@ SPORT = Sport(
     schema=SCHEMA,
     download=download,
     gnn={"hidden_dim": 128, "out_dim": 64, "num_layers": 5},
+    transformer={"history": 32},
 )

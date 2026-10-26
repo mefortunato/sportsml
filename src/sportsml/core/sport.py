@@ -21,13 +21,16 @@ class Sport:
         name: CLI name, e.g. ``"nfl"``.
         schema: Column roles of the sport's games table.
         download: Fetches source data and returns a games table.
-        gnn: Default GNN sizes (``hidden_dim``, ``out_dim``, ``num_layers``).
+        gnn: Default GNN settings (``hidden_dim``, ``out_dim``, ``lr``, ...).
+        transformer: Default transformer settings (``history``, ``d_model``,
+            ``lr``, ...).
     """
 
     name: str
     schema: GameSchema
     download: Callable[..., pd.DataFrame]
     gnn: dict = field(default_factory=dict)
+    transformer: dict = field(default_factory=dict)
 
 
 def register_sport(sport: Sport) -> Sport:

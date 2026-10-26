@@ -15,4 +15,6 @@ SPORT = Sport(
         "lr": 3e-4,
         "weight_decay": 1e-4,
     },
+    # about one season of games, so openers still see a full season
+    transformer={"history": 20},
 )

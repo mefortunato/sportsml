@@ -2,12 +2,18 @@
 
 Game predictions for the NFL, college football, NBA and men's / women's college
 basketball. For any matchup it predicts the point margin and a calibrated win
-probability, with two interchangeable model families:
+probability, with three interchangeable model families:
 
 - **sklearn**: any regressor (random forest by default) on each team's
   season-to-date box-score averages.
 - **gnn**: a graph neural network (PyTorch Geometric) over the season's games,
   teams as nodes and games as edges.
+- **transformer**: a transformer over each team's most recent games (across
+  seasons), so season openers still have a full history.
+
+Naive baselines (`home` field only, season-to-date `point_diff`, and
+FiveThirtyEight-style `elo`) and the betting market are the yardsticks in
+backtests.
 
 ## Installation
 
@@ -28,6 +34,7 @@ uv run sportsml nfl download      # nflverse schedules + weekly team stats -> da
 uv run sportsml nfl process       # validate / clean                       -> data/nfl/games.csv
 uv run sportsml nfl fit sklearn   # train, print metrics, save             -> models/nfl/sklearn
 uv run sportsml nfl fit gnn       #                                        -> models/nfl/gnn
+uv run sportsml nfl fit transformer #                                      -> models/nfl/transformer
 uv run sportsml nfl predict       # next unplayed games                    -> predictions/nfl.csv
 ```
 
@@ -48,15 +55,19 @@ uv run sportsml nfl fit sklearn --model sklearn.ensemble.HistGradientBoostingReg
 uv run sportsml nfl fit gnn --model.encoder.init_args.num_layers 2 --trainer.max_epochs 50
 ```
 
-GNN runs log to MLflow (`sqlite:///mlflow.db`); view them with
+GNN and transformer runs log to MLflow (`sqlite:///mlflow.db`); view them with
 `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db`.
 
 ## Backtesting against the market
 
 ```sh
 uv run sportsml nfl backtest                 # sklearn, last 5 complete seasons
-uv run sportsml nfl backtest --family gnn --seasons '[2023, 2024, 2025]'
+uv run sportsml nfl backtest --family transformer --seasons '[2023, 2024, 2025]'
+uv run sportsml nfl benchmark                # every family + baselines + market
 ```
+
+`--family` takes any model family or baseline: `home`, `point_diff`, `elo`,
+`sklearn`, `gnn`, `transformer`.
 
 For each test season the model is fit on earlier seasons only, then the season
 is replayed week by week: team state is refreshed from the games played so far
@@ -78,10 +89,19 @@ prints:
   knows something the spread does not.
 
 `backtests/nfl/<family>_games.csv` holds every game's model and market
-prediction, and `<family>_summary.json` the summary. Any model family can be
-backtested from Python with `sportsml.backtest.walk_forward(games, sport,
-fitter, seasons)`, where `fitter(games, split)` returns a fitted
-`Predictor`.
+prediction, and `<family>_summary.json` the summary.
+
+`benchmark` runs several families (default: all) through the same backtest
+and compares them on the games all of them predicted. Its table is sorted by
+Brier score, includes early-season Brier, and gives each family's paired
+per-game Brier difference to the market with a 95% CI. A family is only
+meaningfully better than another when those intervals separate. It writes
+`benchmark.csv`, `benchmark.json` and `benchmark_games.csv` (every source's
+prediction per game) to `backtests/<sport>/`.
+
+Any model can be backtested from Python with
+`sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
+`fitter(games, split)` returns a fitted `Predictor`.
 
 ## Sports and data sources
 
@@ -131,32 +151,41 @@ sportsml/
     schema.py       GameSchema: which columns are season, team, target, stats, ...
     sport.py        Sport registry (schema + download + defaults); register_sport()
     predictor.py    MatchupModel interface + Predictor (MLflow) wrapper
-    evaluation.py   shared calibration / metrics for every model family
+    evaluation.py   shared calibration / metrics; finish_fit() for every family
   models/
+    baselines.py    home field, point differential, Elo
     sklearn/        season-to-date features -> any sklearn regressor
     gnn/            season graph snapshots -> GraphModel (Lightning + PyG)
+    transformer/    per-team game sequences -> TransformerModel (Lightning)
+    lightning.py    shared base (MarginModule), trainer, seeding for neural families
   nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
   inference/      predict command, matchup helpers
+  backtest.py     walk-forward backtests, family registry, benchmark
   cli.py          `sportsml <sport> ...`, generated from the registry
 ```
 
 A games table has one row per team per game, so every game appears twice:
 once from each team's perspective. Upcoming games have a missing target.
 
-### Adding a model family (e.g. a transformer)
+### Adding a model family
+
+`models/transformer/` is the worked example.
 
 1. Create `sportsml/models/<family>/` with a class implementing
    `sportsml.core.predictor.MatchupModel`:
-   - `update_state(games)`: rebuild per-team state from played games (for a
-     transformer, e.g. encode each team's recent game sequence);
+   - `update_state(games)`: rebuild per-team state from played games (the
+     transformer keeps each team's last N games);
    - `predict_margin(matchups)`: raw margin for each `team` vs `opp` row;
    - `teams`: teams that currently have state.
+   A neural family can subclass `models.lightning.MarginModule` for target
+   scaling, loss, metric logging and checkpoint loading.
 2. Write `fit_<family>(games, sport, ...)` that trains on
-   `split_seasons(...).train`, predicts the played rows of every split and calls
-   `core.evaluation.calibrate_and_evaluate`, then wraps the model in
-   `Predictor(model, sigma, sport, metrics)` and saves it with
-   `save_predictor`. `models/sklearn/fit.py` is the shortest example.
-3. Add it to `fit` in `cli.py` (and its defaults to `sport_defaults`).
+   `split_seasons(...).train`, predicts the played rows of every split
+   (pre-game state only) and returns `core.evaluation.finish_fit(...)`, which
+   calibrates, scores, wraps the model in a `Predictor` and saves it.
+3. Add it to `fit` in `cli.py` (defaults in `sport_defaults`) and to
+   `family_fitter` / `Family` in `backtest.py`, so it can be backtested and
+   benchmarked.
 
 `Predictor` adds antisymmetric margins, win probabilities, input validation
 and MLflow persistence, and `predict` / the matchup helpers work unchanged.
@@ -167,7 +196,7 @@ Create `sportsml/<sport>/` with a `download()` that returns a games table and a
 `GameSchema` describing its columns, then expose
 `SPORT = Sport(name=..., schema=..., download=...)` in its `__init__.py` and
 add the name to `BUILTIN_SPORTS` (or call `register_sport(SPORT)`). The CLI
-and both model families pick it up from there.
+and every model family pick it up from there.
 
 ## Development
 

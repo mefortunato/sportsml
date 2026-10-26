@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import logging
 
-import lightning.pytorch as pl
 import numpy as np
 import pandas as pd
 import torch
-import torchmetrics
 
 from ...core.predictor import MatchupModel
 from ...core.schema import GameSchema, played
+from ..lightning import MarginModule
 from .graph import GraphFeatures, build_graph
 from .nn.encoder.base import GraphEncoder
 from .nn.predictor.ffn import EdgeFFN
@@ -17,12 +16,14 @@ from .nn.predictor.ffn import EdgeFFN
 logger = logging.getLogger(__name__)
 
 
-class GraphModel(pl.LightningModule):
+class GraphModel(MarginModule):
     """Encoder (past games -> team embeddings) + head (matchup -> margin).
 
     Trained on season snapshots: messages flow over a snapshot's games before
     its date and the head predicts the games on its date.
     """
+
+    SUBMODULES = ("encoder", "predictor")
 
     def __init__(
         self,
@@ -33,43 +34,11 @@ class GraphModel(pl.LightningModule):
         target_mean: float = 0.0,
         target_std: float = 1.0,
     ):
-        super().__init__()
+        super().__init__(lr, weight_decay, target_mean, target_std)
         self.encoder = encoder
         self.predictor = predictor
-
-        self.lr = lr
-        self.weight_decay = weight_decay
-        self.register_buffer("target_mean", torch.tensor(target_mean))
-        self.register_buffer("target_std", torch.tensor(target_std))
-
-        self.metrics = torch.nn.ModuleDict(
-            {
-                stage: torch.nn.ModuleDict(
-                    {
-                        "rmse": torchmetrics.MeanSquaredError(squared=False),
-                        "mae": torchmetrics.MeanAbsoluteError(),
-                        "accuracy": torchmetrics.Accuracy(task="binary"),
-                    }
-                )
-                for stage in ("train_metrics", "val_metrics")
-            }
-        )
-
-        self.save_hyperparameters(ignore=["encoder", "predictor"])
-        self.hparams.update(
-            {"encoder": encoder.hparams, "predictor": predictor.hparams}
-        )
-
-    def set_target_scaling(self, mean: float, std: float) -> None:
-        """Standardize the regression target (set from the training data)."""
-        self.target_mean.fill_(mean)
-        self.target_std.fill_(std)
-        self.hparams.update({"target_mean": mean, "target_std": std})
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(
-            self.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
+        self.save_hyperparameters(ignore=list(self.SUBMODULES))
+        self.save_submodules()
 
     def forward(self, graph) -> torch.Tensor:
         """Scaled predictions for ``graph``'s target edges."""
@@ -84,48 +53,8 @@ class GraphModel(pl.LightningModule):
             x, graph.edge_index[:, target], context=graph.context[target]
         ).squeeze(-1)
 
-    def predict_margin(self, graph) -> torch.Tensor:
-        return self(graph) * self.target_std + self.target_mean
-
-    def _step(self, graph, stage: str):
-        y = graph.y[graph.target]
-        pred = self(graph)
-        loss = torch.nn.functional.mse_loss(
-            pred, (y - self.target_mean) / self.target_std
-        )
-        n = y.numel()
-        self.log(f"{stage}_loss", loss, prog_bar=True, on_epoch=True, batch_size=n)
-        if f"{stage}_metrics" in self.metrics:
-            margin = pred * self.target_std + self.target_mean
-            metrics = self.metrics[f"{stage}_metrics"]
-            metrics["rmse"].update(margin, y)
-            metrics["mae"].update(margin, y)
-            metrics["accuracy"].update((margin > 0).int(), (y > 0).int())
-            for name, metric in metrics.items():
-                self.log(f"{stage}_{name}", metric, on_epoch=True, batch_size=n)
-        return loss
-
-    def training_step(self, graph, idx=None):
-        return self._step(graph, "train")
-
-    def validation_step(self, graph, idx=None):
-        self._step(graph, "val")
-
-    def test_step(self, graph, idx=None):
-        self._step(graph, "test")
-
-    @classmethod
-    def load_from_checkpoint(cls, checkpoint_path: str, **kwargs):
-        hparams = torch.load(checkpoint_path, weights_only=False)["hyper_parameters"]
-        kwargs |= {
-            key: dict(hparams[key]).pop("cls")(
-                **{k: v for k, v in hparams[key].items() if k != "cls"}
-            )
-            for key in ("encoder", "predictor")
-        }
-        return super().load_from_checkpoint(
-            checkpoint_path, weights_only=False, map_location="cpu", **kwargs
-        )
+    def targets(self, graph) -> torch.Tensor:
+        return graph.y[graph.target]
 
 
 class GraphMatchupModel(MatchupModel):

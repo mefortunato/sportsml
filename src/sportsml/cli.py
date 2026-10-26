@@ -1,4 +1,4 @@
-"""``sportsml <sport> {download,process,fit,predict,backtest}`` from the registry.
+"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark}``.
 
 Every registered sport gets the same subcommands; per-sport defaults (paths,
 GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
@@ -9,12 +9,13 @@ import jsonargparse.typing
 import pandas as pd
 
 from . import __version__
-from .backtest import backtest
+from .backtest import backtest, benchmark
 from .core.process import process
 from .core.sport import Sport, all_sports
 from .inference.utils import predict
 from .models.gnn.fit import fit_gnn, gnn_config
 from .models.sklearn.fit import fit_sklearn
+from .models.transformer.fit import fit_transformer, transformer_config
 
 # Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
 # and are read by the command itself. Without this, jsonargparse would read an
@@ -51,7 +52,7 @@ def gnn_model_config(sport: Sport) -> dict:
     return config
 
 
-def gnn_trainer_config(sport: Sport) -> dict:
+def trainer_config(sport: Sport) -> dict:
     callbacks = "lightning.pytorch.callbacks"
     return {
         "max_epochs": 100,
@@ -92,14 +93,22 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.fit.gnn.sport": n,
         f"{n}.fit.gnn.games": games,
         f"{n}.fit.gnn.model": gnn_model_config(sport),
-        f"{n}.fit.gnn.trainer": gnn_trainer_config(sport),
+        f"{n}.fit.gnn.trainer": trainer_config(sport),
         f"{n}.fit.gnn.save_dir": f"models/{n}/gnn",
+        f"{n}.fit.transformer.sport": n,
+        f"{n}.fit.transformer.games": games,
+        f"{n}.fit.transformer.model": transformer_config(n),
+        f"{n}.fit.transformer.trainer": trainer_config(sport),
+        f"{n}.fit.transformer.save_dir": f"models/{n}/transformer",
         f"{n}.predict.model_dir": f"models/{n}/sklearn",
         f"{n}.predict.games": games,
         f"{n}.predict.output_file": f"predictions/{n}.csv",
         f"{n}.backtest.sport": n,
         f"{n}.backtest.games": games,
         f"{n}.backtest.output_dir": f"backtests/{n}",
+        f"{n}.benchmark.sport": n,
+        f"{n}.benchmark.games": games,
+        f"{n}.benchmark.output_dir": f"backtests/{n}",
     }
 
 
@@ -115,9 +124,14 @@ def run(args=None):
         name: {
             "download": sport.download,
             "process": process,
-            "fit": {"sklearn": fit_sklearn, "gnn": fit_gnn},
+            "fit": {
+                "sklearn": fit_sklearn,
+                "gnn": fit_gnn,
+                "transformer": fit_transformer,
+            },
             "predict": predict,
             "backtest": backtest,
+            "benchmark": benchmark,
         }
         for name, sport in sports.items()
     }

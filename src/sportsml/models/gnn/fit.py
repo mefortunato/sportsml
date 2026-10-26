@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import lightning.pytorch as pl
-import torch
 
 from ...core.evaluation import calibrate_and_evaluate
 from ...core.io import Table, read_table
@@ -13,6 +9,7 @@ from ...core.predictor import Predictor, prepare_save_dir, save_predictor
 from ...core.schema import played
 from ...core.splits import split_seasons
 from ...core.sport import get_sport
+from ..lightning import best_model, default_trainer, seed_and_reset
 from .datamodule import GraphDataModule
 from .model import GraphMatchupModel, GraphModel
 from .nn.encoder.edge_conv_encoder import EdgeConvEncoder
@@ -62,42 +59,6 @@ def default_model(sport: str, context: list[str] | None = None) -> GraphModel:
     )
 
 
-def default_trainer(
-    max_epochs: int = 100,
-    patience: int = 10,
-    root_dir: str | None = None,
-    **kwargs,
-) -> pl.Trainer:
-    """CPU or GPU (whichever is available), early stopping on val_loss.
-
-    Checkpoints go to ``root_dir`` (default: a temporary directory; the saved
-    predictor already holds the best weights). ``kwargs`` go to the Trainer.
-    """
-    return pl.Trainer(
-        max_epochs=max_epochs,
-        accelerator="auto",
-        devices=1,
-        logger=False,
-        default_root_dir=root_dir or tempfile.mkdtemp(prefix="sportsml-"),
-        callbacks=[
-            pl.callbacks.EarlyStopping(monitor="val_loss", patience=patience),
-            pl.callbacks.ModelCheckpoint(monitor="val_loss", mode="min"),
-        ],
-        **kwargs,
-    )
-
-
-def _best_model(trainer: pl.Trainer, model: GraphModel) -> GraphModel:
-    """Fresh copy of the best (or last) weights, detached from the trainer."""
-    callback = trainer.checkpoint_callback
-    if callback is not None and callback.best_model_path:
-        return GraphModel.load_from_checkpoint(callback.best_model_path)
-    with tempfile.TemporaryDirectory() as tmp:
-        path = str(Path(tmp) / "last.ckpt")
-        trainer.save_checkpoint(path)
-        return GraphModel.load_from_checkpoint(path)
-
-
 def fit_gnn(
     games: Table,
     sport: str,
@@ -145,15 +106,13 @@ def fit_gnn(
 
     data = GraphDataModule(games, schema, split, batch_size, num_workers, min_games)
     _check_dims(model, data)
-    if seed is not None:
-        pl.seed_everything(seed, verbose=False)
-        reset_parameters(model)
+    seed_and_reset(model, seed)
     model.set_target_scaling(data.target_mean, data.target_std)
 
     trainer = trainer or default_trainer()
     trainer.fit(model, datamodule=data)
 
-    best = _best_model(trainer, model)
+    best = best_model(trainer, model)
     rows, raw = data.predict_targets(best)
     sigma, metrics, _ = calibrate_and_evaluate(rows, raw, schema, split)
     if print_metrics:
@@ -169,20 +128,6 @@ def fit_gnn(
     if save_dir is not None:
         save_predictor(predictor, save_dir)
     return {"predictor": predictor, "metrics": metrics, "split": split, "model": best}
-
-
-def reset_parameters(model: torch.nn.Module) -> None:
-    """Re-initialize every layer (after seeding, makes training reproducible).
-
-    Layers' own ``reset_parameters`` run first, then any module-level custom
-    initialization (``_reset_parameters``, e.g. EdgeConvEncoderLayer's).
-    """
-    for module in model.modules():
-        if hasattr(module, "reset_parameters"):
-            module.reset_parameters()
-    for module in model.modules():
-        if hasattr(module, "_reset_parameters"):
-            module._reset_parameters()
 
 
 def _check_dims(model: GraphModel, data: GraphDataModule) -> None:

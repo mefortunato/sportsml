@@ -126,3 +126,27 @@ def test_backtest_from_cli(toy_games, tmp_path, monkeypatch):
     )  # fmt: skip
     assert out["summary"]["seasons"] == [2023, 2024]
     assert (tmp_path / "backtests/toy/sklearn_summary.json").exists()
+
+
+def test_benchmark_compares_families_on_common_games(toy_games, tmp_path):
+    from sportsml.backtest import benchmark
+
+    out = benchmark(
+        toy_games,
+        "toy",
+        families=["home", "elo", "gnn", "transformer"],
+        seasons=[2023],
+        max_epochs=2,
+        output_dir=str(tmp_path),
+        print_summary=False,
+    )
+    table = out["table"]
+    assert set(table.index) == {"home", "elo", "gnn", "transformer", "market"}
+    assert table.brier.is_monotonic_increasing
+    assert table.loc["market", "brier"] < table.loc["home", "brier"]
+    assert np.isnan(table.loc["market", "brier_vs_market"])
+    assert (table.drop("market").brier_vs_market_ci95 > 0).all()
+    assert len(out["games"]) == table.n.iloc[0]
+    for name in ("benchmark.csv", "benchmark.json", "benchmark_games.csv"):
+        assert (tmp_path / name).exists()
+    assert {"elo_margin", "transformer_prob"} <= set(out["games"])

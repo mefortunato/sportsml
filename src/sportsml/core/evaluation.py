@@ -5,7 +5,14 @@ import logging
 import numpy as np
 import pandas as pd
 
-from .metrics import antisymmetrize, evaluate, fit_sigma, win_probability
+from .metrics import (
+    antisymmetrize,
+    evaluate,
+    fit_sigma,
+    format_metrics,
+    win_probability,
+)
+from .predictor import MatchupModel, Predictor, save_predictor
 from .schema import GameSchema
 from .splits import SeasonSplit
 
@@ -49,3 +56,32 @@ def calibrate_and_evaluate(
         if mask.any()
     }
     return sigma, metrics, pred
+
+
+def finish_fit(
+    model: MatchupModel,
+    games: pd.DataFrame,
+    rows: pd.DataFrame,
+    raw_pred,
+    split: SeasonSplit,
+    sport: str,
+    save_dir: str | None = None,
+    print_metrics: bool = True,
+) -> dict:
+    """Common tail of every ``fit_<family>``.
+
+    Calibrates and scores ``raw_pred`` (pre-game predictions for ``rows``),
+    refreshes ``model``'s state from ``games``, wraps it in a
+    :class:`Predictor` and saves it.
+
+    Returns:
+        ``{"predictor", "metrics", "split"}``
+    """
+    sigma, metrics, _ = calibrate_and_evaluate(rows, raw_pred, model.schema, split)
+    if print_metrics:
+        print(format_metrics(metrics))
+    model.update_state(games)
+    predictor = Predictor(model, sigma=sigma, sport=sport, metrics=metrics)
+    if save_dir is not None:
+        save_predictor(predictor, save_dir)
+    return {"predictor": predictor, "metrics": metrics, "split": split}

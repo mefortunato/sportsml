@@ -77,6 +77,10 @@
 				A past game, its Vegas line, and what both teams had done before kickoff. Pick the side
 				that covers the spread, then see the result and what the model picked.
 			</p>
+			<p class="muted small">
+				The model never saw these games: its pick for a game from a given season comes from a
+				model trained only on earlier seasons.
+			</p>
 		</div>
 	</div>
 
@@ -144,6 +148,10 @@
 							{answer.model.correct ? '✓' : '✗'}
 						</span>
 					</div>
+					<p class="muted small trained">
+						The model's pick for this {g.season} game comes from a model trained only on seasons
+						before {g.season}.
+					</p>
 					<div class="chart">
 						<SpreadChart
 							home={g.home}
@@ -229,6 +237,10 @@
 	}
 	.final {
 		font-size: 1.15rem;
+	}
+	.trained {
+		margin: 0;
+		text-align: center;
 	}
 	.verdicts {
 		display: flex;

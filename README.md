@@ -148,6 +148,17 @@ metadata and score columns, add it to `BUILTIN_VIEWS`, and build it with
 `sportsml web build --sports '[nfl, <sport>]'`. The frontend needs no
 changes.
 
+### Static build
+
+`make artifact` builds the same frontend with no server behind it, for static
+hosting such as a claude.ai artifact. `sportsml web export` writes every API
+answer as JSON next to the page, and the challenge picks and scores games in
+the browser. The result is `web/build-artifact/`: `sportsml.html` (hash
+routing, JS and CSS inlined) plus `data/`. It is a fixed snapshot, so rebuild
+to update it. Team logos are left out because such hosts usually block
+external images, so teams show as colored chips. The challenge answers are
+in the published data.
+
 ## Sports and data sources
 
 | Sport | Command | Source | Credentials |

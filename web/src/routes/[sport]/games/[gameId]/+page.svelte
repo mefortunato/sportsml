@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { links } from '$lib/links';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
@@ -19,7 +20,7 @@
 </script>
 
 <div class="container section">
-	<a class="small" href="/{info.sport}">← {info.label} upcoming</a>
+	<a class="small" href={links.upcoming(info.sport)}>← {info.label} upcoming</a>
 
 	<div class="card hero section">
 		<div class="meta muted small">

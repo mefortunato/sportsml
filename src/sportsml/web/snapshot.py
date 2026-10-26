@@ -337,7 +337,10 @@ class Snapshot:
         if not len(self.pool):
             raise LookupError("no historical games available")
         ids = list(self.pool.index.difference(list(exclude))) or list(self.pool.index)
-        game_id = rng.choice(ids)
+        return self.challenge_game(rng.choice(ids))
+
+    def challenge_game(self, game_id) -> dict:
+        """A pool game's pre-game info only (no result/model)."""
         row = self._row(game_id, self.pool.loc[game_id, self.schema.team])
         header = self._header(row)
         return py(

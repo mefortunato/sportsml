@@ -7,6 +7,7 @@ import type {
 	Team,
 	Upcoming
 } from './types';
+import { staticApi } from './static-api';
 
 type Fetch = typeof fetch;
 
@@ -43,7 +44,7 @@ function query(params: Record<string, string | number | null | undefined | strin
 	return text ? `?${text}` : '';
 }
 
-export const api = {
+const httpApi = {
 	sports: (f: Fetch = fetch) => request<SportInfo[]>(f, '/sports'),
 	sport: (sport: string, f: Fetch = fetch) => request<SportInfo>(f, `/${sport}`),
 	teams: (sport: string, f: Fetch = fetch) => request<Team[]>(f, `/${sport}/teams`),
@@ -60,3 +61,8 @@ export const api = {
 			body: JSON.stringify({ pick })
 		})
 };
+
+// `npm run build:artifact` sets VITE_SPORTSML_DATA=static: no server, data from
+// exported JSON. The constant is replaced at build time, so each build keeps one.
+export const api: typeof httpApi =
+	import.meta.env.VITE_SPORTSML_DATA === 'static' ? staticApi : httpApi;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { links } from '$lib/links';
 	import { kickoffLabel, signed, spreadLabel } from '$lib/format';
 	import type { UpcomingGame } from '$lib/types';
 	import SpreadChart from './SpreadChart.svelte';
@@ -15,7 +16,7 @@
 	const edge = $derived(prediction.edge === null ? null : Math.abs(prediction.edge));
 </script>
 
-<a class="card game" href="/{sport}/games/{encodeURIComponent(game.game_id)}">
+<a class="card game" href={links.game(sport, game.game_id)}>
 	<div class="top">
 		<div class="teams">
 			<TeamBadge team={game.away} label="name" />

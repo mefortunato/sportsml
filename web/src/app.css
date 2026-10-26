@@ -17,8 +17,9 @@
 	color-scheme: light;
 }
 
+/* dark: the OS setting, unless a host page forces light; and a forced dark */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme='light']) {
 		--bg: #0d1117;
 		--surface: #151b23;
 		--surface-2: #1c232d;
@@ -35,6 +36,24 @@
 		--shadow: none;
 		color-scheme: dark;
 	}
+}
+
+:root[data-theme='dark'] {
+	--bg: #0d1117;
+	--surface: #151b23;
+	--surface-2: #1c232d;
+	--text: #e6edf3;
+	--muted: #9198a1;
+	--border: #30363d;
+	--accent: #4493f8;
+	--accent-soft: rgba(68, 147, 248, 0.18);
+	--vegas: #d29922;
+	--good: #3fb950;
+	--good-soft: rgba(63, 185, 80, 0.15);
+	--bad: #f85149;
+	--bad-soft: rgba(248, 81, 73, 0.15);
+	--shadow: none;
+	color-scheme: dark;
 }
 
 * {
@@ -75,7 +94,8 @@ h2 {
 .container {
 	max-width: 1120px;
 	margin: 0 auto;
-	padding: 0 16px;
+	padding-left: max(16px, env(safe-area-inset-left, 0px));
+	padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
 
 .card {

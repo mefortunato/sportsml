@@ -9,6 +9,7 @@ from sportsml.core.predictor import load_predictor
 from sportsml.web.api import SnapshotStore
 from sportsml.web.app import create_app, load_store
 from sportsml.web.build import build
+from sportsml.web.export import export
 from sportsml.web.refresh import refresh_sport
 from sportsml.web.snapshot import Snapshot, cover_side
 
@@ -186,3 +187,68 @@ def test_refresh_replaces_snapshot_and_survives_errors(webdata, games):
 def test_unknown_sport(client):
     assert client.get("/api/nba/upcoming").status_code == 404
     assert isinstance(SnapshotStore().snapshots, dict)
+
+
+def _revive(path):
+    payload = json.loads(path.read_text())
+
+    def resolve(value):
+        if isinstance(value, dict):
+            if "$team" in value:
+                return payload["teams"][value["$team"]]
+            return {k: resolve(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [resolve(v) for v in value]
+        return value
+
+    return resolve(payload["data"])
+
+
+def _as_exported(value):
+    """An API response as the export writes it: no logos, 4-decimal floats."""
+    if isinstance(value, dict):
+        return {k: None if k == "logo" else _as_exported(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_as_exported(v) for v in value]
+    if isinstance(value, float):
+        return round(value, 4)
+    return value
+
+
+def test_export_matches_the_api(webdata, client, tmp_path):
+    export(data_dir=str(webdata), output_dir=str(tmp_path))
+    data = tmp_path / "data"
+    assert (
+        json.loads((data / "sports.json").read_text())
+        == client.get("/api/sports").json()
+    )
+
+    upcoming = _revive(data / "toy" / "upcoming.json")
+    assert upcoming["default"] == _as_exported(client.get("/api/toy/upcoming").json())
+    for key, week in upcoming["by_date"].items():
+        season, date = key.split("-")
+        api = client.get(f"/api/toy/upcoming?season={season}&date={date}").json()
+        assert week == _as_exported(api)
+
+    games = _revive(data / "toy" / "games.json")
+    ids = {g["game_id"] for week in upcoming["by_date"].values() for g in week["games"]}
+    assert set(games) == ids
+    for game_id, game in games.items():
+        assert game == _as_exported(client.get(f"/api/toy/games/{game_id}").json())
+
+    challenge = _revive(data / "toy" / "challenge.json")
+    assert len(challenge) == client.get("/api/toy").json()["challenge_games"]
+    for entry in challenge[:10]:
+        game_id = entry["game"]["game_id"]
+        for pick in ("home", "away"):
+            api = client.post(
+                f"/api/toy/challenge/{game_id}", json={"pick": pick}
+            ).json()
+            # the client adds the pick-dependent fields (static-api.ts scoreAnswer)
+            scored = {
+                **entry["answer"],
+                "pick": pick,
+                "correct": pick == entry["answer"]["covered"],
+            }
+            assert scored == _as_exported(api)
+    assert "logo.png" not in (data / "toy" / "challenge.json").read_text()

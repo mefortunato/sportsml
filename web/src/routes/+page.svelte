@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { links } from '$lib/links';
 	let { data } = $props();
 </script>
 
@@ -12,7 +13,7 @@
 		<h1>Choose a sport</h1>
 		<div class="grid-2">
 			{#each data.sports as sport (sport.sport)}
-				<a class="card" href="/{sport.sport}"><h2>{sport.label}</h2></a>
+				<a class="card" href={links.upcoming(sport.sport)}><h2>{sport.label}</h2></a>
 			{/each}
 		</div>
 	{/if}

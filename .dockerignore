@@ -153,5 +153,6 @@ predictions
 backtests
 web/node_modules
 web/build
+web/build-artifact
 web/.svelte-kit
 webdata

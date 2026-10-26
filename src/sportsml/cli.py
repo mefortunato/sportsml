@@ -18,6 +18,7 @@ from .models.sklearn.fit import fit_sklearn
 from .models.transformer.fit import fit_transformer, transformer_config
 from .web.build import build as web_build
 from .web.build import serve as web_serve
+from .web.export import export as web_export
 
 # Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
 # and are read by the command itself. Without this, jsonargparse would read an
@@ -137,7 +138,7 @@ def run(args=None):
         }
         for name, sport in sports.items()
     }
-    components["web"] = {"build": web_build, "serve": web_serve}
+    components["web"] = {"build": web_build, "serve": web_serve, "export": web_export}
     components["version"] = version
     defaults = {}
     for sport in sports.values():

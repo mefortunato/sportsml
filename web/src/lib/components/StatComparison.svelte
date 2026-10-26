@@ -86,11 +86,14 @@
 <style>
 	.head {
 		display: grid;
-		grid-template-columns: 1fr auto 1fr;
+		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 		gap: 12px;
 		align-items: center;
 		padding-bottom: 10px;
 		border-bottom: 1px solid var(--border);
+	}
+	.head > div {
+		min-width: 0;
 	}
 	.head .right {
 		text-align: right;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { links } from '$lib/links';
 	import '../app.css';
 	import { page } from '$app/state';
 	import { pct } from '$lib/format';
@@ -7,25 +8,26 @@
 
 	const sport = $derived(page.params.sport);
 	const info = $derived(data.sports.find((s) => s.sport === sport));
-	const path = $derived(page.url.pathname);
+	// route ids, not page.url: in the hash-routed build the URL is the frame's
+	const route = $derived(page.route.id ?? '');
 	const backtest = $derived(info?.backtest);
 </script>
 
 <header>
 	<div class="container bar">
-		<a class="brand" href="/">SportsML</a>
+		<a class="brand" href={links.home()}>SportsML</a>
 		{#if data.sports.length > 1}
 			<nav class="sports">
 				{#each data.sports as s (s.sport)}
-					<a href="/{s.sport}" class:active={s.sport === sport}>{s.label}</a>
+					<a href={links.upcoming(s.sport)} class:active={s.sport === sport}>{s.label}</a>
 				{/each}
 			</nav>
 		{/if}
 		{#if info}
 			<nav class="pages">
-				<a href="/{info.sport}" class:active={path === `/${info.sport}`}>Upcoming</a>
+				<a href={links.upcoming(info.sport)} class:active={route.startsWith('/[sport]/[[season')}>Upcoming</a>
 				{#if info.has_spread && info.challenge_games}
-					<a href="/{info.sport}/challenge" class:active={path.endsWith('/challenge')}
+					<a href={links.challenge(info.sport)} class:active={route === '/[sport]/challenge'}
 						>Beat the model</a
 					>
 				{/if}
@@ -62,8 +64,17 @@
 		background: var(--surface);
 		border-bottom: 1px solid var(--border);
 		position: sticky;
-		top: 0;
+		top: env(safe-area-inset-top, 0px);
 		z-index: 10;
+	}
+	/* paints the phone's safe-area band above the sticky header */
+	:global(body)::before {
+		content: '';
+		position: fixed;
+		inset: 0 0 auto;
+		height: env(safe-area-inset-top, 0px);
+		z-index: 10;
+		background: var(--surface);
 	}
 	.bar {
 		display: flex;

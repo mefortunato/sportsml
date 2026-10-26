@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
 
 	let { data } = $props();
@@ -26,7 +27,7 @@
 					<a
 						class="pill"
 						class:accent={date === upcoming.date}
-						href="?season={upcoming.season}&date={date}">{info.date_label} {date}</a
+						href={links.upcoming(info.sport, upcoming.season, date)}>{info.date_label} {date}</a
 					>
 				{/each}
 			</nav>
@@ -38,7 +39,7 @@
 			<h2>No upcoming games</h2>
 			<p class="muted">
 				The schedule has no unplayed games right now. Try
-				<a href="/{info.sport}/challenge">beating the model on past games</a>.
+				<a href={links.challenge(info.sport)}>beating the model on past games</a>.
 			</p>
 		</div>
 	{:else}

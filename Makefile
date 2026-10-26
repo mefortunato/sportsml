@@ -2,7 +2,7 @@ VERSION ?= $(shell uv version --short)
 REGISTRY ?= ghcr.io/mefortunato/sportsml
 IMAGE ?= $(REGISTRY):$(VERSION)
 
-.PHONY: build push pull run cli webdata web-build serve web-dev test lint format
+.PHONY: build push pull run cli webdata web-build serve web-dev artifact test lint format
 
 # --- Docker: the full web app (frontend + API + baked data) -----------------
 build:
@@ -36,6 +36,12 @@ serve:
 # frontend with hot reload on :5173, proxying /api to `make serve` on :8000
 web-dev:
 	cd web && npm run dev
+
+# static build with no server (e.g. a claude.ai artifact): web/build-artifact/
+# holds sportsml.html plus data/ exported from webdata
+artifact:
+	cd web && npm ci && npm run build:artifact
+	uv run sportsml web export --data_dir webdata --output_dir web/build-artifact
 
 # --- Checks ---------------------------------------------------------------------
 test:

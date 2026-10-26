@@ -1,14 +1,15 @@
 from pathlib import Path
 
-import nflreadpy
 import pandas as pd
 
 from .features import STATS_COLUMNS
 from .names import move_map
-from .nodes import team_abr_lookup
+
+LOCATIONS = {"Home": 1, "Away": -1, "Neutral": 0}
 
 
-def invert_schedule(schedule: pd.DataFrame):
+def invert_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
+    """One row per team per game from nflverse's one-row-per-game schedule."""
     home = schedule.copy()
     away = schedule.copy()
 
@@ -32,57 +33,46 @@ def invert_schedule(schedule: pd.DataFrame):
     )
     away = away.rename(columns=away_col_renamer)
 
-    return pd.concat([home, away])
+    games = pd.concat([home, away], ignore_index=True)
+    games["location"] = games["location"].map(LOCATIONS)
+    return games
 
 
-def download(output_file: str = None):
-    team_stats = (
-        nflreadpy.load_team_stats(seasons=True)
-        .to_pandas()
-        .rename(columns={"opponent_team": "opp_team"})
+def build_games(schedule: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:
+    """Join weekly team stats onto both perspectives of every scheduled game.
+
+    The schedule is the source of truth for which games exist, so games whose
+    stats nflverse lacks keep their result with missing stats, and each row's
+    opponent stats always come from the opponent's own stats row.
+    """
+    schedule = schedule.copy()
+    for col in ("home_team", "away_team"):
+        schedule[col] = schedule[col].replace(move_map)
+    games = invert_schedule(schedule)
+
+    stats = team_stats.dropna(subset=["team"]).copy()
+    stats["team"] = stats["team"].replace(move_map)
+    stats = stats.drop_duplicates(["season", "week", "team"])
+    stats = stats[["season", "week", "team"] + STATS_COLUMNS]
+
+    games = games.merge(stats, on=["season", "week", "team"], how="left")
+    opp_stats = stats.rename(
+        columns={"team": "opp_team", **{col: f"opp_{col}" for col in STATS_COLUMNS}}
+    )
+    games = games.merge(opp_stats, on=["season", "week", "opp_team"], how="left")
+    return games.sort_values(["season", "week", "game_id", "location"]).reset_index(
+        drop=True
     )
 
-    team_stats["team"] = team_stats["team"].replace(move_map)
-    team_stats["opp_team"] = team_stats["opp_team"].replace(move_map)
 
-    schedule = nflreadpy.load_schedules(True).to_pandas()
-    schedule = invert_schedule(schedule=schedule).drop(columns=["game_id"])
+def download(output_file: str = None, seasons: list[int] = None) -> pd.DataFrame:
+    """Download nflverse schedules and weekly team stats (all seasons by default)."""
+    import nflreadpy
 
-    schedule["team"] = schedule["team"].replace(move_map)
-    schedule["opp_team"] = schedule["opp_team"].replace(move_map)
-
-    games = team_stats.merge(
-        schedule, on=["season", "week", "team", "opp_team"], how="outer"
-    )
-
-    games['game_id'] = games[['game_id', 'old_game_id']].bfill(axis=1)["game_id"]
-
-    games = games.dropna(subset=["game_id"])
-
-    first_game = games.drop_duplicates(subset=["game_id"], keep="first")
-    last_game = games.drop_duplicates(subset=["game_id"], keep="last")
-
-    games = pd.concat(
-        [
-            first_game.merge(
-                last_game[STATS_COLUMNS + ["game_id"]]
-                .add_prefix("opp_")
-                .rename(columns={"opp_game_id": "game_id"}),
-                on="game_id",
-                how="left",
-            ).set_index(first_game.index),
-            last_game.merge(
-                first_game[STATS_COLUMNS + ["game_id"]]
-                .add_prefix("opp_")
-                .rename(columns={"opp_game_id": "game_id"}),
-                on="game_id",
-                how="left",
-            ).set_index(last_game.index),
-        ]
-    )
-
-    games["src"] = games["opp_team"].map(team_abr_lookup)
-    games["dst"] = games["team"].map(team_abr_lookup)
+    seasons = seasons or True
+    schedule = nflreadpy.load_schedules(seasons).to_pandas()
+    team_stats = nflreadpy.load_team_stats(seasons=seasons).to_pandas()
+    games = build_games(schedule, team_stats)
 
     if output_file is not None:
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)

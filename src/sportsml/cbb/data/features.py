@@ -1,3 +1,5 @@
+from ...core.schema import GameSchema
+
 TEAM_STATS_COLUMNS = [
     "Win",
     "Score",
@@ -21,12 +23,15 @@ OPP_TEAM_STATS_COLUMNS = [f"{col}_OPP" for col in TEAM_STATS_COLUMNS]
 
 STATS_COLUMNS = TEAM_STATS_COLUMNS + OPP_TEAM_STATS_COLUMNS
 
-GRAPH_STATS_COLUMNS = TEAM_STATS_COLUMNS + OPP_TEAM_STATS_COLUMNS
-
-CATEGORICAL_COLUMNS = []
-
-TARGET_COLUMN = "PlusMinus"
-SEASON_COLUMN = "Season"
-DATE_COLUMN = "DayNum"
-TEAM_COLUMN = "TeamID"
-TEAM_OPP_COLUMN = "TeamID_OPP"
+SCHEMA = GameSchema(
+    season="Season",
+    date="DayNum",
+    team="TeamID",
+    opp="TeamID_OPP",
+    game_id="_id",
+    target="PlusMinus",
+    stats=tuple(STATS_COLUMNS),
+    location="Loc",
+    team_name="Team",
+    opp_name="Team_OPP",
+)

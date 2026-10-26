@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import torch
-from lightning.pytorch.core.mixins import HyperparametersMixin
 from torch import Tensor, nn
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
 from torch_geometric.utils import scatter
+
+from .base import GraphEncoder
 
 
 class EdgeConvEncoderLayer(MessagePassing):
@@ -77,7 +78,7 @@ class EdgeConvEncoderLayer(MessagePassing):
         return self.edge_mlp(msg_input)
 
 
-class EdgeConvEncoder(nn.Module, HyperparametersMixin):
+class EdgeConvEncoder(GraphEncoder):
     """Recurrent-style edge-driven graph convolution encoder.
 
     A **single** :class:`EdgeConvEncoderLayer` is applied ``num_layers`` times,
@@ -119,6 +120,8 @@ class EdgeConvEncoder(nn.Module, HyperparametersMixin):
             raise ValueError("num_layers must be >= 1.")
 
         self.num_layers = num_layers
+        self.edge_dim = edge_dim
+        self.out_dim = out_dim
         self.save_hyperparameters()
         self.hparams["cls"] = self.__class__
 
@@ -143,18 +146,17 @@ class EdgeConvEncoder(nn.Module, HyperparametersMixin):
         # Maps final hidden state → desired output dimension.
         self.output_proj = nn.Linear(hidden_dim, out_dim)
 
-    def forward(self, edge_index: Adj, edge_attr: Tensor) -> Tensor:
+    def forward(self, edge_index: Adj, edge_attr: Tensor, num_nodes: int) -> Tensor:
         """Encode all team nodes from game edge attributes.
 
         Args:
             edge_index: Graph connectivity of shape [2, E].
             edge_attr: Edge feature matrix of shape [E, edge_dim].
+            num_nodes: Number of team nodes, including teams without edges.
 
         Returns:
             Node embedding matrix of shape [N, out_dim].
         """
-        n = int(edge_index.max().item()) + 1
-
         # Normalise edge features once before any pooling or message passing.
         edge_attr = self.edge_norm(edge_attr)
 
@@ -164,7 +166,9 @@ class EdgeConvEncoder(nn.Module, HyperparametersMixin):
         # them.  Since the graph is directed and each game is represented as
         # two opposing directed edges, pooling to targets only avoids
         # double-counting.
-        x_init = scatter(edge_attr, edge_index[1], dim=0, dim_size=n, reduce="mean")
+        x_init = scatter(
+            edge_attr, edge_index[1], dim=0, dim_size=num_nodes, reduce="mean"
+        )
         x = self.node_init_proj(x_init)  # [N, hidden_dim]
 
         # --- Iterative refinement with weight-shared convolution ---

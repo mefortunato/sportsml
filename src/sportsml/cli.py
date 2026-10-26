@@ -1,27 +1,39 @@
+"""``sportsml <sport> {download,process,fit,predict}`` built from the registry.
+
+Every registered sport gets the same subcommands; per-sport defaults (paths,
+GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
+"""
+
 import jsonargparse
 import jsonargparse.typing
 import pandas as pd
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import MLFlowLogger
 
 from . import __version__
-from .cbb.data import features as cbb_features
-from .cbb.data.download import download as cbb_download
-from .cfb.data import features as cfb_features
-from .cfb.data.download import download as cfb_download
-from .graph.fit import fit as pyg_fit
-from .models.sklearn import train_sklearn
-from .nba.data import features as nba_features
-from .nba.data.download import download as nba_download
-from .nfl.data import features as nfl_features
-from .nfl.data.download import download as nfl_download
-from .utils.process import process
-from .wcbb.data import features as wcbb_features
-from .wcbb.data.download import download as wcbb_download
+from .core.process import process
+from .core.sport import Sport, all_sports
+from .inference.utils import predict
+from .models.gnn.fit import fit_gnn, gnn_config
+from .models.sklearn.fit import fit_sklearn
 
+# Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
+# and are read by the command itself. Without this, jsonargparse would read an
+# existing file's text into the argument while trying the DataFrame branch.
 jsonargparse.typing.register_type(
-    pd.DataFrame, lambda x: getattr(x, "filename"), lambda x: pd.read_csv(x)
+    pd.DataFrame,
+    serializer=lambda v: v if isinstance(v, str) else "<DataFrame>",
+    deserializer=lambda v: v,
 )
+
+SKLEARN_MODEL = {
+    "class_path": "sklearn.ensemble.RandomForestRegressor",
+    "init_args": {
+        "n_estimators": 300,
+        "min_samples_leaf": 5,
+        "max_features": 0.3,
+        "n_jobs": -1,
+        "random_state": 0,
+    },
+}
 
 
 def version():
@@ -29,195 +41,90 @@ def version():
     print(__version__)
 
 
-def cli():
-    jsonargparse.auto_cli(
-        {
-            "cbb": {
-                "download": cbb_download,
-                "process": process,
-                "pyg": {"fit": pyg_fit},
-                "sklearn": {"fit": train_sklearn},
+ENCODER = "sportsml.models.gnn.nn.encoder.edge_conv_encoder.EdgeConvEncoder"
+
+
+def gnn_model_config(sport: Sport) -> dict:
+    config = gnn_config(sport.name)
+    config["encoder"] = {"class_path": ENCODER, "init_args": config["encoder"]}
+    return config
+
+
+def gnn_trainer_config(sport: Sport) -> dict:
+    callbacks = "lightning.pytorch.callbacks"
+    return {
+        "max_epochs": 100,
+        "accelerator": "auto",
+        "devices": 1,
+        "logger": {
+            "class_path": "lightning.pytorch.loggers.MLFlowLogger",
+            "init_args": {
+                "experiment_name": sport.name,
+                "tracking_uri": "sqlite:///mlflow.db",
             },
-            "cfb": {
-                "download": cfb_download,
-                "process": process,
-                "sklearn": {"fit": train_sklearn},
-            },
-            "nba": {
-                "download": nba_download,
-                "process": process,
-                "sklearn": {"fit": train_sklearn},
-            },
-            "nfl": {
-                "download": nfl_download,
-                "process": process,
-                "sklearn": {"fit": train_sklearn},
-            },
-            "wcbb": {
-                "download": wcbb_download,
-                "process": process,
-                "pyg": {"fit": pyg_fit},
-                "sklearn": {"fit": train_sklearn},
-            },
-            "version": version,
         },
+        "callbacks": [
+            {
+                "class_path": f"{callbacks}.EarlyStopping",
+                "init_args": {"monitor": "val_loss", "patience": 10, "mode": "min"},
+            },
+            {
+                "class_path": f"{callbacks}.ModelCheckpoint",
+                "init_args": {"monitor": "val_loss", "mode": "min"},
+            },
+        ],
+    }
+
+
+def sport_defaults(sport: Sport) -> dict:
+    n = sport.name
+    raw, games = f"data/{n}/raw.csv", f"data/{n}/games.csv"
+    return {
+        f"{n}.download.output_file": raw,
+        f"{n}.process.sport": n,
+        f"{n}.process.games": raw,
+        f"{n}.process.output_file": games,
+        f"{n}.fit.sklearn.sport": n,
+        f"{n}.fit.sklearn.games": games,
+        f"{n}.fit.sklearn.model": SKLEARN_MODEL,
+        f"{n}.fit.sklearn.save_dir": f"models/{n}/sklearn",
+        f"{n}.fit.gnn.sport": n,
+        f"{n}.fit.gnn.games": games,
+        f"{n}.fit.gnn.model": gnn_model_config(sport),
+        f"{n}.fit.gnn.trainer": gnn_trainer_config(sport),
+        f"{n}.fit.gnn.save_dir": f"models/{n}/gnn",
+        f"{n}.predict.model_dir": f"models/{n}/sklearn",
+        f"{n}.predict.games": games,
+        f"{n}.predict.output_file": f"predictions/{n}.csv",
+    }
+
+
+def cli(args=None) -> None:
+    """Console entry point (its return value would become the exit status)."""
+    run(args)
+
+
+def run(args=None):
+    """Parse ``args`` and run the command; returns the command's result."""
+    sports = all_sports()
+    components = {
+        name: {
+            "download": sport.download,
+            "process": process,
+            "fit": {"sklearn": fit_sklearn, "gnn": fit_gnn},
+            "predict": predict,
+        }
+        for name, sport in sports.items()
+    }
+    components["version"] = version
+    defaults = {}
+    for sport in sports.values():
+        defaults |= sport_defaults(sport)
+    return jsonargparse.auto_cli(
+        components,
+        args=args,
         as_positional=False,
-        set_defaults={
-            "cbb.download.output_file": "data/cbb/raw.csv",
-            "cbb.process.games": "data/cbb/raw.csv",
-            "cbb.process.stats_columns": cbb_features.GRAPH_STATS_COLUMNS,
-            "cbb.process.target_column": cbb_features.TARGET_COLUMN,
-            "cbb.process.output_file": "data/cbb/data.csv",
-            "cbb.pyg.fit.datamodule": {
-                "games": "data/cbb/data.csv",
-                "stats_columns": cbb_features.GRAPH_STATS_COLUMNS,
-                "target_column": cbb_features.TARGET_COLUMN,
-                "season_column": cbb_features.SEASON_COLUMN,
-                "date_column": cbb_features.DATE_COLUMN,
-            },
-            "cbb.pyg.fit.model": {
-                "encoder": {
-                    "class_path": "sportsml.graph.nn.encoder.edge_conv_encoder.EdgeConvEncoder",
-                    "init_args": {
-                        "edge_dim": len(cbb_features.GRAPH_STATS_COLUMNS),
-                        "hidden_dim": 300,
-                        "out_dim": 100,
-                        "num_layers": 10,
-                    },
-                },
-                "predictor": {
-                    "in_dim": 100,
-                    "hidden_dim": 100,
-                    "out_dim": 1,
-                },
-            },
-            "cbb.pyg.fit.save_dir": "models/cbb/pyg",
-            "cbb.pyg.fit.trainer": {
-                "devices": 1,
-                "max_epochs": 100,
-                "logger": MLFlowLogger("cbb", tracking_uri="sqlite:///mlflow.db"),
-                "callbacks": [
-                    EarlyStopping(monitor="val_loss", patience=10, mode="min"),
-                    ModelCheckpoint(monitor="val_loss", mode="min"),
-                ],
-            },
-            "cbb.sklearn.fit.games": "data/cbb/raw.csv",
-            "cbb.sklearn.fit.model": {
-                "class_path": "sklearn.ensemble.RandomForestRegressor"
-            },
-            "cbb.sklearn.fit.stats_columns": cbb_features.STATS_COLUMNS,
-            "cbb.sklearn.fit.categorical_columns": cbb_features.CATEGORICAL_COLUMNS,
-            "cbb.sklearn.fit.target_column": cbb_features.TARGET_COLUMN,
-            "cbb.sklearn.fit.season_column": cbb_features.SEASON_COLUMN,
-            "cbb.sklearn.fit.date_column": cbb_features.DATE_COLUMN,
-            "cbb.sklearn.fit.team_column": cbb_features.TEAM_COLUMN,
-            "cbb.sklearn.fit.team_opp_column": cbb_features.TEAM_OPP_COLUMN,
-            "cbb.sklearn.fit.save_dir": "models/cbb/sklearn",
-            "cbb.sklearn.fit.print_metrics": True,
-            "cfb.download.output_file": "data/cfb/raw.csv",
-            "cfb.process.games": "data/cfb/raw.csv",
-            "cfb.process.stats_columns": cfb_features.GRAPH_FEATURES,
-            "cfb.process.target_column": cfb_features.TARGET_COLUMN,
-            "cfb.process.output_file": "data/cfb/data.csv",
-            "cfb.sklearn.fit.games": "data/cfb/data.csv",
-            "cfb.sklearn.fit.model": {
-                "class_path": "sklearn.ensemble.RandomForestRegressor"
-            },
-            "cfb.sklearn.fit.stats_columns": cfb_features.STATS_COLUMNS,
-            "cfb.sklearn.fit.categorical_columns": cfb_features.CATEGORICAL_COLUMNS,
-            "cfb.sklearn.fit.target_column": cfb_features.TARGET_COLUMN,
-            "cfb.sklearn.fit.season_column": cfb_features.SEASON_COLUMN,
-            "cfb.sklearn.fit.date_column": cfb_features.DATE_COLUMN,
-            "cfb.sklearn.fit.team_column": cfb_features.TEAM_COLUMN,
-            "cfb.sklearn.fit.team_opp_column": cfb_features.TEAM_OPP_COLUMN,
-            "cfb.sklearn.fit.print_metrics": True,
-            "nba.download.output_file": "data/nba/raw.csv",
-            "nba.process.games": "data/nba/raw.csv",
-            "nba.process.stats_columns": nba_features.GRAPH_FEATURES,
-            "nba.process.target_column": nba_features.TARGET_COLUMN,
-            "nba.process.output_file": "data/nba/data.csv",
-            "nba.sklearn.fit.games": "data/nba/data.csv",
-            "nba.sklearn.fit.model": {
-                "class_path": "sklearn.ensemble.RandomForestRegressor"
-            },
-            "nba.sklearn.fit.stats_columns": nba_features.STATS_COLUMNS,
-            "nba.sklearn.fit.categorical_columns": nba_features.CATEGORICAL_COLUMNS,
-            "nba.sklearn.fit.target_column": nba_features.TARGET_COLUMN,
-            "nba.sklearn.fit.season_column": nba_features.SEASON_COLUMN,
-            "nba.sklearn.fit.date_column": nba_features.DATE_COLUMN,
-            "nba.sklearn.fit.team_column": nba_features.TEAM_COLUMN,
-            "nba.sklearn.fit.team_opp_column": nba_features.TEAM_OPP_COLUMN,
-            "nba.sklearn.fit.print_metrics": True,
-            "nfl.download.output_file": "data/nfl/raw.csv",
-            "nfl.process.games": "data/nfl/raw.csv",
-            "nfl.process.stats_columns": nfl_features.GRAPH_FEATURES,
-            "nfl.process.target_column": nfl_features.TARGET_COLUMN,
-            "nfl.process.output_file": "data/nfl/data.csv",
-            "nfl.sklearn.fit.games": "data/nfl/data.csv",
-            "nfl.sklearn.fit.model": {
-                "class_path": "sklearn.ensemble.RandomForestRegressor"
-            },
-            "nfl.sklearn.fit.stats_columns": nfl_features.STATS_COLUMNS,
-            "nfl.sklearn.fit.meta_columns": nfl_features.META_COLUMNS,
-            "nfl.sklearn.fit.categorical_columns": nfl_features.CATEGORICAL_COLUMNS,
-            "nfl.sklearn.fit.target_column": nfl_features.TARGET_COLUMN,
-            "nfl.sklearn.fit.season_column": nfl_features.SEASON_COLUMN,
-            "nfl.sklearn.fit.date_column": nfl_features.DATE_COLUMN,
-            "nfl.sklearn.fit.team_column": nfl_features.TEAM_COLUMN,
-            "nfl.sklearn.fit.team_opp_column": nfl_features.TEAM_OPP_COLUMN,
-            "nfl.sklearn.fit.print_metrics": True,
-            "wcbb.download.output_file": "data/wcbb/raw.csv",
-            "wcbb.process.games": "data/wcbb/raw.csv",
-            "wcbb.process.stats_columns": wcbb_features.GRAPH_STATS_COLUMNS,
-            "wcbb.process.target_column": wcbb_features.TARGET_COLUMN,
-            "wcbb.process.output_file": "data/wcbb/data.csv",
-            "wcbb.pyg.fit.datamodule": {
-                "games": "data/wcbb/data.csv",
-                "stats_columns": wcbb_features.GRAPH_STATS_COLUMNS,
-                "target_column": wcbb_features.TARGET_COLUMN,
-                "season_column": wcbb_features.SEASON_COLUMN,
-                "date_column": wcbb_features.DATE_COLUMN,
-            },
-            "wcbb.pyg.fit.model": {
-                "encoder": {
-                    "class_path": "sportsml.graph.nn.encoder.edge_conv_encoder.EdgeConvEncoder",
-                    "init_args": {
-                        "edge_dim": len(wcbb_features.GRAPH_STATS_COLUMNS),
-                        "hidden_dim": 128,
-                        "out_dim": 64,
-                        "num_layers": 5,
-                    },
-                },
-                "predictor": {
-                    "in_dim": 64,
-                    "hidden_dim": 64,
-                    "out_dim": 1,
-                },
-            },
-            "wcbb.pyg.fit.save_dir": "models/wcbb/pyg",
-            "wcbb.pyg.fit.trainer": {
-                "devices": 1,
-                "max_epochs": 100,
-                "logger": MLFlowLogger("wcbb", tracking_uri="sqlite:///mlflow.db"),
-                "callbacks": [
-                    EarlyStopping(monitor="val_loss", patience=10, mode="min"),
-                    ModelCheckpoint(monitor="val_loss", mode="min"),
-                ],
-            },
-            "wcbb.sklearn.fit.games": "data/wcbb/raw.csv",
-            "wcbb.sklearn.fit.model": {
-                "class_path": "sklearn.ensemble.RandomForestRegressor"
-            },
-            "wcbb.sklearn.fit.stats_columns": wcbb_features.STATS_COLUMNS,
-            "wcbb.sklearn.fit.categorical_columns": wcbb_features.CATEGORICAL_COLUMNS,
-            "wcbb.sklearn.fit.target_column": wcbb_features.TARGET_COLUMN,
-            "wcbb.sklearn.fit.season_column": wcbb_features.SEASON_COLUMN,
-            "wcbb.sklearn.fit.date_column": wcbb_features.DATE_COLUMN,
-            "wcbb.sklearn.fit.team_column": wcbb_features.TEAM_COLUMN,
-            "wcbb.sklearn.fit.team_opp_column": wcbb_features.TEAM_OPP_COLUMN,
-            "wcbb.sklearn.fit.save_dir": "models/wcbb/sklearn",
-            "wcbb.sklearn.fit.print_metrics": True,
-        },
+        set_defaults=defaults,
         parser_mode="omegaconf+",
     )
 

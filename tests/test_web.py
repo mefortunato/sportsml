@@ -281,3 +281,42 @@ def test_performance_summarizes_the_walk_forward_pool(client, snapshot):
     decided = (results.dropna(subset=["market_margin"])["margin"] != 0).sum()
     assert sum(b["n"] for b in perf["calibration"]["model"]) == decided
     assert set(perf["ats_by_season"]) == {"2023"}
+
+
+def test_nfl_playoffs_marks_the_last_four():
+    from sportsml.web.sports.nfl import playoffs
+
+    rows = [
+        # season, game_type, team, result (team's margin)
+        (2024, "CON", "KC", 3), (2024, "CON", "BUF", -3),
+        (2024, "CON", "PHI", 32), (2024, "CON", "WAS", -32),
+        (2024, "SB", "PHI", 18), (2024, "SB", "KC", -18),
+        (2024, "DIV", "DET", -14), (2024, "REG", "NYG", -10),
+    ]  # fmt: skip
+    games = pd.DataFrame(rows, columns=["season", "game_type", "team", "result"])
+    assert playoffs(games) == {
+        2024: {
+            "PHI": "champion",
+            "KC": "runner_up",
+            "BUF": "semifinal",
+            "WAS": "semifinal",
+        }
+    }
+
+
+def test_rankings_carry_the_views_playoff_results(webdata, monkeypatch):
+    from dataclasses import replace
+
+    from sportsml.web import views
+
+    toy = views.get_view("toy")
+    marked = replace(
+        toy,
+        playoffs=lambda games: {2023: {"T00": "champion", "T01": "runner_up"}},
+        playoff_labels={"champion": "Won the final", "runner_up": "Lost the final"},
+    )
+    monkeypatch.setitem(views._views, "toy", marked)
+    rankings = Snapshot.load(webdata / "toy").rankings()
+    by_season = {s["season"]: s["playoffs"] for s in rankings["seasons"]}
+    assert by_season == {2024: {}, 2023: {"T00": "champion", "T01": "runner_up"}}
+    assert rankings["playoff_labels"]["champion"] == "Won the final"

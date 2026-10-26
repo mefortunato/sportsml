@@ -1,4 +1,4 @@
-import type { RankingSeason, Team } from './types';
+import type { PlayoffStage, RankingSeason, Team } from './types';
 
 /** Highlighted teams: team key -> series slot (1-3). The slot stays with the
  * team while it is highlighted, so its color never changes under it. */
@@ -64,10 +64,12 @@ export function yExtent(season: RankingSeason): { max: number; step: number } {
 	return { max: Math.max(step, Math.ceil(largest / step) * step), step };
 }
 
-/** A conference, optionally narrowed to one of its divisions. */
+/** A conference, optionally narrowed to one of its divisions, or the
+ * teams that reached the last playoff rounds. */
 export interface TeamFilter {
 	conference?: string;
 	division?: string;
+	playoffs?: boolean;
 }
 
 /** Conferences and their divisions, from the teams' own metadata (empty
@@ -89,10 +91,30 @@ export function filterOptions(teams: Team[]): {
 	};
 }
 
-export function matchesFilter(team: Team, filter: TeamFilter): boolean {
+export function matchesFilter(
+	team: Team,
+	filter: TeamFilter,
+	playoffs: Record<string, PlayoffStage> = {}
+): boolean {
+	if (filter.playoffs && !(team.team in playoffs)) return false;
 	if (filter.conference && team.conference !== filter.conference) return false;
 	if (filter.division && team.division !== filter.division) return false;
 	return true;
+}
+
+const STAGE_ORDER: PlayoffStage[] = ['champion', 'runner_up', 'semifinal'];
+
+/** The final teams with their league rank at `index`: champion, runner-up,
+ * then the rest by rank. */
+export function playoffRanks(
+	season: RankingSeason,
+	index: number
+): { row: RankRow; stage: PlayoffStage }[] {
+	const playoffs = season.playoffs ?? {};
+	return rankAt(season, index)
+		.filter((row) => row.team.team in playoffs)
+		.map((row) => ({ row, stage: playoffs[row.team.team] }))
+		.sort((a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage) || a.row.rank - b.row.rank);
 }
 
 /** Highlights after the visible teams change: teams still visible keep their

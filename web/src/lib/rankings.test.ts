@@ -3,6 +3,7 @@ import {
 	defaultPins,
 	filterOptions,
 	matchesFilter,
+	playoffRanks,
 	rankAt,
 	reconcilePins,
 	togglePin,
@@ -92,5 +93,28 @@ describe('division filters', () => {
 		expect(reconcilePins({ B: 1, A: 2 }, rows)).toEqual({ A: 2, D: 1, C: 3 });
 		expect(reconcilePins({ A: 3 }, rows.slice(0, 2))).toEqual({ A: 3, D: 1 });
 		expect(reconcilePins({}, [])).toEqual({});
+	});
+});
+
+describe('playoff marks', () => {
+	const marked: RankingSeason = {
+		...season,
+		playoffs: { D: 'champion', A: 'semifinal', B: 'semifinal', C: 'runner_up' }
+	};
+
+	it('filters to the final teams', () => {
+		const keep = marked.teams.filter((t) => matchesFilter(t.team, { playoffs: true }, marked.playoffs));
+		expect(keep.map((t) => t.team.team)).toEqual(['A', 'B', 'C', 'D']);
+		expect(matchesFilter(team('A'), { playoffs: true }, {})).toBe(false);
+	});
+
+	it('lists champion, runner-up, then the rest by league rank', () => {
+		// at the last date C has no rating, so it is left out
+		expect(playoffRanks(marked, 2).map(({ row, stage }) => [row.team.team, row.rank, stage])).toEqual([
+			['D', 3, 'champion'],
+			['B', 1, 'semifinal'],
+			['A', 2, 'semifinal']
+		]);
+		expect(playoffRanks(season, 2)).toEqual([]);
 	});
 });

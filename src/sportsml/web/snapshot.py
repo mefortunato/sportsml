@@ -93,6 +93,7 @@ class Snapshot:
             {stat.key: stat.value(self.played) for stat in view.stats},
             index=self.played.index,
         )
+        self.playoffs = view.playoffs(self.played) if view.playoffs else {}
         self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
         self.rankings_table = self._with_current_rankings(predictor)
         self.upcoming_games = self._predict_upcoming(predictor)
@@ -455,7 +456,8 @@ class Snapshot:
         return self.performance_summary
 
     def rankings(self) -> dict:
-        """Power ratings per season: one value per team per date."""
+        """Power ratings per season: one value per team per date, and how
+        the season ended for the teams that reached the last playoff rounds."""
         table = self.rankings_table
         baked = (
             set(self.baked_rankings["season"]) if len(self.baked_rankings) else set()
@@ -476,9 +478,16 @@ class Snapshot:
                     "source": "backtest" if season in baked else "current",
                     "dates": dates,
                     "teams": teams,
+                    "playoffs": self.playoffs.get(int(season), {}),
                 }
             )
-        return py({"seasons": seasons, "date_label": self.view.date_label})
+        return py(
+            {
+                "seasons": seasons,
+                "date_label": self.view.date_label,
+                "playoff_labels": dict(self.view.playoff_labels),
+            }
+        )
 
     def info(self) -> dict:
         return py(

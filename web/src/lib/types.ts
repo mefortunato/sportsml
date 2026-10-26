@@ -189,15 +189,22 @@ export interface RankingSeries {
 	ratings: (number | null)[];
 }
 
+/** How a team's season ended, for the last playoff rounds. */
+export type PlayoffStage = 'champion' | 'runner_up' | 'semifinal';
+
 export interface RankingSeason {
 	season: number;
 	/** backtest: that season's walk-forward model; current: the served model. */
 	source: 'backtest' | 'current';
 	dates: number[];
 	teams: RankingSeries[];
+	/** Teams that reached the last playoff rounds (empty until they are played). */
+	playoffs?: Record<string, PlayoffStage>;
 }
 
 export interface Rankings {
 	seasons: RankingSeason[];
 	date_label: string;
+	/** Display label per playoff stage, e.g. "Won Super Bowl". */
+	playoff_labels?: Partial<Record<PlayoffStage, string>>;
 }

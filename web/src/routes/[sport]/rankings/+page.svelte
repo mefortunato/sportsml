@@ -6,12 +6,14 @@
 		filterOptions,
 		matchesFilter,
 		MAX_PINS,
+		playoffRanks,
 		rankAt,
 		reconcilePins,
 		togglePin,
 		type Pins,
 		type TeamFilter
 	} from '$lib/rankings';
+	import type { PlayoffStage } from '$lib/types';
 	import { untrack } from 'svelte';
 
 	let { data } = $props();
@@ -27,12 +29,33 @@
 	let filter = $state<TeamFilter>({});
 
 	const options = $derived(filterOptions(season ? season.teams.map((t) => t.team) : []));
+	// how the season ended for the last teams standing (a quick check of the
+	// ratings: these teams should rank near the top)
+	const playoffs = $derived(season?.playoffs ?? {});
+	const hasPlayoffs = $derived(Object.keys(playoffs).length > 0);
+	const SHORT: Record<PlayoffStage, string> = {
+		champion: 'Champion',
+		runner_up: 'Runner-up',
+		semifinal: 'Final four'
+	};
+	const stageLabel = (stage: PlayoffStage) => rankings.playoff_labels?.[stage] ?? SHORT[stage];
+
+	// a season whose playoffs are not played yet has no final four to show
+	$effect(() => {
+		if (filter.playoffs && !hasPlayoffs) filter = {};
+	});
+
+	const filtering = $derived(Boolean(filter.conference || filter.playoffs));
 	const visible = $derived(
-		season && filter.conference
-			? new Set(season.teams.filter((t) => matchesFilter(t.team, filter)).map((t) => t.team.team))
+		season && filtering
+			? new Set(
+					season.teams.filter((t) => matchesFilter(t.team, filter, playoffs)).map((t) => t.team.team)
+				)
 			: null
 	);
-	const filterLabel = $derived(filter.division ?? filter.conference ?? null);
+	const filterLabel = $derived(
+		filter.playoffs ? 'final four' : (filter.division ?? filter.conference ?? null)
+	);
 	const isVisible = (team: string) => !visible || visible.has(team);
 
 	// Every season or filter change starts from that view's top teams; teams
@@ -45,6 +68,7 @@
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);
 	const rows = $derived(season ? rankAt(season, shown).filter((r) => isVisible(r.team.team)) : []);
+	const finalists = $derived(season && hasPlayoffs ? playoffRanks(season, shown) : []);
 	const divisionLabel = (conference: string, division: string) =>
 		division.startsWith(`${conference} `) ? division.slice(conference.length + 1) : division;
 	const pinnedTeams = $derived(
@@ -75,9 +99,9 @@
 				>
 			{/each}
 		</nav>
-		{#if options.conferences.length}
+		{#if options.conferences.length || hasPlayoffs}
 			<nav class="filters" aria-label="Teams">
-				<button class="pill" class:accent={!filter.conference} aria-pressed={!filter.conference} onclick={() => (filter = {})}
+				<button class="pill" class:accent={!filtering} aria-pressed={!filtering} onclick={() => (filter = {})}
 					>All teams</button
 				>
 				{#each options.conferences as conference (conference)}
@@ -88,6 +112,14 @@
 						onclick={() => (filter = { conference })}>{conference}</button
 					>
 				{/each}
+				{#if hasPlayoffs}
+					<button
+						class="pill"
+						class:accent={filter.playoffs}
+						aria-pressed={!!filter.playoffs}
+						onclick={() => (filter = { playoffs: true })}>Final four</button
+					>
+				{/if}
 			</nav>
 			{#if filter.conference && options.divisions[filter.conference]?.length}
 				{@const conference = filter.conference}
@@ -140,6 +172,15 @@
 				{#if filterLabel}<span class="muted"> · {filterLabel}</span>{/if}
 				{#if index !== null}<span class="muted small">(hovered)</span>{/if}
 			</h2>
+			{#if finalists.length}
+				<p class="muted small check">
+					Where the final four ranked:
+					{#each finalists as { row, stage }, i (row.team.team)}
+						{i ? ' · ' : ''}<strong class="finalist">{row.team.team} #{row.rank}</strong>
+						({stageLabel(stage)})
+					{/each}
+				</p>
+			{/if}
 			<table class="ranks">
 				<thead>
 					<tr>
@@ -160,6 +201,13 @@
 									<TeamBadge team={row.team} label="none" size={22} />
 									<span class="name full">{row.team.name}</span>
 									<span class="name short">{row.team.nickname ?? row.team.team}</span>
+									{#if playoffs[row.team.team]}
+										{@const stage = playoffs[row.team.team]}
+										<span class="stage" class:champion={stage === 'champion'} title={stageLabel(stage)}>
+											<span class="full">{stageLabel(stage)}</span>
+											<span class="short">{SHORT[stage]}</span>
+										</span>
+									{/if}
 								</button>
 							</td>
 							<td class="num tabular">{signed(row.rating)}</td>
@@ -255,6 +303,28 @@
 	}
 	.short {
 		display: none;
+	}
+	.stage {
+		flex: none;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		padding: 1px 8px;
+		white-space: nowrap;
+	}
+	.stage.champion {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: var(--accent-soft);
+	}
+	.check {
+		margin: 0 0 8px;
+	}
+	.finalist {
+		color: var(--text);
+		font-variant-numeric: tabular-nums;
 	}
 	@media (max-width: 640px) {
 		.full {

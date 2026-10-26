@@ -19,6 +19,21 @@ def kickoff(row: pd.Series) -> str | None:
     return f"{day} {time}" if isinstance(time, str) else day
 
 
+def playoffs(games: pd.DataFrame) -> dict[int, dict[str, str]]:
+    """Super Bowl winner and loser, and the conference championship losers."""
+    out: dict[int, dict[str, str]] = {}
+    last_rounds = games[games["game_type"].isin(["SB", "CON"])]
+    for row in last_rounds.itertuples():
+        if row.game_type == "SB":
+            stage = "champion" if row.result > 0 else "runner_up"
+        elif row.result < 0:
+            stage = "semifinal"
+        else:
+            continue  # conference champions are marked by the Super Bowl
+        out.setdefault(int(row.season), {})[str(row.team)] = stage
+    return out
+
+
 VIEW = SportView(
     sport="nfl",
     label="NFL",
@@ -26,6 +41,12 @@ VIEW = SportView(
     load_teams=load_teams,
     score=("score", "opp_score"),
     kickoff=kickoff,
+    playoffs=playoffs,
+    playoff_labels={
+        "champion": "Won Super Bowl",
+        "runner_up": "Lost Super Bowl",
+        "semifinal": "Lost conference championship",
+    },
     stats=(
         Stat("points", "Points scored", column("score")),
         Stat("points_allowed", "Points allowed", column("opp_score"), 1, False),

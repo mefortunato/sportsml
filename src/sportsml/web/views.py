@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
+
+# How a team's season ended, for the last rounds of the playoffs.
+PLAYOFF_STAGES = ("champion", "runner_up", "semifinal")
 
 # Team metadata columns every view's ``load_teams`` returns.
 TEAM_COLUMNS = (
@@ -60,6 +63,10 @@ class SportView:
         score: ``(team, opponent)`` points columns of the games table.
         kickoff: Kickoff time of a games-table row, for display.
         recent_games: How many recent games to show per team.
+        playoffs: Played games -> ``{season: {team: stage}}`` for the teams
+            that reached the last rounds (stages from
+            :data:`PLAYOFF_STAGES`); ``None`` if the sport has no playoffs.
+        playoff_labels: Display label per stage.
     """
 
     sport: str
@@ -70,6 +77,8 @@ class SportView:
     score: tuple[str, str]
     kickoff: Callable[[pd.Series], str | None] = lambda row: None
     recent_games: int = 5
+    playoffs: Callable[[pd.DataFrame], dict[int, dict[str, str]]] | None = None
+    playoff_labels: dict[str, str] = field(default_factory=dict)
 
 
 BUILTIN_VIEWS = ("nfl",)

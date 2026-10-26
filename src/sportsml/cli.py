@@ -1,4 +1,4 @@
-"""``sportsml <sport> {download,process,fit,predict}`` built from the registry.
+"""``sportsml <sport> {download,process,fit,predict,backtest}`` from the registry.
 
 Every registered sport gets the same subcommands; per-sport defaults (paths,
 GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
@@ -9,6 +9,7 @@ import jsonargparse.typing
 import pandas as pd
 
 from . import __version__
+from .backtest import backtest
 from .core.process import process
 from .core.sport import Sport, all_sports
 from .inference.utils import predict
@@ -96,6 +97,9 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.predict.model_dir": f"models/{n}/sklearn",
         f"{n}.predict.games": games,
         f"{n}.predict.output_file": f"predictions/{n}.csv",
+        f"{n}.backtest.sport": n,
+        f"{n}.backtest.games": games,
+        f"{n}.backtest.output_dir": f"backtests/{n}",
     }
 
 
@@ -113,6 +117,7 @@ def run(args=None):
             "process": process,
             "fit": {"sklearn": fit_sklearn, "gnn": fit_gnn},
             "predict": predict,
+            "backtest": backtest,
         }
         for name, sport in sports.items()
     }

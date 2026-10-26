@@ -34,6 +34,10 @@ class GameSchema:
         opp_name: Optional display name of ``opp``.
         display: Columns carried into predictions for display only (kickoff
             time, betting lines, ...); never used as features.
+        market_spread: The market's expected margin for ``team`` (positive =
+            favored), used as the backtest baseline.
+        market_moneyline: ``(team, opponent)`` American moneyline columns,
+            for market-implied win probabilities.
     """
 
     season: str
@@ -51,6 +55,8 @@ class GameSchema:
     team_name: str | None = None
     opp_name: str | None = None
     display: tuple[str, ...] = ()
+    market_spread: str | None = None
+    market_moneyline: tuple[str, str] | None = None
 
     @property
     def pre_game_columns(self) -> list[str]:
@@ -93,6 +99,13 @@ def played(games: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:
 def upcoming(games: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:
     """Rows of games that have not been played yet."""
     return games[games[schema.target].isna()]
+
+
+def one_row_per_game(games: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:
+    """Keep one perspective of each game: the home team's where there is one."""
+    if schema.location:
+        games = games.sort_values(schema.location, ascending=False, kind="stable")
+    return games.drop_duplicates(schema.game_id)
 
 
 def mirror(matchups: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:

@@ -156,3 +156,4 @@ notebooks/lightning_logs
 *.ckpt
 *.tar.gz
 /predictions
+/backtests

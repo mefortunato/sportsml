@@ -17,6 +17,8 @@ TOY_SCHEMA = GameSchema(
     context=("rest", "opp_rest"),
     categorical=("surface",),
     paired=(("rest", "opp_rest"),),
+    negated=("spread",),
+    market_spread="spread",
 )
 
 
@@ -46,6 +48,8 @@ def make_games(
                 rest_a, rest_b = rng.integers(5, 9, 2)
                 pts_a = 21 + off[a] - dfn[b] + home_advantage * loc / 2
                 pts_b = 21 + off[b] - dfn[a] - home_advantage * loc / 2
+                # a market that knows the true expected margin, to the half point
+                spread = round(2 * (pts_a - pts_b)) / 2
                 pts_a += rng.normal(0, noise)
                 pts_b += rng.normal(0, noise)
                 yds_a = 300 + 12 * (off[a] - dfn[b]) + rng.normal(0, 40)
@@ -72,6 +76,7 @@ def make_games(
                             "yards": yds,
                             "opp_yards": oyds,
                             "margin": round(pts) - round(opts),
+                            "spread": sign * spread,
                         }
                     )
     games = pd.DataFrame(rows)

@@ -62,17 +62,28 @@ def default_model(sport: str, context: list[str] | None = None) -> GraphModel:
     )
 
 
-def default_trainer(max_epochs: int = 100, patience: int = 10) -> pl.Trainer:
-    """CPU or GPU (whichever is available), early stopping on val_loss."""
+def default_trainer(
+    max_epochs: int = 100,
+    patience: int = 10,
+    root_dir: str | None = None,
+    **kwargs,
+) -> pl.Trainer:
+    """CPU or GPU (whichever is available), early stopping on val_loss.
+
+    Checkpoints go to ``root_dir`` (default: a temporary directory; the saved
+    predictor already holds the best weights). ``kwargs`` go to the Trainer.
+    """
     return pl.Trainer(
         max_epochs=max_epochs,
         accelerator="auto",
         devices=1,
         logger=False,
+        default_root_dir=root_dir or tempfile.mkdtemp(prefix="sportsml-"),
         callbacks=[
             pl.callbacks.EarlyStopping(monitor="val_loss", patience=patience),
             pl.callbacks.ModelCheckpoint(monitor="val_loss", mode="min"),
         ],
+        **kwargs,
     )
 
 

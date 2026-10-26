@@ -123,4 +123,6 @@ SCHEMA = GameSchema(
     ),
     negated=("spread_line",),
     display=("gameday", "gametime", *MARKET_COLUMNS),
+    market_spread="spread_line",
+    market_moneyline=("moneyline", "opp_moneyline"),
 )

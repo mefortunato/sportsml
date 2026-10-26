@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..core.io import Table, read_table
 from ..core.predictor import Predictor, load_predictor
-from ..core.schema import upcoming
+from ..core.schema import one_row_per_game, upcoming
 
 
 def all_matchups(predictor: Predictor, location: int = 0) -> pd.DataFrame:
@@ -54,10 +54,7 @@ def upcoming_matchups(
     season = games[schema.season].max() if season is None else season
     games = games[games[schema.season] == season]
     date = games[schema.date].min() if date is None else date
-    games = games[games[schema.date] == date]
-    if schema.location:
-        games = games.sort_values(schema.location, ascending=False)
-    games = games.drop_duplicates(schema.game_id)
+    games = one_row_per_game(games[games[schema.date] == date], schema)
     columns = schema.key_columns + schema.pre_game_columns + list(schema.display)
     columns += [c for c in (schema.team_name, schema.opp_name) if c]
     return games[[c for c in columns if c in games]].reset_index(drop=True)

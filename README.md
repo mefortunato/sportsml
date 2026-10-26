@@ -51,6 +51,38 @@ uv run sportsml nfl fit gnn --model.encoder.init_args.num_layers 2 --trainer.max
 GNN runs log to MLflow (`sqlite:///mlflow.db`); view them with
 `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db`.
 
+## Backtesting against the market
+
+```sh
+uv run sportsml nfl backtest                 # sklearn, last 5 complete seasons
+uv run sportsml nfl backtest --family gnn --seasons '[2023, 2024, 2025]'
+```
+
+For each test season the model is fit on earlier seasons only, then the season
+is replayed week by week: team state is refreshed from the games played so far
+and that week's games are predicted. This is the same loop as production
+(retrain occasionally, refresh weekly), so there is no lookahead.
+
+The baseline is the Vegas line from the nflverse schedule. Its margin is the
+spread and its win probability comes from the no-vig moneylines. The summary
+prints:
+
+- RMSE, accuracy, Brier score and log loss for the model and the market on
+  the same games, overall, by season, and for the first four weeks vs the
+  rest;
+- against-the-spread results from betting the model's side whenever it
+  disagrees with the spread by more than 0-5 points, with win rate, 95% CI
+  and ROI at -110 (break-even is 52.38%);
+- the correlation between the model's edge (model margin minus spread) and
+  the cover margin (result minus spread). It is above zero only if the model
+  knows something the spread does not.
+
+`backtests/nfl/<family>_games.csv` holds every game's model and market
+prediction, and `<family>_summary.json` the summary. Any model family can be
+backtested from Python with `sportsml.backtest.walk_forward(games, sport,
+fitter, seasons)`, where `fitter(games, split)` returns a fitted
+`Predictor`.
+
 ## Sports and data sources
 
 | Sport | Command | Source | Credentials |

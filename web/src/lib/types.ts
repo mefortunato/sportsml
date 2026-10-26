@@ -145,3 +145,59 @@ export interface ChallengeAnswer {
 	result: GameResult;
 	model: Prediction & { correct: boolean };
 }
+
+/** Model and (when the sport has lines) market metrics on the same games. */
+export interface SourceMetrics {
+	model: Metrics;
+	market?: Metrics;
+}
+
+/** Betting the model's side vs the spread when it disagrees by > min_edge. */
+export interface AtsRow {
+	min_edge: number;
+	bets: number;
+	wins: number;
+	losses: number;
+	pushes: number;
+	win_pct: number | null;
+	ci95_low: number | null;
+	ci95_high: number | null;
+	roi: number;
+}
+
+export interface CalibrationBin {
+	predicted: number;
+	actual: number;
+	n: number;
+}
+
+/** Walk-forward backtest results (the same predictions as the challenge). */
+export interface Performance {
+	seasons: number[];
+	overall: SourceMetrics;
+	by_season: Record<string, SourceMetrics>;
+	by_phase: Record<string, SourceMetrics>;
+	ats?: AtsRow[];
+	ats_by_season?: Record<string, AtsRow>;
+	edge_correlation?: { r: number; ci95_low: number; ci95_high: number };
+	calibration: { model: CalibrationBin[]; market?: CalibrationBin[] };
+}
+
+export interface RankingSeries {
+	team: Team;
+	/** Average predicted margin vs every other team, before each date. */
+	ratings: (number | null)[];
+}
+
+export interface RankingSeason {
+	season: number;
+	/** backtest: that season's walk-forward model; current: the served model. */
+	source: 'backtest' | 'current';
+	dates: number[];
+	teams: RankingSeries[];
+}
+
+export interface Rankings {
+	seasons: RankingSeason[];
+	date_label: string;
+}

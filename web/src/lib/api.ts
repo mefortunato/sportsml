@@ -2,6 +2,8 @@ import type {
 	ChallengeAnswer,
 	ChallengeGame,
 	GameDetail,
+	Performance,
+	Rankings,
 	Side,
 	SportInfo,
 	Team,
@@ -52,6 +54,8 @@ const httpApi = {
 		request<Upcoming>(f, `/${sport}/upcoming${query({ season, date })}`),
 	game: (sport: string, gameId: string, f: Fetch = fetch) =>
 		request<GameDetail>(f, `/${sport}/games/${encodeURIComponent(gameId)}`),
+	performance: (sport: string, f: Fetch = fetch) => request<Performance>(f, `/${sport}/performance`),
+	rankings: (sport: string, f: Fetch = fetch) => request<Rankings>(f, `/${sport}/rankings`),
 	challengeNext: (sport: string, exclude: string[] = [], f: Fetch = fetch) =>
 		request<ChallengeGame>(f, `/${sport}/challenge/next${query({ exclude })}`),
 	challengeAnswer: (sport: string, gameId: string, pick: Side, f: Fetch = fetch) =>

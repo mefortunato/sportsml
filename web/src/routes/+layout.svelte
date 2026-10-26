@@ -26,6 +26,12 @@
 		{#if info}
 			<nav class="pages">
 				<a href={links.upcoming(info.sport)} class:active={route.startsWith('/[sport]/[[season')}>Upcoming</a>
+				<a href={links.rankings(info.sport)} class:active={route === '/[sport]/rankings'}>Rankings</a>
+				{#if info.challenge_games}
+					<a href={links.performance(info.sport)} class:active={route === '/[sport]/performance'}
+						>Performance</a
+					>
+				{/if}
 				{#if info.has_spread && info.challenge_games}
 					<a href={links.challenge(info.sport)} class:active={route === '/[sport]/challenge'}
 						>Beat the model</a
@@ -107,6 +113,24 @@
 	}
 	.pages {
 		margin-left: auto;
+		min-width: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	nav a {
+		white-space: nowrap;
+	}
+	@media (max-width: 640px) {
+		.bar {
+			flex-wrap: wrap;
+			height: auto;
+			row-gap: 2px;
+			padding-block: 8px;
+		}
+		.pages {
+			margin-left: -10px;
+			flex-basis: 100%;
+		}
 	}
 	main {
 		min-height: calc(100vh - 160px);

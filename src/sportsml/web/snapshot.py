@@ -6,7 +6,9 @@ A snapshot directory (written by :mod:`sportsml.web.build`) holds:
 * ``teams.json``: team display metadata;
 * ``model/``: the saved predictor;
 * ``pool.csv``: out-of-sample walk-forward predictions for historical games
-  (the challenge pool);
+  (the challenge pool, and the model performance page);
+* ``rankings.csv``: the walk-forward models' power ratings before each date
+  of the backtest seasons (the current season's are computed on load);
 * ``meta.json``: sport, build time and backtest summary.
 """
 
@@ -26,6 +28,7 @@ from ..core.io import read_table
 from ..core.predictor import Predictor, load_predictor
 from ..core.schema import one_row_per_game, played, upcoming
 from ..core.sport import get_sport
+from ..inference.utils import power_ratings
 from .views import SportView, get_view
 
 
@@ -73,6 +76,7 @@ class Snapshot:
         teams: pd.DataFrame,
         meta: dict | None = None,
         model_dir: str | None = None,
+        rankings: pd.DataFrame | None = None,
     ):
         self.view = view
         self.schema = schema = get_sport(view.sport).schema
@@ -89,10 +93,14 @@ class Snapshot:
             {stat.key: stat.value(self.played) for stat in view.stats},
             index=self.played.index,
         )
+        self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
+        self.rankings_table = self._with_current_rankings(predictor)
         self.upcoming_games = self._predict_upcoming(predictor)
 
         if len(pool):
             pool = pool.assign(**{schema.game_id: pool[schema.game_id].astype(str)})
+        self.results = pool  # every backtest game, pushes included
+        self.performance_summary = self._performance() if len(pool) else None
         if len(pool) and schema.market_spread:
             pool = pool.dropna(subset=["market_margin"])
             pool = pool[pool[schema.target] != pool["market_margin"]]
@@ -104,6 +112,7 @@ class Snapshot:
         path = pathlib.Path(directory)
         meta = json.loads((path / "meta.json").read_text())
         pool_path = path / "pool.csv"
+        rankings_path = path / "rankings.csv"
         return cls(
             view=get_view(meta["sport"]),
             games=read_table(str(path / "games.csv")),
@@ -112,6 +121,7 @@ class Snapshot:
             teams=pd.DataFrame(json.loads((path / "teams.json").read_text())),
             meta=meta,
             model_dir=str(path / "model"),
+            rankings=read_table(str(rankings_path)) if rankings_path.exists() else None,
         )
 
     def refreshed(self, games: pd.DataFrame) -> Snapshot:
@@ -122,10 +132,11 @@ class Snapshot:
             self.view,
             games,
             load_predictor(self.model_dir),
-            self.pool.reset_index() if len(self.pool) else self.pool,
+            self.results,
             teams,
             meta,
             self.model_dir,
+            self.baked_rankings,
         )
 
     # ----------------------------------------------------------------- pieces
@@ -194,6 +205,73 @@ class Snapshot:
                 "covered": cover_side(row[s.target], self._spread(row)),
             }
         )
+
+    def _with_current_rankings(self, predictor: Predictor) -> pd.DataFrame:
+        """Baked rankings plus the current season's, from the served model.
+
+        One rating per team before each played date of the season and before
+        its next date, from the games played until then (like the backtest).
+        """
+        s = self.schema
+        baked = self.baked_rankings
+        season = (
+            upcoming(self.games, s)[s.season].max()
+            if len(upcoming(self.games, s))
+            else self.played[s.season].max()
+        )
+        if pd.isna(season) or (len(baked) and season in set(baked["season"])):
+            return baked
+        current = self.games[self.games[s.season] == season]
+        dates = sorted(current.loc[current[s.target].notna(), s.date].unique())
+        later = current.loc[current[s.target].isna(), s.date]
+        dates += [later.min()] if len(later) else []
+        playing = current[s.team].unique()
+        rows = []
+        for date in dates:
+            known = self.played[
+                (self.played[s.season] < season)
+                | ((self.played[s.season] == season) & (self.played[s.date] < date))
+            ]
+            predictor.update_state(known)
+            for team, rating in power_ratings(predictor, playing).items():
+                rows.append(
+                    {"season": season, "date": date, "team": team, "rating": rating}
+                )
+        return pd.concat([baked, pd.DataFrame(rows)], ignore_index=True)
+
+    def _performance(self) -> dict:
+        """Walk-forward backtest metrics: overall, by season, ATS, calibration."""
+        from ..backtest import ats_record, summarize
+
+        s = self.schema
+        results = self.results
+        summary = summarize(results, s)
+        if s.market_spread:
+            lined = results.dropna(subset=["market_margin", "market_prob"])
+            summary["ats_by_season"] = {
+                int(season): ats_record(frame, s, thresholds=(0,)).iloc[0].to_dict()
+                for season, frame in lined.groupby(s.season)
+            }
+        else:
+            lined = results
+        decided = lined[lined[s.target] != 0]
+        won = decided[s.target] > 0
+        sources = {"model": "win_prob"}
+        if "market_prob" in decided:
+            sources["market"] = "market_prob"
+        calibration = {}
+        for name, column in sources.items():
+            bins = pd.cut(decided[column], np.linspace(0, 1, 11), include_lowest=True)
+            grouped = won.groupby(bins, observed=True)
+            prob = decided[column].groupby(bins, observed=True)
+            calibration[name] = [
+                {"predicted": prob.mean()[b], "actual": grouped.mean()[b], "n": n}
+                for b, n in grouped.size().items()
+                if n
+            ]
+        summary["calibration"] = calibration
+        summary["seasons"] = sorted(int(x) for x in results[s.season].unique())
+        return py(summary)
 
     def _predict_upcoming(self, predictor: Predictor) -> pd.DataFrame:
         predictor.update_state(self.games)
@@ -372,6 +450,35 @@ class Snapshot:
                 "model": model,
             }
         )
+
+    def performance(self) -> dict | None:
+        return self.performance_summary
+
+    def rankings(self) -> dict:
+        """Power ratings per season: one value per team per date."""
+        table = self.rankings_table
+        baked = (
+            set(self.baked_rankings["season"]) if len(self.baked_rankings) else set()
+        )
+        seasons = []
+        for season, frame in sorted(table.groupby("season"), reverse=True):
+            dates = sorted(frame["date"].unique())
+            wide = frame.pivot_table(
+                index="team", columns="date", values="rating"
+            ).reindex(columns=dates)
+            teams = [
+                {"team": self.team(team), "ratings": [py(round(v, 2)) for v in row]}
+                for team, row in wide.iterrows()
+            ]
+            seasons.append(
+                {
+                    "season": season,
+                    "source": "backtest" if season in baked else "current",
+                    "dates": dates,
+                    "teams": teams,
+                }
+            )
+        return py({"seasons": seasons, "date_label": self.view.date_label})
 
     def info(self) -> dict:
         return py(

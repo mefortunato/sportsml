@@ -11,5 +11,7 @@ export const links = {
 			date: season == null || date == null ? undefined : String(date)
 		}),
 	game: (sport: string, gameId: string) => resolve('/[sport]/games/[gameId]', { sport, gameId }),
-	challenge: (sport: string) => resolve('/[sport]/challenge', { sport })
+	challenge: (sport: string) => resolve('/[sport]/challenge', { sport }),
+	rankings: (sport: string) => resolve('/[sport]/rankings', { sport }),
+	performance: (sport: string) => resolve('/[sport]/performance', { sport })
 };

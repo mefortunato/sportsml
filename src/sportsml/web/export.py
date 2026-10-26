@@ -10,7 +10,8 @@ Writes, under ``<output_dir>/data/``:
 * ``<sport>/upcoming.json``: ``{"default": ..., "by_date": {"<season>-<date>": ...}}``;
 * ``<sport>/games.json``: ``{game_id: game view}`` for every upcoming game;
 * ``<sport>/challenge.json``: ``[{"game": ..., "answer": ...}]`` per pool game,
-  the answer without the pick-dependent ``pick`` / ``correct``.
+  the answer without the pick-dependent ``pick`` / ``correct``;
+* ``<sport>/performance.json`` and ``<sport>/rankings.json``.
 
 Team objects are written once per file (``"teams"``) and referenced as
 ``{"$team": key}``; floats are rounded to 4 decimals.
@@ -83,6 +84,8 @@ def export(data_dir: str = "webdata", output_dir: str = "web/build-artifact") ->
             del answer["pick"], answer["correct"]
             challenge.append({"game": snap.challenge_game(game_id), "answer": answer})
         _write(out / sport / "challenge.json", challenge, teams)
+        _write(out / sport / "performance.json", snap.performance(), teams)
+        _write(out / sport / "rankings.json", snap.rankings(), teams)
         print(
             f"exported {sport}: {len(by_date)} dates, {len(games)} games, "
             f"{len(challenge)} challenge games -> {out / sport}"

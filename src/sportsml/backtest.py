@@ -32,6 +32,8 @@ from .core.sport import get_sport
 
 # Fits a model on the games it is given (all before the test season).
 Fitter = Callable[[pd.DataFrame, SeasonSplit], Predictor]
+# called with the predictor's state just before each test date's games
+OnDate = Callable[[Predictor, int, typing.Any], None]
 
 # Win rate needed to break even on bets at -110.
 BREAKEVEN = 110 / 210
@@ -187,8 +189,12 @@ def walk_forward(
     fitter: Fitter,
     seasons: list[int],
     verbose: bool = False,
+    on_date: OnDate | None = None,
 ) -> pd.DataFrame:
     """Out-of-sample predictions for every played game of ``seasons``.
+
+    ``on_date(predictor, season, date)`` is called once per test date, after
+    the team state is refreshed and before that date's games are predicted.
 
     Returns one row per game (home team's perspective) with the result, the
     model's ``pred_margin`` / ``win_prob`` and, if the schema has market
@@ -208,6 +214,8 @@ def walk_forward(
         for date in sorted(current[schema.date].unique()):
             known = pd.concat([history, current[current[schema.date] < date]])
             predictor.update_state(known)
+            if on_date is not None:
+                on_date(predictor, season, date)
             day = one_row_per_game(current[current[schema.date] == date], schema)
             teams = set(predictor.model.teams)
             has_state = day[schema.team].isin(teams) & day[schema.opp].isin(teams)
@@ -362,6 +370,7 @@ def backtest(
     max_epochs: int = 100,
     output_dir: str | None = None,
     print_summary: bool = True,
+    on_date: OnDate | None = None,
 ) -> dict:
     """Walk-forward backtest of a model family against the market.
 
@@ -375,6 +384,7 @@ def backtest(
         max_epochs: Training epochs per season for ``gnn`` / ``transformer``.
         output_dir: Write ``<family>_games.csv`` (one row per game) and
             ``<family>_summary.json`` here.
+        on_date: Passed to :func:`walk_forward`.
 
     Returns:
         ``{"results": per-game DataFrame, "summary": dict}``
@@ -385,7 +395,9 @@ def backtest(
         seasons = complete_seasons(games, schema)[-n_seasons:]
     fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
 
-    results = walk_forward(games, sport, fitter, seasons, verbose=print_summary)
+    results = walk_forward(
+        games, sport, fitter, seasons, verbose=print_summary, on_date=on_date
+    )
     summary = {
         "sport": sport,
         "family": family,

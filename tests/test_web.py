@@ -252,3 +252,32 @@ def test_export_matches_the_api(webdata, client, tmp_path):
             }
             assert scored == _as_exported(api)
     assert "logo.png" not in (data / "toy" / "challenge.json").read_text()
+
+
+def test_rankings_cover_backtest_and_current_season(client, snapshot, games):
+    rankings = client.get("/api/toy/rankings").json()
+    sources = {s["season"]: s["source"] for s in rankings["seasons"]}
+    assert sources == {2024: "current", 2023: "backtest"}
+    for season in rankings["seasons"]:
+        playing = set(games.loc[games["season"] == season["season"], "team"])
+        assert {t["team"]["team"] for t in season["teams"]} == playing
+        for i, _ in enumerate(season["dates"]):
+            ratings = [t["ratings"][i] for t in season["teams"]]
+            # average margin vs every other team: antisymmetric, so they cancel
+            assert abs(np.mean(ratings)) < 0.01
+    current = next(s for s in rankings["seasons"] if s["source"] == "current")
+    upcoming_date = client.get("/api/toy/upcoming").json()["date"]
+    assert current["dates"][-1] == upcoming_date
+
+
+def test_performance_summarizes_the_walk_forward_pool(client, snapshot):
+    from sportsml.backtest import summarize
+
+    perf = client.get("/api/toy/performance").json()
+    results = snapshot.results
+    expected = summarize(results, snapshot.schema)["overall"]["model"]
+    assert perf["overall"]["model"]["accuracy"] == pytest.approx(expected["accuracy"])
+    assert perf["seasons"] == [2023]
+    decided = (results.dropna(subset=["market_margin"])["margin"] != 0).sum()
+    assert sum(b["n"] for b in perf["calibration"]["model"]) == decided
+    assert set(perf["ats_by_season"]) == {"2023"}

@@ -5,6 +5,8 @@ import type {
 	ChallengeAnswer,
 	ChallengeGame,
 	GameDetail,
+	Performance,
+	Rankings,
 	Side,
 	SportInfo,
 	Team,
@@ -102,6 +104,8 @@ export const staticApi = {
 		if (!game) throw new Error(`Unknown game ${gameId}`);
 		return game;
 	},
+	performance: (name: string) => load<Performance>(`${name}/performance.json`),
+	rankings: (name: string) => load<Rankings>(`${name}/rankings.json`),
 	challengeNext: async (name: string, exclude: string[] = []) =>
 		pickChallenge(await pool(name), exclude).game,
 	challengeAnswer: async (name: string, gameId: string, pick: Side) => {

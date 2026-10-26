@@ -6,6 +6,8 @@ import datetime
 import json
 import pathlib
 
+import pandas as pd
+
 from ..core.io import Table, read_table
 from ..core.process import process
 from ..core.sport import get_sport
@@ -24,7 +26,8 @@ def build(
     Downloads and processes the sport's games, trains the transformer, runs
     a walk-forward backtest of it over the last ``backtest_seasons``
     complete seasons (its out-of-sample predictions are the challenge game
-    pool) and saves team metadata.
+    pool, and its team ratings before each date the power rankings) and
+    saves team metadata.
 
     Args:
         sports: Sports to build (default ``["nfl"]``).
@@ -34,6 +37,7 @@ def build(
         max_epochs: Transformer training epochs (per fit).
     """
     from ..backtest import backtest
+    from ..inference.utils import power_ratings
     from ..models.lightning import default_trainer
     from ..models.transformer import fit_transformer
 
@@ -60,14 +64,26 @@ def build(
         fitted = fit_transformer(
             table, sport, trainer=trainer, save_dir=str(path / "model"), overwrite=True
         )
+        schema = get_sport(sport).schema
+        rankings = []
+
+        def rank(predictor, season, date):
+            playing = table.loc[table[schema.season] == season, schema.team]
+            for team, rating in power_ratings(predictor, playing.unique()).items():
+                rankings.append(
+                    {"season": season, "date": date, "team": team, "rating": rating}
+                )
+
         tested = backtest(
             table,
             sport,
             family="transformer",
             n_seasons=backtest_seasons,
             max_epochs=max_epochs,
+            on_date=rank,
         )
         tested["results"].to_csv(path / "pool.csv", index=False)
+        pd.DataFrame(rankings).to_csv(path / "rankings.csv", index=False)
 
         summary = tested["summary"]
         meta = {

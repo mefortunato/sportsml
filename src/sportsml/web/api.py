@@ -56,6 +56,17 @@ def create_router(store: SnapshotStore) -> APIRouter:
             raise HTTPException(404, f"unknown game {game_id!r}")
         return found
 
+    @router.get("/{sport}/performance")
+    def performance(sport: str) -> dict:
+        found = store.get(sport).performance()
+        if found is None:
+            raise HTTPException(404, "no backtest for this sport")
+        return found
+
+    @router.get("/{sport}/rankings")
+    def rankings(sport: str) -> dict:
+        return store.get(sport).rankings()
+
     @router.get("/{sport}/challenge/next")
     def challenge_next(sport: str, exclude: list[str] = Query(default=[])) -> dict:
         try:

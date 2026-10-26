@@ -174,7 +174,7 @@ class EloModel(MatchupModel):
         s, p = self.schema, self.params
         games = played(games, s)
         ordered = one_row_per_game(games, s).sort_values([s.season, s.date])
-        ratings, season, diffs = {}, None, {}
+        ratings, season, diffs, before = {}, None, {}, {}
         for game, team, opp, loc, margin, game_season in zip(
             ordered[s.game_id],
             ordered[s.team],
@@ -189,6 +189,7 @@ class EloModel(MatchupModel):
             team_elo, opp_elo = ratings.get(team, p.mean), ratings.get(opp, p.mean)
             diff = team_elo - opp_elo + p.home * loc
             diffs[game] = diff
+            before[game] = (team_elo, opp_elo)
             expected = 1 / (1 + 10 ** (-diff / 400))
             actual = 1.0 if margin > 0 else 0.5 if margin == 0 else 0.0
             winner_diff = diff if margin > 0 else -diff
@@ -196,11 +197,35 @@ class EloModel(MatchupModel):
             shift = p.k * multiplier * (actual - expected)
             ratings[team], ratings[opp] = team_elo + shift, opp_elo - shift
         self.ratings, self.season = ratings, season
+        self._before, self._listed = before, ordered.index
         latest = games[games[s.season] == season] if season is not None else games
         self._teams = list(pd.unique(latest[s.team]))
         home_diff = games[s.game_id].map(diffs)
         is_listed = games.index.isin(ordered.index)
         return pd.Series(np.where(is_listed, home_diff, -home_diff), index=games.index)
+
+    def pre_game_ratings(self, games: pd.DataFrame) -> pd.DataFrame:
+        """Each played row's ``team_elo`` and ``opp_elo`` before the game.
+
+        Depends only on earlier games, so it is safe as a feature.
+        """
+        s = self.schema
+        games = played(games, s)
+        self.replay(games)
+        listed = pd.DataFrame(
+            self._before.values(),
+            index=pd.Index(self._before.keys(), name=s.game_id),
+            columns=["first", "second"],
+        ).reindex(games[s.game_id])
+        is_listed = games.index.isin(self._listed)
+        first, second = listed["first"].to_numpy(), listed["second"].to_numpy()
+        return pd.DataFrame(
+            {
+                "team_elo": np.where(is_listed, first, second),
+                "opp_elo": np.where(is_listed, second, first),
+            },
+            index=games.index,
+        )
 
     def _regress(self, rating: float) -> float:
         return self.params.mean + (rating - self.params.mean) * (

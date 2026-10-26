@@ -30,17 +30,27 @@ def make_games(
     home_advantage: float = 3.0,
     noise: float = 6.0,
     seed: int = 0,
+    persistence: float = 0.0,
 ) -> pd.DataFrame:
     """Toy games with known per-season offense/defense ratings.
+
+    ``persistence`` is the season-to-season correlation of team ratings (real
+    leagues are well above 0; the default 0 redraws them every season).
 
     One row per team per game. The last ``upcoming_weeks`` of the last season
     are unplayed (missing target and stats).
     """
     rng = np.random.default_rng(seed)
     rows = []
+    off = dfn = None
+    carry = np.sqrt(1 - persistence**2)
     for season in seasons:
-        off = rng.normal(0, 5, n_teams)
-        dfn = rng.normal(0, 5, n_teams)
+        new_off, new_dfn = rng.normal(0, 5, n_teams), rng.normal(0, 5, n_teams)
+        if off is None:
+            off, dfn = new_off, new_dfn
+        else:
+            off = persistence * off + carry * new_off
+            dfn = persistence * dfn + carry * new_dfn
         for week in range(1, weeks + 1):
             order = rng.permutation(n_teams)
             for a, b in order.reshape(-1, 2):

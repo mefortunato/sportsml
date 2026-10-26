@@ -11,26 +11,32 @@ from ...core.schema import GameSchema, played
 from ...core.splits import split_seasons
 from ...core.sport import get_sport
 from ..lightning import best_model, default_trainer, seed_and_reset
-from .data import SequenceData, SequenceFeatures
+from .data import STRENGTH_COLUMNS, SequenceData, SequenceFeatures
 from .model import PairHead, SequenceEncoder, TransformerMatchupModel, TransformerModel
 
 ENCODER_KEYS = ("history", "d_model", "nhead", "num_layers", "dropout")
 
 
-def transformer_dims(schema: GameSchema) -> dict[str, int]:
+def transformer_dims(
+    schema: GameSchema, opponent_strength: bool = True
+) -> dict[str, int]:
     """Token / context feature counts a TransformerModel needs for ``schema``."""
     location = [schema.location] if schema.location else []
-    tokens = dict.fromkeys([*schema.stats, schema.target, *location])
+    tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
+    if opponent_strength:
+        tokens += STRENGTH_COLUMNS
     return {
         "token_dim": len(tokens),
         "context_dim": len(schema.context) + len(location),
     }
 
 
-def transformer_config(sport: str, context: list[str] | None = None) -> dict:
+def transformer_config(
+    sport: str, context: list[str] | None = None, opponent_strength: bool = True
+) -> dict:
     """TransformerModel init args for ``sport`` (sizes from ``Sport.transformer``)."""
     spec = get_sport(sport)
-    dims = transformer_dims(spec.schema.with_features(context))
+    dims = transformer_dims(spec.schema.with_features(context), opponent_strength)
     settings = {
         "history": 20,
         "d_model": 64,
@@ -52,8 +58,10 @@ def transformer_config(sport: str, context: list[str] | None = None) -> dict:
     }
 
 
-def default_model(sport: str, context: list[str] | None = None) -> TransformerModel:
-    config = transformer_config(sport, context)
+def default_model(
+    sport: str, context: list[str] | None = None, opponent_strength: bool = True
+) -> TransformerModel:
+    config = transformer_config(sport, context, opponent_strength)
     return TransformerModel(
         encoder=SequenceEncoder(**config.pop("encoder")),
         head=PairHead(**config.pop("head")),
@@ -91,6 +99,7 @@ def fit_transformer(
     val_seasons: list[int] | None = None,
     test_seasons: list[int] | None = None,
     min_history: int = 1,
+    opponent_strength: bool = True,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -109,6 +118,8 @@ def fit_transformer(
             drive early stopping and win-probability calibration.
         min_history: Only use games where both teams have this many earlier
             games (any season).
+        opponent_strength: Add each history game's pre-game Elo of both teams
+            and the opponent's season-to-date margin to its token.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:
@@ -123,9 +134,11 @@ def fit_transformer(
     if not split.val:
         raise ValueError("transformer training needs validation seasons")
 
-    model = model or default_model(sport, context)
+    model = model or default_model(sport, context, opponent_strength)
     train_games = games[games[schema.season].isin(split.train)]
-    features = SequenceFeatures.fit(train_games, schema, model.encoder.history)
+    features = SequenceFeatures.fit(
+        train_games, schema, model.encoder.history, opponent_strength
+    )
     _check_dims(model, features)
     data = SequenceData(games, schema, features)
 

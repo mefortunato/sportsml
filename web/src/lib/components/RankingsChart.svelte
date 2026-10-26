@@ -10,12 +10,15 @@
 		season,
 		dateLabel = 'Week',
 		pins,
+		visible = null,
 		index = $bindable(null),
 		ontoggle
 	}: {
 		season: RankingSeason;
 		dateLabel?: string;
 		pins: Pins;
+		/** Teams to draw (null: all). The axis and ranks stay league-wide. */
+		visible?: Set<string> | null;
 		/** Hovered date index (null: none). */
 		index?: number | null;
 		ontoggle: (team: string) => void;
@@ -64,21 +67,31 @@
 	let hoverTeam = $state<string | null>(null);
 
 	const lines = $derived(
-		season.teams.map((t) => ({ key: t.team.team, team: t.team, ratings: t.ratings, d: path(t.ratings) }))
+		season.teams
+			.filter((t) => !visible || visible.has(t.team.team))
+			.map((t) => ({ key: t.team.team, team: t.team, ratings: t.ratings, d: path(t.ratings) }))
 	);
 	const pinned = $derived(
 		lines.filter((l) => l.key in pins).sort((a, b) => pins[a.key] - pins[b.key])
 	);
 
-	// end labels for highlighted teams, nudged apart so they never overlap
+	// end labels for highlighted teams (for every line when only a few are
+	// drawn, so none is identified by color alone), nudged apart
+	const LABEL_ALL = 4;
 	const endLabels = $derived.by(() => {
-		const labels = pinned
+		const labelled = lines.length <= LABEL_ALL ? lines : pinned;
+		const labels = labelled
 			.map((l) => {
 				let i = l.ratings.length - 1;
 				while (i >= 0 && l.ratings[i] === null) i--;
 				return i < 0
 					? null
-					: { key: l.key, slot: pins[l.key], value: l.ratings[i] as number, at: y(l.ratings[i] as number) };
+					: {
+							key: l.key,
+							slot: pins[l.key] as number | undefined,
+							value: l.ratings[i] as number,
+							at: y(l.ratings[i] as number)
+						};
 			})
 			.filter((l) => l !== null)
 			.sort((a, b) => a.at - b.at);
@@ -204,8 +217,14 @@
 		{/if}
 
 		{#each endLabels as label (label.key)}
-			<circle class="swatch" cx={M.left + plotW + 10} cy={label.at} r="4" style:fill="var(--series-{label.slot})" />
-			<text class="end" x={M.left + plotW + 18} y={label.at} dominant-baseline="middle"
+			<circle
+				class="swatch"
+				cx={M.left + plotW + 10}
+				cy={label.at}
+				r="4"
+				style:fill={label.slot ? `var(--series-${label.slot})` : 'var(--context-line)'}
+			/>
+			<text class="end" class:context={!label.slot} x={M.left + plotW + 18} y={label.at} dominant-baseline="middle"
 				>{label.key} {signed(label.value)}</text
 			>
 		{/each}
@@ -299,6 +318,10 @@
 		font-size: 12px;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+	.end.context {
+		fill: var(--muted);
+		font-weight: 500;
 	}
 	.tooltip {
 		position: absolute;

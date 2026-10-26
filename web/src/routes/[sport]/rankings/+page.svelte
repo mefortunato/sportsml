@@ -2,7 +2,17 @@
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import { signed } from '$lib/format';
-	import { defaultPins, MAX_PINS, rankAt, togglePin, type Pins } from '$lib/rankings';
+	import {
+		filterOptions,
+		matchesFilter,
+		MAX_PINS,
+		rankAt,
+		reconcilePins,
+		togglePin,
+		type Pins,
+		type TeamFilter
+	} from '$lib/rankings';
+	import { untrack } from 'svelte';
 
 	let { data } = $props();
 	const info = $derived(data.info);
@@ -14,14 +24,34 @@
 	);
 	let pins = $state<Pins>({});
 	let index = $state<number | null>(null);
+	let filter = $state<TeamFilter>({});
 
-	// a new season starts with its top teams highlighted
+	const options = $derived(filterOptions(season ? season.teams.map((t) => t.team) : []));
+	const visible = $derived(
+		season && filter.conference
+			? new Set(season.teams.filter((t) => matchesFilter(t.team, filter)).map((t) => t.team.team))
+			: null
+	);
+	const filterLabel = $derived(filter.division ?? filter.conference ?? null);
+	const isVisible = (team: string) => !visible || visible.has(team);
+
+	// A new season starts with its top visible teams highlighted. A filter
+	// change keeps the highlighted teams still in view (and their colors)
+	// and gives free slots to the top visible teams.
+	let pinnedSeason: number | null = null;
 	$effect(() => {
-		if (season) pins = defaultPins(season);
+		if (!season) return;
+		const top = rankAt(season, season.dates.length - 1).filter((r) => isVisible(r.team.team));
+		untrack(() => {
+			pins = reconcilePins(pinnedSeason === season.season ? pins : {}, top);
+			pinnedSeason = season.season;
+		});
 	});
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);
-	const rows = $derived(season ? rankAt(season, shown) : []);
+	const rows = $derived(season ? rankAt(season, shown).filter((r) => isVisible(r.team.team)) : []);
+	const divisionLabel = (conference: string, division: string) =>
+		division.startsWith(`${conference} `) ? division.slice(conference.length + 1) : division;
 	const pinnedTeams = $derived(
 		season
 			? season.teams
@@ -50,6 +80,37 @@
 				>
 			{/each}
 		</nav>
+		{#if options.conferences.length}
+			<nav class="filters" aria-label="Teams">
+				<button class="pill" class:accent={!filter.conference} aria-pressed={!filter.conference} onclick={() => (filter = {})}
+					>All teams</button
+				>
+				{#each options.conferences as conference (conference)}
+					<button
+						class="pill"
+						class:accent={filter.conference === conference}
+						aria-pressed={filter.conference === conference}
+						onclick={() => (filter = { conference })}>{conference}</button
+					>
+				{/each}
+			</nav>
+			{#if filter.conference && options.divisions[filter.conference]?.length}
+				{@const conference = filter.conference}
+				<nav class="filters divisions" aria-label="{conference} divisions">
+					<button class="pill" class:accent={!filter.division} aria-pressed={!filter.division} onclick={() => (filter = { conference })}
+						>All {conference}</button
+					>
+					{#each options.divisions[conference] as division (division)}
+						<button
+							class="pill"
+							class:accent={filter.division === division}
+							aria-pressed={filter.division === division}
+							onclick={() => (filter = { conference, division })}>{divisionLabel(conference, division)}</button
+						>
+					{/each}
+				</nav>
+			{/if}
+		{/if}
 		<p class="muted small source">
 			{#if season.source === 'backtest'}
 				{season.season}: from that season's walk-forward model, trained only on seasons before
@@ -70,22 +131,24 @@
 					</button>
 				{/each}
 				<span class="muted small">
-					Gray lines are the other teams. Click a line or a row to highlight it (up to {MAX_PINS}).
+					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Click a line or a row
+					to highlight it (up to {MAX_PINS}).
 				</span>
 			</div>
-			<RankingsChart {season} dateLabel={info.date_label} {pins} bind:index ontoggle={toggle} />
+			<RankingsChart {season} {visible} dateLabel={info.date_label} {pins} bind:index ontoggle={toggle} />
 		</div>
 
 		<div class="card section">
 			<h2>
 				Before {info.date_label}
 				{season.dates[shown]}, {season.season}
+				{#if filterLabel}<span class="muted"> · {filterLabel}</span>{/if}
 				{#if index !== null}<span class="muted small">(hovered)</span>{/if}
 			</h2>
 			<table class="ranks">
 				<thead>
 					<tr>
-						<th class="num">Rank</th>
+						<th class="num">{visible ? 'League rank' : 'Rank'}</th>
 						<th>Team</th>
 						<th class="num">Avg margin</th>
 						<th class="num">Change</th>
@@ -128,6 +191,9 @@
 	}
 	.filters button {
 		cursor: pointer;
+	}
+	.filters.divisions {
+		margin-top: 0;
 	}
 	.source {
 		margin: 0 0 12px;

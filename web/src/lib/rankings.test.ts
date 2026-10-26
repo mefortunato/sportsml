@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { defaultPins, rankAt, togglePin, yExtent } from './rankings';
+import {
+	defaultPins,
+	filterOptions,
+	matchesFilter,
+	rankAt,
+	reconcilePins,
+	togglePin,
+	yExtent
+} from './rankings';
 import type { RankingSeason } from './types';
 
 const team = (key: string) => ({ team: key, name: key });
@@ -50,5 +58,39 @@ describe('power rankings', () => {
 
 	it('uses a symmetric axis on round ticks', () => {
 		expect(yExtent(season)).toEqual({ max: 8, step: 2 });
+	});
+});
+
+describe('division filters', () => {
+	const t = (key: string, conference?: string, division?: string) => ({
+		team: key,
+		name: key,
+		conference,
+		division
+	});
+	const teams = [t('A', 'AFC', 'AFC East'), t('B', 'NFC', 'NFC West'), t('C', 'AFC', 'AFC West'), t('D', 'AFC', 'AFC East')];
+
+	it('lists conferences and their divisions from team metadata', () => {
+		expect(filterOptions(teams)).toEqual({
+			conferences: ['AFC', 'NFC'],
+			divisions: { AFC: ['AFC East', 'AFC West'], NFC: ['NFC West'] }
+		});
+		expect(filterOptions([t('X'), t('Y')])).toEqual({ conferences: [], divisions: {} });
+	});
+
+	it('matches a conference or a division', () => {
+		expect(teams.filter((x) => matchesFilter(x, {})).length).toBe(4);
+		expect(teams.filter((x) => matchesFilter(x, { conference: 'AFC' })).map((x) => x.team)).toEqual(['A', 'C', 'D']);
+		expect(
+			teams.filter((x) => matchesFilter(x, { conference: 'AFC', division: 'AFC East' })).map((x) => x.team)
+		).toEqual(['A', 'D']);
+	});
+
+	it('keeps surviving highlights in their slots and fills the rest by rank', () => {
+		const rows = ['D', 'A', 'C'].map((key, i) => ({ team: t(key), rating: -i, rank: i + 1, change: null }));
+		// B is filtered out, A survives in slot 2; slots 1 and 3 go to D then C
+		expect(reconcilePins({ B: 1, A: 2 }, rows)).toEqual({ A: 2, D: 1, C: 3 });
+		expect(reconcilePins({ A: 3 }, rows.slice(0, 2))).toEqual({ A: 3, D: 1 });
+		expect(reconcilePins({}, [])).toEqual({});
 	});
 });

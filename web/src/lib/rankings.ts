@@ -63,3 +63,50 @@ export function yExtent(season: RankingSeason): { max: number; step: number } {
 	const step = [1, 2, 4, 5, 10, 20].find((s) => Math.ceil(largest / s) <= 5) ?? 50;
 	return { max: Math.max(step, Math.ceil(largest / step) * step), step };
 }
+
+/** A conference, optionally narrowed to one of its divisions. */
+export interface TeamFilter {
+	conference?: string;
+	division?: string;
+}
+
+/** Conferences and their divisions, from the teams' own metadata (empty
+ * when the sport's teams have none). */
+export function filterOptions(teams: Team[]): {
+	conferences: string[];
+	divisions: Record<string, string[]>;
+} {
+	const divisions: Record<string, Set<string>> = {};
+	for (const team of teams) {
+		if (!team.conference) continue;
+		divisions[team.conference] ??= new Set();
+		if (team.division) divisions[team.conference].add(team.division);
+	}
+	const conferences = Object.keys(divisions).sort();
+	return {
+		conferences,
+		divisions: Object.fromEntries(conferences.map((c) => [c, [...divisions[c]].sort()]))
+	};
+}
+
+export function matchesFilter(team: Team, filter: TeamFilter): boolean {
+	if (filter.conference && team.conference !== filter.conference) return false;
+	if (filter.division && team.division !== filter.division) return false;
+	return true;
+}
+
+/** Highlights after the visible teams change: teams still visible keep their
+ * slot (and color), hidden ones are dropped, and free slots go to the top
+ * visible teams. `rows` are the visible teams in rank order. */
+export function reconcilePins(pins: Pins, rows: RankRow[], count = MAX_PINS): Pins {
+	const visible = new Set(rows.map((r) => r.team.team));
+	const kept: Pins = Object.fromEntries(Object.entries(pins).filter(([team]) => visible.has(team)));
+	const used = new Set(Object.values(kept));
+	const free = Array.from({ length: count }, (_, i) => i + 1).filter((slot) => !used.has(slot));
+	for (const row of rows) {
+		if (!free.length) break;
+		if (row.team.team in kept) continue;
+		kept[row.team.team] = free.shift() as number;
+	}
+	return kept;
+}

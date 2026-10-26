@@ -146,3 +146,7 @@ outputs
 mlruns
 
 src/sportsml/_version.py
+/models
+mlflow.db
+.git
+predictions

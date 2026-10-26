@@ -8,6 +8,7 @@
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import { handicap, marginLabel, spreadLabel } from '$lib/format';
 	import type { ChallengeAnswer, ChallengeGame, Side } from '$lib/types';
+	import { untrack } from 'svelte';
 	import { get } from 'svelte/store';
 
 	let { data } = $props();
@@ -53,11 +54,14 @@
 	}
 
 	$effect(() => {
-		// one record per sport, kept in this browser
+		// one record per sport, kept in this browser. Only `sport` is a
+		// dependency: next() reads and writes state, which would re-run this.
 		const current = challengeStore(sport);
-		store = current;
 		const unsubscribe = current.subscribe((value) => (record = value));
-		next();
+		untrack(() => {
+			store = current;
+			next();
+		});
 		return unsubscribe;
 	});
 

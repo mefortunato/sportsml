@@ -1,3 +1,5 @@
+import tempfile
+
 import lightning.pytorch as pl
 import numpy as np
 import pandas as pd
@@ -24,6 +26,7 @@ def datamodule(toy_games):
 def quick_trainer(max_epochs=15):
     return pl.Trainer(
         max_epochs=max_epochs,
+        default_root_dir=tempfile.mkdtemp(),  # checkpoints out of the repo
         accelerator="cpu",
         logger=False,
         enable_progress_bar=False,

@@ -52,6 +52,7 @@ def fitted(toy_games, tmp_path_factory):
         "toy",
         trainer=quick_trainer(20),
         batch_size=32,  # enough optimizer steps on a small toy league
+        opponent_strength=True,
         save_dir=str(save_dir),
         print_metrics=False,
     )

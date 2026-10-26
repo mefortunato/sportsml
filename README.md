@@ -9,7 +9,10 @@ probability, with three interchangeable model families:
 - **gnn**: a graph neural network (PyTorch Geometric) over the season's games,
   teams as nodes and games as edges.
 - **transformer**: a transformer over each team's most recent games (across
-  seasons), so season openers still have a full history.
+  seasons), so season openers still have a full history. `--opponent_strength
+  true` (with `--model.encoder.init_args.token_dim` raised by 3) also gives
+  each game the pre-game Elo of both teams and the opponent's season-to-date
+  margin; on NFL 2021-2025 that did not change the backtest Brier.
 
 Naive baselines (`home` field only, season-to-date `point_diff`, and
 FiveThirtyEight-style `elo`) and the betting market are the yardsticks in

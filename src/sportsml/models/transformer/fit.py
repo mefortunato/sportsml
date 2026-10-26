@@ -18,7 +18,7 @@ ENCODER_KEYS = ("history", "d_model", "nhead", "num_layers", "dropout")
 
 
 def transformer_dims(
-    schema: GameSchema, opponent_strength: bool = True
+    schema: GameSchema, opponent_strength: bool = False
 ) -> dict[str, int]:
     """Token / context feature counts a TransformerModel needs for ``schema``."""
     location = [schema.location] if schema.location else []
@@ -32,7 +32,7 @@ def transformer_dims(
 
 
 def transformer_config(
-    sport: str, context: list[str] | None = None, opponent_strength: bool = True
+    sport: str, context: list[str] | None = None, opponent_strength: bool = False
 ) -> dict:
     """TransformerModel init args for ``sport`` (sizes from ``Sport.transformer``)."""
     spec = get_sport(sport)
@@ -59,7 +59,7 @@ def transformer_config(
 
 
 def default_model(
-    sport: str, context: list[str] | None = None, opponent_strength: bool = True
+    sport: str, context: list[str] | None = None, opponent_strength: bool = False
 ) -> TransformerModel:
     config = transformer_config(sport, context, opponent_strength)
     return TransformerModel(
@@ -99,7 +99,7 @@ def fit_transformer(
     val_seasons: list[int] | None = None,
     test_seasons: list[int] | None = None,
     min_history: int = 1,
-    opponent_strength: bool = True,
+    opponent_strength: bool = False,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -119,7 +119,9 @@ def fit_transformer(
         min_history: Only use games where both teams have this many earlier
             games (any season).
         opponent_strength: Add each history game's pre-game Elo of both teams
-            and the opponent's season-to-date margin to its token.
+            and the opponent's season-to-date margin to its token. Off by
+            default: on NFL 2021-2025 it did not change the backtest Brier
+            (+0.0002 +/- 0.0027) and makes state refreshes slower.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:

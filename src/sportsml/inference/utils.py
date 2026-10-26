@@ -22,6 +22,22 @@ def all_matchups(predictor: Predictor, location: int = 0) -> pd.DataFrame:
     return pairs
 
 
+def power_ratings(predictor: Predictor, teams=None, location: int = 0) -> pd.Series:
+    """Each team's average predicted margin against every other team.
+
+    Neutral site by default. ``teams`` limits both sides to those teams (e.g.
+    the ones playing this season); the ratings then average to zero.
+    """
+    schema = predictor.schema
+    pairs = all_matchups(predictor, location)
+    if teams is not None:
+        teams = set(teams)
+        pairs = pairs[pairs[schema.team].isin(teams) & pairs[schema.opp].isin(teams)]
+    preds = predictor.predict(pairs.reset_index(drop=True))
+    ratings = preds.groupby(schema.team)["pred_margin"].mean()
+    return ratings.sort_values(ascending=False)
+
+
 def long_to_wide(
     preds: pd.DataFrame,
     team: str = "team",

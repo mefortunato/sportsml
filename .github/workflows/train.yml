@@ -1,0 +1,48 @@
+# Train the transformer, run the walk-forward backtest (challenge games,
+# performance page, past power rankings) and publish the result as the
+# `webdata` release asset that the daily Site workflow builds from.
+# Slow (~30 min on a GitHub runner), so it runs monthly during the season
+# and on demand, e.g. after changing the model.
+name: Train
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 7 1 1,2,9-12 *" # the 1st of each month, September-February
+
+permissions:
+  contents: write # the webdata release
+  actions: write # start the Site workflow
+
+concurrency:
+  group: train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      MLFLOW_TRACKING_URI: sqlite:///${{ github.workspace }}/mlflow.db
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --no-default-groups
+      - name: Download, train, backtest
+        run: uv run sportsml web build --output_dir webdata
+      - name: Publish webdata release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf webdata.tar.gz -C webdata .
+          gh release view webdata >/dev/null 2>&1 || gh release create webdata \
+            --title "Web data (trained model and backtest)" --latest=false \
+            --notes "Written by the Train workflow; the Site workflow builds from it."
+          gh release upload webdata webdata.tar.gz --clobber
+      - name: Rebuild the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run site.yml --ref "${{ github.ref_name }}"

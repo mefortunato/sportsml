@@ -17,7 +17,7 @@ from sportsml.models.transformer.data import (
     opponent_rows,
 )
 
-from .conftest import TOY_SCHEMA
+from .conftest import TOY_SCHEMA, make_games
 
 
 def quick_trainer(max_epochs=8):
@@ -33,6 +33,13 @@ def quick_trainer(max_epochs=8):
 
 
 @pytest.fixture(scope="module")
+def toy_games():
+    """A league whose team strength carries over between seasons, as real
+    ones do (the opponent-strength features rely on that)."""
+    return make_games(persistence=0.7)
+
+
+@pytest.fixture(scope="module")
 def played_games(toy_games):
     return played(toy_games, TOY_SCHEMA).reset_index(drop=True)
 
@@ -43,7 +50,9 @@ def fitted(toy_games, tmp_path_factory):
     res = fit_transformer(
         toy_games,
         "toy",
-        trainer=quick_trainer(),
+        trainer=quick_trainer(20),
+        batch_size=32,  # enough optimizer steps on a small toy league
+        opponent_strength=True,
         save_dir=str(save_dir),
         print_metrics=False,
     )
@@ -137,3 +146,17 @@ def test_features_standardize_on_training_games(played_games):
     tokens = features.tokens(played_games)
     assert tokens.shape == (len(played_games), features.token_dim)
     np.testing.assert_allclose(tokens.mean(axis=0), 0, atol=1e-4)
+
+
+def test_strength_features_use_only_earlier_games(played_games):
+    from sportsml.models.transformer.data import strength
+
+    games = played_games
+    full = strength(games, TOY_SCHEMA)
+    # drop every game after 2024 week 5: features of the rest must not move
+    early = games[(games.season < 2024) | (games.week < 6)]
+    truncated = strength(early, TOY_SCHEMA)
+    pd.testing.assert_frame_equal(full.loc[early.index], truncated)
+    # Elo going into a game reflects earlier results: better teams rate higher
+    gap = full["_team_elo"] - full["_opp_elo"]
+    assert np.corrcoef(gap, games.margin)[0, 1] > 0.2

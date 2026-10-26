@@ -9,7 +9,10 @@ probability, with three interchangeable model families:
 - **gnn**: a graph neural network (PyTorch Geometric) over the season's games,
   teams as nodes and games as edges.
 - **transformer**: a transformer over each team's most recent games (across
-  seasons), so season openers still have a full history.
+  seasons), so season openers still have a full history. `--opponent_strength
+  true` (with `--model.encoder.init_args.token_dim` raised by 3) also gives
+  each game the pre-game Elo of both teams and the opponent's season-to-date
+  margin; on NFL 2021-2025 that did not change the backtest Brier.
 
 Naive baselines (`home` field only, season-to-date `point_diff`, and
 FiveThirtyEight-style `elo`) and the betting market are the yardsticks in
@@ -103,6 +106,64 @@ Any model can be backtested from Python with
 `sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
 `fitter(games, split)` returns a fitted `Predictor`.
 
+## Web app
+
+A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
+
+- **Upcoming games**: each game's Vegas line and the model's predicted
+  margin on one chart, the win probability, and the model's pick against
+  the spread.
+- **Game view**: both teams' per-game stats, W-L and ATS records, and recent
+  results, all as of before kickoff.
+- **Power rankings**: each team's average predicted margin against every
+  other team, week by week, with conference, division and final-four
+  filters.
+- **Model performance**: the walk-forward backtest against Vegas
+  (accuracy, Brier score, calibration, betting the model's edge).
+- **Beat the model**: a past game with its line and both teams' pre-game
+  stats. Pick the side that covers, then see the final score and what the
+  model picked. The model's picks are its walk-forward backtest predictions,
+  made without seeing those games. Your record is kept in your browser.
+
+Every page reads JSON files built next to the site; nothing is computed on
+request. Two GitHub Actions workflows keep them current:
+
+- **Train** (`.github/workflows/train.yml`, monthly in season and on
+  demand) runs `sportsml web build`: download, train the transformer,
+  backtest it and record weekly power rankings (~30 minutes). It publishes
+  the result as the `webdata` release asset.
+- **Site** (`.github/workflows/site.yml`, daily and after Monday night's
+  game) downloads that asset, runs `sportsml web export --refresh true`
+  (re-download results and refresh team state, no retraining), builds the
+  frontend and deploys it. A failed run leaves the last deployed site up.
+
+To set it up: in the repository settings, set **Pages → Source** to
+**GitHub Actions**, then run **Train** once from the Actions tab. It starts
+**Site** when it finishes.
+
+Locally:
+
+```sh
+make webdata                    # train + backtest (slow) -> webdata/
+make site                       # fresh results -> web/static/data, site -> web/build
+make web-dev                    # hot reload on :5173 with that data
+make artifact                   # one-page build (hash routing) -> web/build-artifact/
+```
+
+Limits of a static site:
+
+- Only precomputed views exist: upcoming weeks, their game views, past
+  seasons' rankings, the challenge pool.
+- The challenge answers ship with the site, so it runs on the honor
+  system.
+- The data is as fresh as the last Site run; line moves during the day are
+  not reflected.
+
+To add a sport, give it a `SportView` (`src/sportsml/web/sports/<sport>.py`)
+with its stats, team metadata and score columns, add it to `BUILTIN_VIEWS`,
+and build it with `sportsml web build --sports '[nfl, <sport>]'`. The
+frontend needs no changes.
+
 ## Sports and data sources
 
 | Sport | Command | Source | Credentials |
@@ -161,7 +222,9 @@ sportsml/
   nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
   inference/      predict command, matchup helpers
   backtest.py     walk-forward backtests, family registry, benchmark
-  cli.py          `sportsml <sport> ...`, generated from the registry
+  web/            per-sport views, snapshots, static-site export
+  cli.py          `sportsml <sport> ...` and `sportsml web ...`, generated from the registry
+web/              SvelteKit frontend (static site; data from `sportsml web export`)
 ```
 
 A games table has one row per team per game, so every game appears twice:
@@ -206,6 +269,7 @@ make lint     # ruff check + format check (pre-commit runs the same hooks)
 make format
 ```
 
-CI (GitHub Actions) runs lint and tests on every push to `main` and every pull
-request. `make build` / `make run ARGS="nfl predict"` build and run the Docker
-image (`DOCKER_ARGS="--gpus all"` for GPU).
+`make test` and `make lint` also run the frontend's unit tests and
+`svelte-check`. CI (GitHub Actions) runs both on every push to `main` and every
+pull request. `make cli ARGS="nfl predict"` runs any CLI command inside the
+Docker image (`DOCKER_ARGS="--gpus all"` for GPU).

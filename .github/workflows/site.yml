@@ -1,0 +1,68 @@
+# Rebuild the static site from the latest results and deploy it to GitHub
+# Pages. No retraining: the trained model comes from the `webdata` release
+# (Train workflow); this re-downloads results, refreshes team state, exports
+# every page's data and builds the frontend. A failed run leaves the last
+# deployed site in place.
+name: Site
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *" # daily, early morning US time
+    - cron: "17 6 * * 2" # Tuesday, after Monday night's game
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --no-default-groups
+      - name: Fetch the trained model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download webdata --pattern webdata.tar.gz
+          mkdir webdata && tar -xzf webdata.tar.gz -C webdata
+      - name: Export fresh data
+        run: uv run sportsml web export --data_dir webdata --output_dir web/static --refresh true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Build
+        working-directory: web
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: web/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

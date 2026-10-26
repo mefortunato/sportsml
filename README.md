@@ -106,6 +106,48 @@ Any model can be backtested from Python with
 `sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
 `fitter(games, split)` returns a fitted `Predictor`.
 
+## Web app
+
+A FastAPI backend and a SvelteKit frontend, packaged in one Docker image:
+
+- **Upcoming games**: each game's Vegas line and the model's predicted
+  margin on one chart, the win probability, and the model's pick against
+  the spread.
+- **Game view**: both teams' per-game stats, W-L and ATS records, and recent
+  results, all as of before kickoff.
+- **Beat the model**: a past game with its line and both teams' pre-game
+  stats. Pick the side that covers, then see the final score and what the
+  model picked. Your record and the model's on the same games are kept in
+  your browser. The model's picks are its walk-forward backtest predictions,
+  made without seeing those games.
+
+```sh
+make build && make run          # docker: http://localhost:8000
+```
+
+`docker/Dockerfile` builds the frontend, then runs `sportsml web build` to
+download data, train the transformer and backtest it (about 15-20 minutes,
+needs network access). At runtime the server re-downloads results every 6
+hours and refreshes team state; set `SPORTSML_REFRESH=0` to turn this off or
+change `SPORTSML_REFRESH_HOURS`.
+
+Without Docker:
+
+```sh
+make webdata                    # sportsml web build --output_dir webdata
+make web-build                  # frontend -> web/build
+make serve                      # http://localhost:8000
+make web-dev                    # frontend hot reload on :5173 (with `make serve` running)
+```
+
+The API lives under `/api` (`/api/sports`, `/api/{sport}/upcoming`,
+`/api/{sport}/games/{id}`, `/api/{sport}/challenge/next`). Interactive docs
+are at `/docs`. Everything is keyed by sport. To add a sport, give it a
+`SportView` (`src/sportsml/web/sports/<sport>.py`) with its stats, team
+metadata and score columns, add it to `BUILTIN_VIEWS`, and build it with
+`sportsml web build --sports '[nfl, <sport>]'`. The frontend needs no
+changes.
+
 ## Sports and data sources
 
 | Sport | Command | Source | Credentials |
@@ -164,7 +206,9 @@ sportsml/
   nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
   inference/      predict command, matchup helpers
   backtest.py     walk-forward backtests, family registry, benchmark
-  cli.py          `sportsml <sport> ...`, generated from the registry
+  web/            FastAPI app: per-sport views, snapshots, API, runtime refresh
+  cli.py          `sportsml <sport> ...` and `sportsml web ...`, generated from the registry
+web/              SvelteKit frontend (static build served by FastAPI at /)
 ```
 
 A games table has one row per team per game, so every game appears twice:
@@ -209,6 +253,7 @@ make lint     # ruff check + format check (pre-commit runs the same hooks)
 make format
 ```
 
-CI (GitHub Actions) runs lint and tests on every push to `main` and every pull
-request. `make build` / `make run ARGS="nfl predict"` build and run the Docker
-image (`DOCKER_ARGS="--gpus all"` for GPU).
+`make test` and `make lint` also run the frontend's unit tests and
+`svelte-check`. CI (GitHub Actions) runs both on every push to `main` and every
+pull request. `make cli ARGS="nfl predict"` runs any CLI command inside the
+Docker image (`DOCKER_ARGS="--gpus all"` for GPU).

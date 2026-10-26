@@ -157,3 +157,4 @@ notebooks/lightning_logs
 *.tar.gz
 /predictions
 /backtests
+/webdata

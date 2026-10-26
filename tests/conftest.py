@@ -121,3 +121,35 @@ def toy_sport():
 @pytest.fixture(scope="session")
 def toy_games():
     return make_games()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def toy_view(toy_sport):
+    from sportsml.web.views import SportView, Stat, column, register_view
+
+    teams = pd.DataFrame(
+        {
+            "team": [f"T{i:02d}" for i in range(12)],
+            "name": [f"Team {i}" for i in range(12)],
+            "nickname": [f"T{i}" for i in range(12)],
+            "color": "#123456",
+            "color2": "#abcdef",
+            "logo": "https://example.invalid/logo.png",
+            "conference": "A",
+            "division": "A1",
+        }
+    )
+    return register_view(
+        SportView(
+            sport="toy",
+            label="Toy",
+            date_label="Week",
+            stats=(
+                Stat("points", "Points", column("points")),
+                Stat("allowed", "Allowed", column("opp_points"), 1, False),
+                Stat("yards", "Yards", column("yards"), 0),
+            ),
+            load_teams=lambda: teams,
+            score=("points", "opp_points"),
+        )
+    )

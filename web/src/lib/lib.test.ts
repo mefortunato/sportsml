@@ -10,6 +10,7 @@ import {
 	winLoss,
 	winRate
 } from './format';
+import { americanOdds, breakEven, payout, pickLabel, unitsLabel } from './markets';
 import type { ChallengeAnswer, Team } from './types';
 
 const KC: Team = { team: 'KC', name: 'Kansas City Chiefs' };
@@ -38,6 +39,20 @@ describe('format', () => {
 		expect(winRate(3, 1)).toBe(0.75);
 	});
 
+	it('prices bets at American odds', () => {
+		expect(payout(-110)).toBeCloseTo(100 / 110);
+		expect(payout(150)).toBe(1.5);
+		expect(breakEven()).toBeCloseTo(0.5238, 4);
+		expect(breakEven(100)).toBe(0.5);
+		expect(americanOdds(130)).toBe('+130');
+		expect(americanOdds(-150.4)).toBe('−150');
+		expect(americanOdds(null)).toBe('—');
+		expect(unitsLabel(1.25)).toBe('+1.3 u');
+		expect(unitsLabel(-2)).toBe('−2.0 u');
+		expect(pickLabel('over', KC, BUF)).toBe('Over');
+		expect(pickLabel('away', KC, BUF)).toBe('BUF');
+	});
+
 	it('reads nflverse kickoff times', () => {
 		expect(kickoffLabel('2026-11-01 13:00')).toBe('Sun, Nov 1 · 1:00 PM ET');
 		expect(kickoffLabel('2026-10-26 20:15')).toBe('Mon, Oct 26 · 8:15 PM ET');
@@ -46,19 +61,26 @@ describe('format', () => {
 });
 
 function answer(id: string, correct: boolean, modelCorrect: boolean): ChallengeAnswer {
+	const modelPick = modelCorrect === correct ? 'home' : 'away';
 	return {
 		game_id: id,
+		market: 'spread',
 		pick: 'home',
+		outcome: correct ? 'home' : 'away',
+		odds: { home: -110, away: -110 },
 		covered: correct ? 'home' : 'away',
 		correct,
+		units: correct ? 100 / 110 : -1,
 		spread: 3,
 		result: { home_score: 20, away_score: 17, margin: 3, covered: 'home' },
 		model: {
 			margin: 1,
 			win_prob: 0.55,
 			edge: -2,
-			ats_pick: modelCorrect === correct ? 'home' : 'away',
-			correct: modelCorrect
+			ats_pick: modelPick,
+			pick: modelPick,
+			correct: modelCorrect,
+			units: modelCorrect ? 100 / 110 : -1
 		}
 	};
 }
@@ -77,8 +99,9 @@ describe('challenge record', () => {
 		record = applyAnswer(record, answer('b', true, true));
 		record = applyAnswer(record, answer('c', false, true));
 		expect(record.played).toBe(3);
-		expect(record.player).toEqual({ wins: 2, losses: 1 });
-		expect(record.model).toEqual({ wins: 2, losses: 1 });
+		expect(record.player).toMatchObject({ wins: 2, losses: 1 });
+		expect(record.player.units).toBeCloseTo((2 * 100) / 110 - 1);
+		expect(record.model).toMatchObject({ wins: 2, losses: 1 });
 		expect(record.agreed).toBe(1); // only game b: same pick as the model
 		expect([record.streak, record.bestStreak]).toEqual([0, 2]);
 		expect(record.seen).toEqual(['a', 'b', 'c']);
@@ -86,12 +109,28 @@ describe('challenge record', () => {
 
 	it('persists across store instances and resets', () => {
 		const storage = new MemoryStorage();
-		const first = challengeStore('nfl', storage);
+		const first = challengeStore('nfl', 'spread', storage);
 		first.record(answer('a', true, true));
-		const again = challengeStore('nfl', storage);
+		const again = challengeStore('nfl', 'spread', storage);
 		expect(get(again).player.wins).toBe(1);
-		expect(loadRecord('cbb', storage).played).toBe(0);
+		expect(loadRecord('cbb', 'spread', storage).played).toBe(0);
 		again.reset();
-		expect(get(challengeStore('nfl', storage)).played).toBe(0);
+		expect(get(challengeStore('nfl', 'spread', storage)).played).toBe(0);
+	});
+
+	it('keeps one record per market, the spread under its old key', () => {
+		const storage = new MemoryStorage();
+		challengeStore('nfl', 'total', storage).record(answer('a', true, true));
+		expect(loadRecord('nfl', 'total', storage).played).toBe(1);
+		expect(loadRecord('nfl', 'spread', storage).played).toBe(0);
+		// a record saved before there were markets or units
+		storage.setItem(
+			'sportsml:challenge:nfl',
+			JSON.stringify({ played: 2, player: { wins: 1, losses: 1 }, model: { wins: 2, losses: 0 } })
+		);
+		const legacy = loadRecord('nfl', 'spread', storage);
+		expect(legacy.played).toBe(2);
+		expect(legacy.player).toEqual({ wins: 1, losses: 1, units: 0 });
+		expect(legacy.seen).toEqual([]);
 	});
 });

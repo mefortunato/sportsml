@@ -4,7 +4,19 @@
 
 	// Predicted win probability (x) vs how often those teams won (y); the
 	// diagonal is perfect calibration.
-	let { series }: { series: { label: string; slot: number; bins: CalibrationBin[] }[] } = $props();
+	let {
+		series,
+		event = 'win'
+	}: {
+		series: { label: string; slot: number; bins: CalibrationBin[] }[];
+		/** What the probability is of: a team winning, or the game going over. */
+		event?: 'win' | 'over';
+	} = $props();
+	const words = $derived(
+		event === 'over'
+			? { predicted: 'Predicted over probability', actual: 'Actual over rate', did: 'over' }
+			: { predicted: 'Predicted win probability', actual: 'Actual win rate', did: 'won' }
+	);
 
 	// drawn at the container's own width (square plot), so text stays 12px
 	let width = $state(420);
@@ -20,15 +32,15 @@
 </script>
 
 <div class="chart" bind:clientWidth={width}>
-	<svg viewBox="0 0 {W} {H}" role="img" aria-label="Calibration of predicted win probabilities; the table below lists the same values">
+	<svg viewBox="0 0 {W} {H}" role="img" aria-label="Calibration of the {words.predicted.toLowerCase()}">
 		{#each ticks as t (t)}
 			<line class="grid" x1={x(0)} x2={x(1)} y1={y(t)} y2={y(t)} />
 			<line class="grid" x1={x(t)} x2={x(t)} y1={y(0)} y2={y(1)} />
 			<text class="tick" x={x(0) - 8} y={y(t)} text-anchor="end" dominant-baseline="middle">{pct(t)}</text>
 			<text class="tick" x={x(t)} y={y(0) + 18} text-anchor="middle">{pct(t)}</text>
 		{/each}
-		<text class="axis" x={x(0.5)} y={H - 4} text-anchor="middle">Predicted win probability</text>
-		<text class="axis" transform="translate(12 {y(0.5)}) rotate(-90)" text-anchor="middle">Actual win rate</text>
+		<text class="axis" x={x(0.5)} y={H - 4} text-anchor="middle">{words.predicted}</text>
+		<text class="axis" transform="translate(12 {y(0.5)}) rotate(-90)" text-anchor="middle">{words.actual}</text>
 		<line class="diagonal" x1={x(0)} y1={y(0)} x2={x(1)} y2={y(1)} />
 
 		{#each series as s (s.label)}
@@ -55,7 +67,7 @@
 		<div class="tooltip" style:left="{(x(hover.bin.predicted) / W) * 100}%" style:top="{(y(hover.bin.actual) / H) * 100}%"
 			class:flip={hover.bin.predicted > 0.55}>
 			<div class="tip-head"><span class="swatch" style:background="var(--series-{hover.slot})"></span> {hover.label}</div>
-			<div>Predicted {pct(hover.bin.predicted)}, won {pct(hover.bin.actual)}</div>
+			<div>Predicted {pct(hover.bin.predicted)}, {words.did} {pct(hover.bin.actual)}</div>
 			<div class="muted">{hover.bin.n} games</div>
 		</div>
 	{/if}

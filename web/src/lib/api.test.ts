@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { pickChallenge, revive, scoreAnswer, type ChallengeEntry } from './api';
 
-const entry = (id: string, covered: 'home' | 'away' | null = 'home') =>
+const entry = (id: string, covered: 'home' | 'away' = 'home', total = false) =>
 	({
 		game: { game_id: id },
-		answer: { game_id: id, covered, spread: 3, model: { ats_pick: 'away', correct: false } }
+		answers: {
+			spread: {
+				game_id: id,
+				market: 'spread',
+				outcome: covered,
+				odds: { home: -110, away: -110 },
+				covered,
+				spread: 3,
+				model: { ats_pick: 'away', pick: 'away', correct: false, units: -1 }
+			},
+			...(total
+				? {
+						total: {
+							game_id: id,
+							market: 'total',
+							outcome: 'under',
+							odds: { over: -105, under: 120 },
+							total_line: 44.5,
+							model: { pick: 'under', correct: true, units: 1.2 }
+						}
+					}
+				: {})
+		}
 	}) as unknown as ChallengeEntry;
 
 describe('static api', () => {
@@ -31,9 +53,25 @@ describe('static api', () => {
 		expect(() => pickChallenge([], [])).toThrow();
 	});
 
-	it('scores either pick like the server', () => {
+	it('only picks games playable on the market', () => {
+		const pool = [entry('a'), entry('b', 'home', true)];
+		for (let i = 0; i < 10; i++) {
+			expect(pickChallenge(pool, [], Math.random, 'total').game.game_id).toBe('b');
+		}
+		expect(() => pickChallenge(pool, [], Math.random, 'moneyline')).toThrow();
+	});
+
+	it('scores any pick like the server, in units at its odds', () => {
 		expect(scoreAnswer(entry('a', 'home'), 'home')).toMatchObject({ pick: 'home', correct: true });
-		expect(scoreAnswer(entry('a', 'home'), 'away')).toMatchObject({ pick: 'away', correct: false });
-		expect(scoreAnswer(entry('a', null), 'home').correct).toBe(false);
+		expect(scoreAnswer(entry('a', 'home'), 'home').units).toBeCloseTo(100 / 110);
+		expect(scoreAnswer(entry('a', 'home'), 'away')).toMatchObject({
+			pick: 'away',
+			correct: false,
+			units: -1
+		});
+		const total = scoreAnswer(entry('b', 'home', true), 'under', 'total');
+		expect(total).toMatchObject({ correct: true, units: 1.2, total_line: 44.5 });
+		expect(scoreAnswer(entry('b', 'home', true), 'over', 'total').units).toBe(-1);
+		expect(() => scoreAnswer(entry('a'), 'over', 'total')).toThrow();
 	});
 });

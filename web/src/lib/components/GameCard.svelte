@@ -2,6 +2,7 @@
 	import { links } from '$lib/links';
 	import { kickoffLabel, signed, spreadLabel } from '$lib/format';
 	import type { UpcomingGame } from '$lib/types';
+	import MarketTable from './MarketTable.svelte';
 	import SpreadChart from './SpreadChart.svelte';
 	import TeamBadge from './TeamBadge.svelte';
 	import WinProbBar from './WinProbBar.svelte';
@@ -34,6 +35,8 @@
 	/>
 
 	<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
+
+	<MarketTable {game} {prediction} />
 
 	<div class="bottom small">
 		<span class="pill">Vegas {spreadLabel(game.home, game.away, game.spread)}</span>

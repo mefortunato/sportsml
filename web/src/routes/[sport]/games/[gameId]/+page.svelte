@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { links } from '$lib/links';
+	import MarketTable from '$lib/components/MarketTable.svelte';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
+	import ProbabilityCompare from '$lib/components/ProbabilityCompare.svelte';
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
+	import TotalChart from '$lib/components/TotalChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import WinProbBar from '$lib/components/WinProbBar.svelte';
 	import { kickoffLabel, marginLabel, signed, spreadLabel } from '$lib/format';
@@ -70,8 +73,23 @@
 			/>
 		</div>
 		{#if prediction}
-			<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
+			{#if prediction.market_prob != null}
+				<ProbabilityCompare
+					home={game.home}
+					away={game.away}
+					model={prediction.win_prob}
+					market={prediction.market_prob}
+				/>
+			{:else}
+				<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
+			{/if}
 		{/if}
+		{#if game.total_line != null || prediction?.total != null}
+			<div class="chart">
+				<TotalChart line={game.total_line} model={prediction?.total ?? null} result={result?.total ?? null} />
+			</div>
+		{/if}
+		<MarketTable {game} {prediction} {result} />
 	</div>
 
 	<MatchupDetails matchup={game} dateLabel={info.date_label} />

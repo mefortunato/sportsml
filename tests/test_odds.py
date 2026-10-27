@@ -1,0 +1,215 @@
+import datetime
+import json
+import pathlib
+
+import pandas as pd
+import pytest
+
+from sportsml.nfl.data.names import odds_map
+from sportsml.odds.providers import CFBD, OddsAPI
+from sportsml.web.odds import build_odds, load_previous, match_games, refresh_odds
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+def fake_get(name, headers=None):
+    payload = json.loads((FIXTURES / name).read_text())
+
+    def get(url, params, *rest):
+        get.calls.append((url, params))
+        return payload, headers or {}
+
+    get.calls = []
+    return get
+
+
+def nfl_lines():
+    get = fake_get("oddsapi_nfl.json", {"x-requests-remaining": "147"})
+    provider = OddsAPI("nfl", names=odds_map, api_key="k", get=get)
+    return provider, provider.fetch()
+
+
+def test_odds_api_lines_from_the_home_side():
+    provider, lines = nfl_lines()
+    assert provider.remaining == 147
+    url, params = provider._get.calls[0]
+    assert url.endswith("/sports/americanfootball_nfl/odds")
+    assert params["markets"] == "h2h,spreads,totals" and params["regions"] == "us"
+    kc = lines[lines.home == "KC"].set_index("book")
+    assert set(kc.index) == {"DraftKings", "FanDuel"}
+    # KC -2.5: home favored by 2.5
+    assert kc.loc["DraftKings", "spread"] == 2.5
+    assert kc.loc["FanDuel", ["spread_home_odds", "spread_away_odds"]].tolist() == [
+        -115,
+        -105,
+    ]
+    dk = kc.loc["DraftKings", ["ml_home", "ml_away", "total", "over_odds"]]
+    assert dk.tolist() == [-142, 120, 46.5, -108]
+    dal = lines[lines.home == "DAL"].iloc[0]
+    assert pd.isna(dal.spread) and dal.ml_home == 130
+    with pytest.raises(RuntimeError, match="ODDS_API_KEY"):
+        OddsAPI("nfl", api_key="", get=fake_get("oddsapi_nfl.json")).fetch()
+
+
+def test_cfbd_lines_read_the_favorite_from_the_formatted_spread():
+    get = fake_get("cfbd_lines.json", {"x-calllimit-remaining": "990"})
+    provider = CFBD(year=2024, week=10, api_key="k", get=get)
+    lines = provider.fetch().set_index(["home", "book"])
+    assert provider.remaining == 990
+    assert get.calls[0][1] == {"year": 2024, "week": 10, "seasonType": "regular"}
+    uga = lines.loc[("Georgia", "DraftKings")]
+    assert (uga.spread, uga.spread_open, uga.total, uga.total_open) == (
+        14.5,
+        13.5,
+        50.5,
+        49.5,
+    )
+    assert pd.isna(uga.spread_home_odds)  # CFBD has no spread prices
+    # the home team as the underdog: Iowa State -3.5 at Texas Tech
+    assert lines.loc[("Texas Tech", "DraftKings"), "spread"] == -3.5
+    assert pd.isna(lines.loc[("Georgia", "ESPN Bet"), "ml_home"])
+
+
+def test_cfbd_finds_the_coming_week_from_the_calendar():
+    calendar = [
+        {"week": 9, "seasonType": "regular", "endDate": "2024-10-28T07:00:00.000Z"},
+        {"week": 10, "seasonType": "regular", "endDate": "2024-11-04T07:00:00.000Z"},
+    ]
+    provider = CFBD(
+        api_key="k", get=lambda *a: (calendar, {}), today=datetime.date(2024, 10, 30)
+    )
+    assert provider.current_week() == (2024, 10, "regular")
+
+
+def card(game_id, home, away, kickoff):
+    return {
+        "game_id": game_id,
+        "home": {"team": home},
+        "away": {"team": away},
+        "kickoff": kickoff,
+    }
+
+
+CARDS = [
+    card("2024_09_BUF_KC", "KC", "BUF", "2024-11-03 20:20"),
+    # listed the other way round from the provider: lines must be flipped
+    card("2024_09_DAL_ATL", "ATL", "DAL", "2024-11-03 13:00"),
+    card("2024_10_KC_BUF", "BUF", "KC", "2024-11-17 16:25"),  # rematch, later
+]
+
+
+def test_lines_match_the_nearest_game_and_flip_to_its_home_side():
+    _, lines = nfl_lines()
+    matched = match_games(lines, CARDS)
+    assert set(matched.game_id) == {"2024_09_BUF_KC", "2024_09_DAL_ATL"}
+    atl = matched[matched.game_id == "2024_09_DAL_ATL"].iloc[0]
+    assert (atl.home, atl.ml_home, atl.ml_away) == ("DAL", -150, 130)  # flipped prices
+
+
+def test_odds_payload_has_consensus_best_prices_and_history():
+    _, lines = nfl_lines()
+    previous = {
+        "games": {
+            "2024_09_BUF_KC": {
+                "history": [
+                    {"t": "2024-11-01T12:00:00+00:00", "spread": 1.5, "total": 47.0}
+                ]
+            },
+            "2024_10_KC_BUF": {"books": [], "history": [{"t": "x", "spread": -1.0}]},
+            "2023_18_OLD": {"history": []},
+        }
+    }
+    odds = build_odds(
+        lines,
+        CARDS,
+        previous,
+        now="2024-11-03T15:05:00+00:00",
+        provider="oddsapi",
+        remaining=147,
+    )
+    assert odds["provider"] == "oddsapi" and odds["remaining"] == 147
+    kc = odds["games"]["2024_09_BUF_KC"]
+    assert kc["consensus"]["spread"] == 2.75 and kc["consensus"]["total"] == 46.25
+    best = kc["best"]
+    # KC needs the fewest points (DraftKings 2.5), BUF the most (FanDuel +3)
+    assert best["spread"]["home"] == {"book": "DraftKings", "odds": -110, "points": 2.5}
+    assert best["spread"]["away"] == {"book": "FanDuel", "odds": -105, "points": 3.0}
+    assert best["moneyline"]["home"]["book"] == "DraftKings"  # -142 beats -148
+    assert best["moneyline"]["away"]["book"] == "FanDuel"  # +125 beats +120
+    assert (
+        best["total"]["over"]["points"] == 46.0
+        and best["total"]["under"]["points"] == 46.5
+    )
+    # the history grows from the published file; the first point opens
+    assert [p["spread"] for p in kc["history"]] == [1.5, 2.75]
+    assert kc["open"]["spread"] == 1.5
+    # a game this refresh missed keeps its lines; finished games are dropped
+    assert "2024_10_KC_BUF" in odds["games"] and "2023_18_OLD" not in odds["games"]
+    atl = odds["games"]["2024_09_DAL_ATL"]
+    assert atl["consensus"]["spread"] is None and atl["best"]["spread"]["home"] is None
+
+
+def test_refresh_skips_without_games_soon_and_survives_a_failed_fetch(tmp_path):
+    provider, _ = nfl_lines()
+    previous = {"games": {}, "updated": "earlier"}
+    far = [card("g", "KC", "BUF", "2024-12-25 16:00")]
+    now = datetime.datetime(2024, 11, 3, 12, tzinfo=datetime.timezone.utc)
+    calls = len(provider._get.calls)
+    assert refresh_odds(provider, far, previous, now=now) is previous
+    assert len(provider._get.calls) == calls  # no request spent off-season
+
+    class Broken:
+        name, remaining = "broken", None
+
+        def fetch(self):
+            raise ConnectionError("down")
+
+    assert refresh_odds(Broken(), CARDS, previous, now=now) is previous
+    fresh = refresh_odds(provider, CARDS, None, now=now)
+    assert set(fresh["games"]) == {"2024_09_BUF_KC", "2024_09_DAL_ATL"}
+
+    (tmp_path / "nfl").mkdir()
+    (tmp_path / "nfl" / "odds.json").write_text(json.dumps(fresh))
+    assert load_previous(str(tmp_path), "nfl") == fresh
+    assert load_previous(str(tmp_path), "cfb") is None
+    assert load_previous("http://127.0.0.1:9/none", "nfl") is None
+
+
+def test_export_writes_odds_when_asked(webdata_for_odds, tmp_path, monkeypatch):
+    from sportsml.web import export as export_module
+
+    seen = {}
+
+    def fake_refresh(provider, cards, previous):
+        seen["provider"], seen["cards"] = provider, cards
+        return {"updated": "now", "provider": "oddsapi", "remaining": 99, "games": {}}
+
+    monkeypatch.setattr(export_module, "refresh_odds", fake_refresh)
+    monkeypatch.setattr(
+        export_module, "provider_for", lambda sport, name: (sport, name)
+    )
+    export_module.export(
+        data_dir=str(webdata_for_odds),
+        output_dir=str(tmp_path),
+        odds={"toy": "oddsapi"},
+    )
+    saved = json.loads((tmp_path / "data" / "toy" / "odds.json").read_text())
+    assert saved["remaining"] == 99 and seen["provider"] == ("toy", "oddsapi")
+    assert seen["cards"] and all("game_id" in c for c in seen["cards"])
+
+
+@pytest.fixture(scope="module")
+def webdata_for_odds(tmp_path_factory):
+    from sportsml.web.build import build
+
+    from .conftest import make_games
+
+    out = tmp_path_factory.mktemp("webdata")
+    build(
+        sports=["toy"],
+        output_dir=str(out),
+        games=make_games(),
+        backtest_seasons=1,
+        max_epochs=1,
+    )
+    return out

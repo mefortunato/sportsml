@@ -8,6 +8,9 @@
 # secret; no game within 8 days: no request). The schedule fits the free
 # tier's 150 requests a month for the NFL: about 23 runs a week in season,
 # more on game days (times in UTC, before each Eastern kickoff window).
+# College football results and lines come from CollegeFootballData
+# (CFBD_API_KEY secret; ~3-4 calls a run with finished seasons cached, well
+# within its free tier's 1,000 a month).
 name: Site
 
 on:
@@ -62,6 +65,13 @@ jobs:
             sleep 30
           done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
+      - name: Cache CollegeFootballData responses
+        uses: actions/cache@v4
+        with:
+          # finished seasons and weeks; CFBD's free tier is 1,000 calls a month
+          path: data/cfb/cfbd_cache
+          key: cfbd-${{ github.run_id }}
+          restore-keys: cfbd-
       - id: pages
         uses: actions/configure-pages@v5
       - name: Export fresh data and lines
@@ -70,7 +80,7 @@ jobs:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: >
           uv run sportsml web export --data_dir webdata --output_dir web/static
-          --refresh true --odds "{nfl: oddsapi}"
+          --refresh true --odds "{nfl: oddsapi, cfb: cfbd}"
           --odds_history "${{ steps.pages.outputs.base_url }}/data"
       - uses: actions/setup-node@v6
         with:

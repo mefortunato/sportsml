@@ -15,7 +15,7 @@ school's own name stays in ``team_name`` / ``opp_name``.
 Responses of finished seasons and finished weeks are cached on disk
 (``cache_dir``), so a daily refresh only fetches the current season's
 schedule, lines and newest box scores (CFBD's free tier allows 1,000 calls
-a month; a full download from 2004 takes about 450).
+a month; a full download from 2004 takes about 400, a refresh 2-3).
 """
 
 from __future__ import annotations
@@ -397,11 +397,9 @@ def season_complete(season: int, today: datetime.datetime) -> bool:
 def fetch_season(client: Client, season: int, today: datetime.datetime) -> tuple:
     """``(schedule, box scores, lines)`` of one season."""
     final = season_complete(season, today)
-    schedule, lines = [], []
-    for season_type in ("regular", "postseason"):
-        kwargs = {"year": season, "seasonType": season_type}
-        schedule += client.get("/games", final=final, **kwargs)
-        lines += client.get("/lines", final=final, **kwargs)
+    kwargs = {"year": season, "seasonType": "both"}
+    schedule = client.get("/games", final=final, **kwargs)
+    lines = client.get("/lines", final=final, **kwargs)
 
     games = schedule_frame(schedule)
     box = []

@@ -144,11 +144,9 @@ def fake_api(calls):
         calls.append((url, dict(params)))
         path = url.removeprefix(cfbd.API)
         season_type = params.get("seasonType")
-        if path == "/games":
-            return FakeResponse([g for g in SCHEDULE if g["seasonType"] == season_type])
-        if path == "/lines":
-            ids = {g["id"] for g in SCHEDULE if g["seasonType"] == season_type}
-            return FakeResponse([g for g in LINES if g["id"] in ids])
+        if path in ("/games", "/lines"):
+            assert season_type == "both"
+            return FakeResponse(SCHEDULE if path == "/games" else LINES)
         if path == "/games/teams":
             return FakeResponse(BOX if params["week"] == 1 else [])
         raise AssertionError(path)

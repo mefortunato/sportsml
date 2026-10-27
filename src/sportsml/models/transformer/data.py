@@ -2,8 +2,9 @@
 
 A token is one earlier game of a team: its box-score stats, result and
 location, standardized, plus (optionally) how strong both teams were going
-into it. A row's history is the team's previous ``history`` played games,
-most recent first, crossing season boundaries. Optionally each token also
+into it and how its margin compared with what Elo expected. A row's history
+is the team's previous ``history`` played games, most recent first, crossing
+season boundaries. Optionally each token also
 carries its opponent's own games before it (``opponent_games``), which the
 encoder turns into an embedding of how good that opponent was.
 """
@@ -20,14 +21,30 @@ from ...core.schema import GameSchema, played
 
 # Pre-game strength of both teams in each token's game (opponent_strength).
 STRENGTH_COLUMNS = ["_team_elo", "_opp_elo", "_opp_margin_avg"]
+# The game's margin minus the margin pre-game Elo expected (elo_margin).
+ELO_MARGIN_COLUMNS = ["_margin_vs_elo"]
 
 
-def strength(games: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:
+def extra_columns(opponent_strength: bool, elo_margin: bool) -> list[str]:
+    return (STRENGTH_COLUMNS if opponent_strength else []) + (
+        ELO_MARGIN_COLUMNS if elo_margin else []
+    )
+
+
+def strength(
+    games: pd.DataFrame,
+    schema: GameSchema,
+    opponent_strength: bool = True,
+    elo_margin: bool = False,
+) -> pd.DataFrame:
     """Each played row's pre-game strength features.
 
     ``_team_elo`` / ``_opp_elo``: Elo ratings going into the game;
     ``_opp_margin_avg``: the opponent's season-to-date average margin before
-    the game. All depend on earlier games only.
+    the game; ``_margin_vs_elo``: the game's margin minus Elo's expected
+    margin (rating gap plus home edge, in points). Elo and the averages
+    depend on earlier games only; ``_margin_vs_elo`` adds the game's own
+    result, like the raw margin already in each token.
     """
     import dataclasses
 
@@ -35,17 +52,20 @@ def strength(games: pd.DataFrame, schema: GameSchema) -> pd.DataFrame:
     from ..sklearn.features import training_frame
 
     games = played(games, schema)
-    elo = EloModel(schema).pre_game_ratings(games)
-    margin = dataclasses.replace(schema, stats=(schema.target,))
-    avg = training_frame(games, margin)[f"opp_{schema.target}_avg"]
-    return pd.DataFrame(
-        {
-            "_team_elo": elo["team_elo"],
-            "_opp_elo": elo["opp_elo"],
-            "_opp_margin_avg": avg,
-        },
-        index=games.index,
-    )
+    out = pd.DataFrame(index=games.index)
+    elo = EloModel(schema)
+    if opponent_strength:
+        ratings = elo.pre_game_ratings(games)
+        margin = dataclasses.replace(schema, stats=(schema.target,))
+        out["_team_elo"] = ratings["team_elo"]
+        out["_opp_elo"] = ratings["opp_elo"]
+        out["_opp_margin_avg"] = training_frame(games, margin)[
+            f"opp_{schema.target}_avg"
+        ]
+    if elo_margin:
+        expected = elo.replay(games) * elo.params.points_per_elo
+        out["_margin_vs_elo"] = games[schema.target] - expected
+    return out
 
 
 @dataclass
@@ -59,6 +79,7 @@ class SequenceFeatures:
     std: dict[str, float]
     schema: GameSchema | None = None
     opponent_strength: bool = False
+    elo_margin: bool = False
 
     @classmethod
     def fit(
@@ -67,12 +88,15 @@ class SequenceFeatures:
         schema: GameSchema,
         history: int,
         opponent_strength: bool = False,
+        elo_margin: bool = False,
     ) -> SequenceFeatures:
         location = [schema.location] if schema.location else []
         tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
-        if opponent_strength:
-            tokens += STRENGTH_COLUMNS
-            train_games = train_games.join(strength(train_games, schema))
+        if extra := extra_columns(opponent_strength, elo_margin):
+            tokens += extra
+            train_games = train_games.join(
+                strength(train_games, schema, opponent_strength, elo_margin)
+            )
         context = location + list(schema.context)
         columns = list(dict.fromkeys(tokens + context))
         values = train_games[columns].apply(pd.to_numeric, errors="coerce")
@@ -84,6 +108,7 @@ class SequenceFeatures:
             std=values.std().replace(0, 1).fillna(1.0).to_dict(),
             schema=schema,
             opponent_strength=opponent_strength,
+            elo_margin=elo_margin,
         )
 
     @property
@@ -103,8 +128,10 @@ class SequenceFeatures:
 
     def tokens(self, games: pd.DataFrame) -> np.ndarray:
         """Standardized tokens for played ``games`` (strength computed from them)."""
-        if self.opponent_strength:
-            games = games.join(strength(games, self.schema))
+        if self.opponent_strength or self.elo_margin:
+            games = games.join(
+                strength(games, self.schema, self.opponent_strength, self.elo_margin)
+            )
         return self._standardize(games, self.token_columns)
 
     def context(self, matchups: pd.DataFrame) -> np.ndarray:

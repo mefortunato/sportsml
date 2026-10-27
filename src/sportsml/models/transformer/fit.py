@@ -11,7 +11,7 @@ from ...core.schema import GameSchema, played
 from ...core.splits import split_seasons
 from ...core.sport import get_sport
 from ..lightning import best_model, default_trainer, seed_and_reset
-from .data import STRENGTH_COLUMNS, SequenceData, SequenceFeatures
+from .data import SequenceData, SequenceFeatures, extra_columns
 from .model import PairHead, SequenceEncoder, TransformerMatchupModel, TransformerModel
 
 ENCODER_KEYS = (
@@ -22,13 +22,12 @@ ENCODER_KEYS = (
 
 
 def transformer_dims(
-    schema: GameSchema, opponent_strength: bool = False
+    schema: GameSchema, opponent_strength: bool = False, elo_margin: bool = False
 ) -> dict[str, int]:
     """Token / context feature counts a TransformerModel needs for ``schema``."""
     location = [schema.location] if schema.location else []
     tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
-    if opponent_strength:
-        tokens += STRENGTH_COLUMNS
+    tokens += extra_columns(opponent_strength, elo_margin)
     return {
         "token_dim": len(tokens),
         "context_dim": len(schema.context) + len(location),
@@ -39,13 +38,16 @@ def transformer_config(
     sport: str,
     context: list[str] | None = None,
     opponent_strength: bool = False,
+    elo_margin: bool = False,
     **overrides,
 ) -> dict:
     """TransformerModel init args for ``sport``: sizes from
     ``Sport.transformer``, then ``overrides`` (any encoder arg, e.g.
     ``history=34, season_decay=True``, or ``lr``)."""
     spec = get_sport(sport)
-    dims = transformer_dims(spec.schema.with_features(context), opponent_strength)
+    dims = transformer_dims(
+        spec.schema.with_features(context), opponent_strength, elo_margin
+    )
     settings = {
         "history": 20,
         "d_model": 64,
@@ -72,9 +74,12 @@ def default_model(
     sport: str,
     context: list[str] | None = None,
     opponent_strength: bool = False,
+    elo_margin: bool = False,
     **overrides,
 ) -> TransformerModel:
-    config = transformer_config(sport, context, opponent_strength, **overrides)
+    config = transformer_config(
+        sport, context, opponent_strength, elo_margin, **overrides
+    )
     return TransformerModel(
         encoder=SequenceEncoder(**config.pop("encoder")),
         head=PairHead(**config.pop("head")),
@@ -113,6 +118,7 @@ def fit_transformer(
     test_seasons: list[int] | None = None,
     min_history: int = 1,
     opponent_strength: bool = False,
+    elo_margin: bool = False,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -135,6 +141,8 @@ def fit_transformer(
             and the opponent's season-to-date margin to its token. Off by
             default: on NFL 2021-2025 it did not change the backtest Brier
             (+0.0002 +/- 0.0027) and makes state refreshes slower.
+        elo_margin: Add each history game's margin minus the margin pre-game
+            Elo expected, so a result is read against the opponent's rating.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:
@@ -149,10 +157,10 @@ def fit_transformer(
     if not split.val:
         raise ValueError("transformer training needs validation seasons")
 
-    model = model or default_model(sport, context, opponent_strength)
+    model = model or default_model(sport, context, opponent_strength, elo_margin)
     train_games = games[games[schema.season].isin(split.train)]
     features = SequenceFeatures.fit(
-        train_games, schema, model.encoder.history, opponent_strength
+        train_games, schema, model.encoder.history, opponent_strength, elo_margin
     )
     _check_dims(model, features)
     data = SequenceData(

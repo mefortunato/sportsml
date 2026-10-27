@@ -15,6 +15,7 @@ from sportsml.models.transformer.data import (
     SequenceFeatures,
     histories,
     opponent_rows,
+    strength,
 )
 
 from .conftest import TOY_SCHEMA, make_games
@@ -149,8 +150,6 @@ def test_features_standardize_on_training_games(played_games):
 
 
 def test_strength_features_use_only_earlier_games(played_games):
-    from sportsml.models.transformer.data import strength
-
     games = played_games
     full = strength(games, TOY_SCHEMA)
     # drop every game after 2024 week 5: features of the rest must not move
@@ -258,3 +257,27 @@ def test_opponent_games_train_and_serve_like_training(toy_games, tmp_path):
     with torch.no_grad():
         shift = module.encoder(**changed) - module.encoder(**team)
     assert shift.abs().max() > 1e-3
+
+
+def test_elo_margin_is_the_margin_elo_did_not_expect(played_games, toy_games):
+    from sportsml.models.baselines import EloModel
+
+    extra = strength(played_games, TOY_SCHEMA, opponent_strength=False, elo_margin=True)
+    assert list(extra) == ["_margin_vs_elo"]
+    elo = EloModel(TOY_SCHEMA)
+    expected = elo.replay(played_games) * elo.params.points_per_elo
+    np.testing.assert_allclose(
+        extra["_margin_vs_elo"], played_games["margin"] - expected
+    )
+    # a game's adjustment depends only on that game and the ones before it
+    early = played_games[played_games.season < 2024]
+    np.testing.assert_allclose(
+        strength(early, TOY_SCHEMA, False, True)["_margin_vs_elo"],
+        extra.loc[early.index, "_margin_vs_elo"],
+    )
+
+    res = fit_transformer(
+        toy_games, "toy", elo_margin=True, trainer=quick_trainer(1),
+        print_metrics=False,
+    )  # fmt: skip
+    assert res["predictor"].model.features.token_columns[-1] == "_margin_vs_elo"

@@ -125,6 +125,31 @@ meaningfully better than another when those intervals separate. It writes
 `benchmark.csv`, `benchmark.json` and `benchmark_games.csv` (every source's
 prediction per game) to `backtests/<sport>/`.
 
+### Confidence-weighted staking
+
+Flat betting stakes one unit on every pick, however close the model is to
+the line. `staking` sizes each bet from the model's edge instead and scores
+the weighted profit:
+
+```sh
+uv run sportsml nfl backtest --family transformer --n_seasons 10
+uv run sportsml nfl staking --results backtests/nfl/transformer_games.csv
+```
+
+For each market (spread, moneyline and, with a model total, over/under) it
+compares flat staking, edge thresholds, a stake proportional to the edge,
+and a learned policy: a logistic fit of P(pick wins | edge) on the earlier
+seasons' out-of-sample picks, staking the half-Kelly bet at each pick's odds
+(nothing where the edge has not beaten the odds). Each test season's
+policies only learn from earlier seasons, so the first `--min_train_seasons`
+(default 3) seasons of results are only learned from. Stakes are relative
+units (average stake 1), so ROI is profit per unit staked and comparable
+with flat betting. The summary gives profit, ROI with a bootstrap 95% CI,
+the paired ROI difference vs flat, the stake-weighted win rate, the largest
+drawdown and profit by season; `staking_summary.json` and
+`staking_bets.csv` (every pick's stake under every policy) go to
+`backtests/<sport>/`.
+
 Any model can be backtested from Python with
 `sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
 `fitter(games, split)` returns a fitted `Predictor`.

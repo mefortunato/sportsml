@@ -29,7 +29,7 @@ def nfl_lines():
     return provider, provider.fetch()
 
 
-def test_odds_api_lines_from_the_home_side():
+def test_odds_api_lines_from_the_home_side(monkeypatch):
     provider, lines = nfl_lines()
     assert provider.remaining == 147
     url, params = provider._get.calls[0]
@@ -47,6 +47,7 @@ def test_odds_api_lines_from_the_home_side():
     assert dk.tolist() == [-142, 120, 46.5, -108]
     dal = lines[lines.home == "DAL"].iloc[0]
     assert pd.isna(dal.spread) and dal.ml_home == 130
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="ODDS_API_KEY"):
         OddsAPI("nfl", api_key="", get=fake_get("oddsapi_nfl.json")).fetch()
 

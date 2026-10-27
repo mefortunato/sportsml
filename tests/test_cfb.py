@@ -224,7 +224,7 @@ def test_team_metadata():
 
     teams = teams_frame(
         [
-            {"school": "Air Force", "mascot": "Falcons", "conference": "Mountain West",
+            {"school": "Air Force", "mascot": "Falcons", "abbreviation": "AF", "conference": "Mountain West",
              "division": None, "color": "#003594", "alternateColor": "ffffff",
              "logos": ["https://cdn.collegefootballdata.com/logos/500/2005.png"]},
             {"school": "Army", "mascot": "Black Knights", "conference": "American",
@@ -233,5 +233,6 @@ def test_team_metadata():
     ).set_index("team")  # fmt: skip
     assert set(TEAM_COLUMNS) <= {"team", *teams.columns}
     assert teams.loc["Air Force", "color2"] == "#ffffff"
+    assert (teams.loc["Air Force", "abbr"], teams.loc["Army", "abbr"]) == ("AF", "ARMY")
     assert teams.loc["Army", "division"] == "American West"
     assert teams.loc[FCS, "conference"] == FCS

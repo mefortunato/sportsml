@@ -11,7 +11,7 @@ from torch import nn
 from ...core.predictor import MatchupModel
 from ...core.schema import GameSchema, played
 from ..lightning import MarginModule
-from .data import SequenceFeatures, histories, opponent_histories, sequence
+from .data import SequenceFeatures, sequence
 
 
 class SequenceEncoder(nn.Module, HyperparametersMixin):
@@ -35,11 +35,6 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
             season opener's sequence (no games yet this season) is therefore
             not penalized; mid-season, last season's games count for less
             than this season's.
-        opponent_games: Also encode, for each game in the sequence, the
-            opponent's own previous ``opponent_games`` games (at most
-            ``history``) with this same encoder, and add a projection of that
-            embedding to the game's token, so a result is read against who
-            it came against. 0 turns it off.
     """
 
     def __init__(
@@ -54,7 +49,6 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         season_decay: bool = False,
         max_seasons_ago: int = 3,
         decay_init: float = 1.0,
-        opponent_games: int = 0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -76,10 +70,6 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
             if season_decay
             else None
         )
-        if opponent_games > history:
-            raise ValueError(f"opponent_games={opponent_games} > history={history}")
-        self.opponent_games = opponent_games
-        self.opponent = nn.Linear(d_model, d_model) if opponent_games else None
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         layer = nn.TransformerEncoderLayer(
             d_model,
@@ -94,17 +84,11 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         )
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(
-        self, tokens, seasons_ago, pad, opponents=None, opponent_index=None
-    ) -> torch.Tensor:
+    def forward(self, tokens, seasons_ago, pad) -> torch.Tensor:
         """
         Args:
             tokens: ``[B, K, token_dim]``; seasons_ago: ``[B, K]``;
             pad: ``[B, K]`` bool, True where there is no game.
-            opponents / opponent_index: with ``opponent_games``, the
-                opponents' sequences (``[U, opponent_games, ...]``, see
-                :func:`~sportsml.models.transformer.data.sequence`) and each
-                game's position in them (``[B, K]``).
         Returns:
             ``[B, d_model]`` team embeddings.
         """
@@ -113,10 +97,6 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         if self.season is not None:
             ago = seasons_ago.clamp(0, self.max_seasons_ago).long()
             x = x + self.season(ago)
-        if self.opponent is not None and opponents is not None:
-            # one level deep: the opponents' own games carry no opponents
-            strength = self.opponent(self(**opponents))
-            x = x + strength[opponent_index]
         x = torch.cat([self.cls_token.expand(batch, -1, -1), x], dim=1)
         x = x + self.position(torch.arange(length + 1, device=x.device))
         pad = torch.cat([pad.new_zeros(batch, 1), pad], dim=1)
@@ -230,9 +210,6 @@ class TransformerMatchupModel(MatchupModel):
         games = played(games, s).sort_values([s.season, s.date], kind="stable")
         self.state_season = games[s.season].max()
         tokens = self.features.tokens(games)
-        if self.module.encoder.opponent_games:
-            history = histories(games, s, self.features.history)
-            self.opponents = torch.from_numpy(opponent_histories(games, s, history))
         seasons = games[s.season].to_numpy(dtype=np.float32)
         current = set(games.loc[games[s.season] == self.state_season, s.team])
 
@@ -264,10 +241,7 @@ class TransformerMatchupModel(MatchupModel):
 
         def side(keys):
             index = self.history[[self.team_index[k] for k in keys]]
-            return sequence(
-                self.tokens, self.seasons, index, season,
-                getattr(self, "opponents", None), self.module.encoder.opponent_games,
-            )  # fmt: skip
+            return sequence(self.tokens, self.seasons, index, season)
 
         batch = {
             "team": side(matchups[s.team]),

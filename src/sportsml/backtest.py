@@ -83,7 +83,12 @@ def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
     return fit
 
 
-def transformer_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
+def transformer_fitter(
+    sport: str, max_epochs: int = 100, model: dict | None = None, **kwargs
+) -> Fitter:
+    """``model``: encoder/config overrides for :func:`default_model`, e.g.
+    ``{"history": 24, "season_decay": True}``; ``kwargs`` go to
+    :func:`fit_transformer`."""
     from .models.lightning import default_trainer
     from .models.transformer import default_model, fit_transformer
 
@@ -96,7 +101,13 @@ def transformer_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
         return fit_transformer(
             games,
             sport,
-            model=default_model(sport),
+            model=default_model(
+                sport,
+                kwargs.get("context"),
+                kwargs.get("opponent_strength", False),
+                kwargs.get("elo_margin", False),
+                **(model or {}),
+            ),
             trainer=trainer,
             train_seasons=split.train,
             val_seasons=split.val,

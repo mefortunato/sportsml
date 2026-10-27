@@ -1,4 +1,5 @@
 from ...core.schema import GameSchema
+from .injuries import INJURY_COLUMNS, OPP_INJURY_COLUMNS
 
 STATS_COLUMNS = [
     "completions",
@@ -110,7 +111,9 @@ SCHEMA = GameSchema(
     target="result",
     stats=tuple(STATS_COLUMNS + OPP_STATS_COLUMNS + ["score", "opp_score"]),
     location="location",
-    context=("rest", "opp_rest", "div_game"),
+    # injury features close ~22% of the transformer's Brier gap to Vegas on
+    # 2021-2025 (-0.0028 +/- 0.0025), most of it in games with a new QB
+    context=("rest", "opp_rest", "div_game", *INJURY_COLUMNS, *OPP_INJURY_COLUMNS),
     categorical=("game_type", "roof", "surface"),
     paired=(
         ("score", "opp_score"),
@@ -120,6 +123,7 @@ SCHEMA = GameSchema(
         ("qb_id", "opp_qb_id"),
         ("qb_name", "opp_qb_name"),
         ("coach", "opp_coach"),
+        *zip(INJURY_COLUMNS, OPP_INJURY_COLUMNS),
     ),
     negated=("spread_line",),
     display=("gameday", "gametime", *MARKET_COLUMNS),

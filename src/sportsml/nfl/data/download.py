@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from .features import STATS_COLUMNS
+from .injuries import INJURY_COLUMNS, injury_features
 from .names import move_map
 
 LOCATIONS = {"Home": 1, "Away": -1, "Neutral": 0}
@@ -38,12 +39,18 @@ def invert_schedule(schedule: pd.DataFrame) -> pd.DataFrame:
     return games
 
 
-def build_games(schedule: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:
+def build_games(
+    schedule: pd.DataFrame,
+    team_stats: pd.DataFrame,
+    injuries: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Join weekly team stats onto both perspectives of every scheduled game.
 
     The schedule is the source of truth for which games exist, so games whose
     stats nflverse lacks keep their result with missing stats, and each row's
     opponent stats always come from the opponent's own stats row.
+    ``injuries`` (:func:`~.injuries.injury_features` of these games) adds
+    ``inj_*`` and ``opp_inj_*`` the same way.
     """
     schedule = schedule.copy()
     for col in ("home_team", "away_team"):
@@ -60,19 +67,41 @@ def build_games(schedule: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFram
         columns={"team": "opp_team", **{col: f"opp_{col}" for col in STATS_COLUMNS}}
     )
     games = games.merge(opp_stats, on=["season", "week", "opp_team"], how="left")
+    if injuries is not None:
+        injuries = injuries[["season", "week", "team"] + INJURY_COLUMNS]
+        games = games.merge(injuries, on=["season", "week", "team"], how="left")
+        games = games.merge(
+            injuries.rename(
+                columns={
+                    "team": "opp_team",
+                    **{col: f"opp_{col}" for col in INJURY_COLUMNS},
+                }
+            ),
+            on=["season", "week", "opp_team"],
+            how="left",
+        )
     return games.sort_values(["season", "week", "game_id", "location"]).reset_index(
         drop=True
     )
 
 
 def download(output_file: str = None, seasons: list[int] = None) -> pd.DataFrame:
-    """Download nflverse schedules and weekly team stats (all seasons by default)."""
+    """Download nflverse schedules, weekly team stats and injury features
+    (all seasons by default)."""
     import nflreadpy
 
-    seasons = seasons or True
-    schedule = nflreadpy.load_schedules(seasons).to_pandas()
-    team_stats = nflreadpy.load_team_stats(seasons=seasons).to_pandas()
+    schedule = nflreadpy.load_schedules(seasons or True).to_pandas()
+    team_stats = nflreadpy.load_team_stats(seasons=seasons or True).to_pandas()
     games = build_games(schedule, team_stats)
+    # injury reports start in 2009, snap counts in 2012
+    have = sorted(int(s) for s in games["season"].unique() if s >= 2012)
+    injuries = injury_features(
+        games,
+        nflreadpy.load_injuries(have).to_pandas(),
+        nflreadpy.load_snap_counts(have).to_pandas(),
+        nflreadpy.load_players().to_pandas(),
+    )
+    games = build_games(schedule, team_stats, injuries)
 
     if output_file is not None:
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ from sportsml.models.transformer.data import (
     SequenceFeatures,
     histories,
     opponent_rows,
+    strength,
 )
 
 from .conftest import TOY_SCHEMA, make_games
@@ -149,8 +150,6 @@ def test_features_standardize_on_training_games(played_games):
 
 
 def test_strength_features_use_only_earlier_games(played_games):
-    from sportsml.models.transformer.data import strength
-
     games = played_games
     full = strength(games, TOY_SCHEMA)
     # drop every game after 2024 week 5: features of the rest must not move
@@ -160,3 +159,72 @@ def test_strength_features_use_only_earlier_games(played_games):
     # Elo going into a game reflects earlier results: better teams rate higher
     gap = full["_team_elo"] - full["_opp_elo"]
     assert np.corrcoef(gap, games.margin)[0, 1] > 0.2
+
+
+def test_season_decay_down_weights_earlier_seasons():
+    from sportsml.models.transformer.model import SequenceEncoder
+
+    torch.manual_seed(0)
+    tokens = torch.randn(4, 6, 5)
+    ago = torch.tensor([[0.0, 0, 0, 1, 1, 2]] * 4)
+    pad = torch.zeros(4, 6, dtype=torch.bool)
+    changed = tokens.clone()
+    changed[:, 3:] += 5.0  # only last season's and older games differ
+
+    def shift(**options):
+        enc = SequenceEncoder(token_dim=5, history=6, d_model=16, nhead=2,
+                              num_layers=2, dropout=0.0, **options).eval()  # fmt: skip
+        with torch.no_grad():
+            return (enc(tokens, ago, pad) - enc(changed, ago, pad)).abs().max()
+
+    assert shift() > 0.1
+    # a steep penalty per season leaves earlier seasons almost unseen
+    assert shift(season_decay=True, season_embedding=True, decay_init=30.0) < 1e-3
+
+
+def test_season_options_train_and_round_trip(toy_games, tmp_path):
+    model = default_model("toy", history=10, season_embedding=True, season_decay=True)
+    res = fit_transformer(
+        toy_games,
+        "toy",
+        model=model,
+        trainer=quick_trainer(2),
+        save_dir=str(tmp_path / "model"),
+        print_metrics=False,
+    )
+    encoder = res["model"].encoder
+    assert encoder.history == 10 and encoder.decay is not None
+
+    loaded = load_predictor(str(tmp_path / "model"))
+    for predictor in (res["predictor"], loaded):
+        predictor.update_state(toy_games)
+    matchups = pd.DataFrame({"team": ["T00"], "opp": ["T03"], "location": [1]})
+    np.testing.assert_allclose(
+        loaded.predict(matchups).pred_margin,
+        res["predictor"].predict(matchups).pred_margin,
+        atol=1e-5,
+    )
+
+
+def test_elo_margin_is_the_margin_elo_did_not_expect(played_games, toy_games):
+    from sportsml.models.baselines import EloModel
+
+    extra = strength(played_games, TOY_SCHEMA, opponent_strength=False, elo_margin=True)
+    assert list(extra) == ["_margin_vs_elo"]
+    elo = EloModel(TOY_SCHEMA)
+    expected = elo.replay(played_games) * elo.params.points_per_elo
+    np.testing.assert_allclose(
+        extra["_margin_vs_elo"], played_games["margin"] - expected
+    )
+    # a game's adjustment depends only on that game and the ones before it
+    early = played_games[played_games.season < 2024]
+    np.testing.assert_allclose(
+        strength(early, TOY_SCHEMA, False, True)["_margin_vs_elo"],
+        extra.loc[early.index, "_margin_vs_elo"],
+    )
+
+    res = fit_transformer(
+        toy_games, "toy", elo_margin=True, trainer=quick_trainer(1),
+        print_metrics=False,
+    )  # fmt: skip
+    assert res["predictor"].model.features.token_columns[-1] == "_margin_vs_elo"

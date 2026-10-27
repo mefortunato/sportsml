@@ -130,6 +130,30 @@ The transformer's CFB defaults differ from the NFL's: a 28-game history
 (`opponent_strength`), because schedule strength varies far more across 130+
 FBS teams than across 32 NFL teams.
 
+Walk-forward backtest, 2021-2025 (4,441 games every family predicted with a
+spread; `brier vs market` is the paired per-game difference, 95% CI):
+
+| Source | RMSE | Accuracy | Brier | Brier vs market | ATS |
+|---|---|---|---|---|---|
+| market | 15.32 | 75.6% | 0.1612 | | |
+| transformer | 16.40 | 73.7% | 0.1699 | +0.0087 ± 0.0031 | 50.9% |
+| gnn | 17.06 | 73.1% | 0.1769 | +0.0157 ± 0.0037 | 50.4% |
+| sklearn | 17.63 | 72.2% | 0.1820 | +0.0208 ± 0.0039 | 50.6% |
+| point_diff | 18.41 | 71.7% | 0.1869 | +0.0257 ± 0.0042 | 50.7% |
+| elo | 18.53 | 72.9% | 0.1874 | +0.0262 ± 0.0035 | 51.1% |
+| home | 22.00 | 62.7% | 0.2326 | +0.0714 ± 0.0057 | 50.4% |
+
+As in the NFL, no model beats the spread (the transformer's picks win
+50.8%, -3.0% ROI at -110). Its total is the one market with a persistent
+edge: over/under picks won 53.2% of 4,516 games (+1.5% ROI at an assumed
+-110; 54.3% and +3.6% on the 2,782 with an edge over 2 points), and over
+2016-2025 the same picks won 52.8% of 8,357. CFBD records no over/under
+prices, so the true juice (and so the real ROI) is unknown. Moneyline
+picks (lines from 2021) lose at a small edge and are noisy above one.
+`staking` on the 2016-2025 backtest finds no stake sizing that rescues the
+spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
++0.8% to +6.7%) against flat betting's +1.4% over 2019-2025.
+
 ## Backtesting against the market
 
 ```sh

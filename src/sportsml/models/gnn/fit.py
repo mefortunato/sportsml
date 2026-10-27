@@ -14,18 +14,27 @@ from .datamodule import GraphDataModule
 from .model import GraphMatchupModel, GraphModel
 from .nn.encoder.edge_conv_encoder import EdgeConvEncoder
 from .nn.predictor.ffn import EdgeFFN
+from .nn.predictor.mirrored import MirroredHead
 
 
-def graph_dims(schema) -> dict[str, int]:
-    """Edge / context feature counts a GraphModel needs for ``schema``."""
+def graph_dims(schema, carry_seasons: int = 0, off_def: bool = False) -> dict[str, int]:
+    """Edge / context feature counts a GraphModel needs for ``schema``: the
+    encoder's edges also carry two age features with ``carry_seasons`` and
+    a role feature with ``off_def``."""
     location = 1 if schema.location else 0
     return {
-        "edge_dim": len(schema.stats) + location,
+        "edge_dim": len(schema.stats)
+        + location
+        + (2 if carry_seasons else 0)
+        + (1 if off_def else 0),
         "context_dim": len(schema.context) + location,
     }
 
 
-ENCODER_KEYS = ("hidden_dim", "out_dim", "num_layers", "dropout", "aggr")
+ENCODER_KEYS = (
+    "hidden_dim", "out_dim", "num_layers", "dropout", "aggr", "update",
+    "message_dst", "heads",
+)  # fmt: skip
 
 
 def gnn_config(
@@ -33,19 +42,28 @@ def gnn_config(
     context: list[str] | None = None,
     total_weight: float | None = None,
     stats_weight: float | None = None,
+    **overrides,
 ) -> dict:
     """GraphModel init args for ``sport``: EdgeConvEncoder + EdgeFFN.
 
     Sizes and optimizer settings come from ``Sport.gnn``; feature counts from
     the sport's schema. Used by :func:`default_model` and the CLI defaults.
+    ``head: "mirrored"`` swaps the head for
+    :class:`~.nn.predictor.mirrored.MirroredHead` (returned as ``head``).
     ``total_weight`` / ``stats_weight`` add the total and every box-score
     stat as extra outputs (see
     :func:`~sportsml.models.lightning.output_targets`); None takes the
     sport's ``Sport.gnn`` setting (default 0, off).
     """
     spec = get_sport(sport)
-    dims = graph_dims(spec.schema.with_features(context))
-    settings = {"hidden_dim": 128, "out_dim": 64, "num_layers": 3, **spec.gnn}
+    settings = {
+        "hidden_dim": 128, "out_dim": 64, "num_layers": 3, **spec.gnn, **overrides
+    }  # fmt: skip
+    dims = graph_dims(
+        spec.schema.with_features(context),
+        settings.get("carry_seasons", 0),
+        settings.get("off_def", False),
+    )
     if total_weight is None:
         total_weight = settings.get("total_weight", 0.0)
     if stats_weight is None:
@@ -55,18 +73,32 @@ def gnn_config(
     }
     extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
-    return {
+    head = settings.pop("head", "ffn")
+    predictor = {
+        "in_dim": encoder["out_dim"],
+        "hidden_dim": encoder["out_dim"],
+        "context_dim": dims["context_dim"],
+    }
+    if head == "mirrored":
+        kinds = {spec.schema.total: "sum"}
+        predictor |= {
+            "kinds": ("diff", *(kinds.get(t, "own") for t in extra)),
+            "off_def": settings.get("off_def", False),
+        }
+    elif settings.get("off_def"):
+        raise ValueError("off_def needs head='mirrored'")
+    else:
+        predictor["out_dim"] = 1 + len(extra)
+    config = {
         "encoder": {"edge_dim": dims["edge_dim"], **encoder},
-        "predictor": {
-            "in_dim": encoder["out_dim"],
-            "hidden_dim": encoder["out_dim"],
-            "context_dim": dims["context_dim"],
-            "out_dim": 1 + len(extra),
-        },
+        "predictor": predictor,
         "extra_targets": extra,
         "extra_weights": weights,
         **{k: v for k, v in settings.items() if k not in ENCODER_KEYS},
     }
+    if head != "ffn":
+        config["head"] = head
+    return config
 
 
 def default_model(
@@ -74,12 +106,15 @@ def default_model(
     context: list[str] | None = None,
     total_weight: float | None = None,
     stats_weight: float | None = None,
+    **overrides,
 ) -> GraphModel:
-    """EdgeConvEncoder + EdgeFFN configured for ``sport`` (see ``Sport.gnn``)."""
-    config = gnn_config(sport, context, total_weight, stats_weight)
+    """EdgeConvEncoder + EdgeFFN configured for ``sport`` (see ``Sport.gnn``);
+    ``overrides`` replace ``Sport.gnn`` settings, e.g. ``update="gru"``."""
+    config = gnn_config(sport, context, total_weight, stats_weight, **overrides)
+    head = {"ffn": EdgeFFN, "mirrored": MirroredHead}[config.pop("head", "ffn")]
     return GraphModel(
         encoder=EdgeConvEncoder(**config.pop("encoder")),
-        predictor=EdgeFFN(**config.pop("predictor")),
+        predictor=head(**config.pop("predictor")),
         **config,
     )
 
@@ -131,7 +166,14 @@ def fit_gnn(
 
     extra = tuple(model.extra_targets)
     data = GraphDataModule(
-        games, schema, split, batch_size, num_workers, min_games, extra
+        games,
+        schema,
+        split,
+        batch_size,
+        num_workers,
+        min_games,
+        extra,
+        getattr(model, "carry_seasons", 0),
     )
     _check_dims(model, data)
     seed_and_reset(model, seed)
@@ -171,7 +213,12 @@ def fit_gnn(
 
 def _check_dims(model: GraphModel, data: GraphDataModule) -> None:
     expected = {
-        "encoder edge_dim": (model.encoder.edge_dim, data.features.edge_dim),
+        "encoder edge_dim": (
+            model.encoder.edge_dim,
+            data.features.edge_dim
+            + (2 if model.carry_seasons else 0)
+            + (1 if model.off_def else 0),
+        ),
         "predictor context_dim": (
             model.predictor.context_dim,
             data.features.context_dim,

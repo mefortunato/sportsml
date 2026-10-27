@@ -13,7 +13,7 @@ from sportsml.core.splits import split_seasons
 from sportsml.models.gnn import default_model, fit_gnn
 from sportsml.models.gnn.datamodule import GraphDataModule
 
-from .conftest import TOY_SCHEMA
+from .conftest import TOY_SCHEMA, make_games
 
 
 @pytest.fixture(scope="module")
@@ -136,3 +136,79 @@ def test_refresh_skips_teams_unseen_in_training(fitted, toy_games):
     assert "NEW" not in predictor.model.teams and "T00" in predictor.model.teams
     with pytest.raises(ValueError, match="no state"):
         predictor.predict(pd.DataFrame({"team": ["NEW"], "opp": ["T01"]}))
+
+
+ARMS = {
+    "gru": {"update": "gru", "message_dst": True},
+    "carry": {"update": "gru", "message_dst": True, "carry_seasons": 1},
+    "attention": {
+        "update": "gru",
+        "message_dst": True,
+        "carry_seasons": 1,
+        "aggr": "attention",
+    },
+    "off_def": {
+        "update": "gru",
+        "message_dst": True,
+        "carry_seasons": 1,
+        "off_def": True,
+        "head": "mirrored",
+    },
+}
+
+
+@pytest.mark.parametrize("arm", list(ARMS))
+def test_encoder_variants_learn_and_serve(arm, tmp_path):
+    # ratings that persist between seasons, so carried games carry signal
+    games = make_games(persistence=0.8)
+    torch.manual_seed(0)
+    res = fit_gnn(
+        games,
+        "toy",
+        model=default_model("toy", total_weight=1.0, **ARMS[arm]),
+        trainer=quick_trainer(25),
+        save_dir=str(tmp_path / arm),
+        print_metrics=False,
+    )
+    test = played(games, TOY_SCHEMA).query("season == 2024")
+    assert res["metrics"]["test"]["rmse"] < test.margin.std()
+    assert res["metrics"]["test"]["accuracy"] > 0.58
+
+    loaded = load_predictor(str(tmp_path / arm))
+    loaded.update_state(games)
+    matchups = pd.DataFrame(
+        {"team": ["T00", "T01"], "opp": ["T01", "T00"], "location": [1, -1]}
+    )
+    out = loaded.predict(matchups)
+    assert out.pred_margin[0] == pytest.approx(-out.pred_margin[1], abs=1e-5)
+    assert np.isfinite(out.pred_total).all()
+
+
+def test_mirrored_head_flips_the_margin_and_keeps_the_total():
+    from sportsml.models.gnn.nn.predictor.mirrored import MirroredHead
+
+    head = MirroredHead(4, kinds=("diff", "sum", "own"), hidden_dim=8, off_def=True)
+    x = torch.randn(6, 4)  # 3 teams: offense 0-2, defense 3-5
+    with torch.no_grad():
+        pair = head(x, torch.tensor([[0], [1]]))[0]
+        swapped = head(x, torch.tensor([[1], [0]]))[0]
+    assert pair[0].item() == pytest.approx(-swapped[0].item(), abs=1e-6)
+    assert pair[1].item() == pytest.approx(swapped[1].item(), abs=1e-6)
+    assert pair[2].item() != pytest.approx(swapped[2].item(), abs=1e-6)
+
+
+def test_carried_snapshots_make_openers_targets(toy_games):
+    games = played(toy_games, TOY_SCHEMA)
+    split = split_seasons(games.season.unique())
+    data = GraphDataModule(games, TOY_SCHEMA, split, carry_seasons=1)
+    first = min(split.val)
+    week = games.loc[games.season == first, "week"].min()
+    snapshot = data.datasets["val"]._snapshot(first, week)
+    assert snapshot.target.any()
+    # an opener's history is all last season's, aged from its last week
+    age, back = snapshot.edge_time.T
+    history = ~snapshot.on_date
+    assert (back[history] == 1).all() and (back[snapshot.on_date] == 0).all()
+    weeks = data.features.season_length
+    assert age[history].min().item() == pytest.approx(1 / weeks)
+    assert age[history].max().item() == pytest.approx(1.0)

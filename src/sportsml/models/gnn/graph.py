@@ -22,6 +22,8 @@ class GraphFeatures:
         context_columns: Pre-game features for the prediction head.
         fill_values: Median of each column on training games (imputes NaN).
         context_mean / context_std: Standardization of context features.
+        season_length: Dates in a season (the span of ``date``), the unit of
+            an edge's age when snapshots carry earlier seasons.
     """
 
     teams: list
@@ -30,6 +32,7 @@ class GraphFeatures:
     fill_values: dict[str, float]
     context_mean: dict[str, float]
     context_std: dict[str, float]
+    season_length: float = 1.0
 
     @classmethod
     def fit(
@@ -43,6 +46,7 @@ class GraphFeatures:
         fill = numeric.median().fillna(0.0)
         ctx = numeric[context_columns].fillna(fill)
         teams = pd.unique(pd.concat([games[schema.team], games[schema.opp]]))
+        dates = pd.to_numeric(games[schema.date], errors="coerce")
         return cls(
             teams=sorted(teams.tolist(), key=str),
             edge_columns=edge_columns,
@@ -50,6 +54,7 @@ class GraphFeatures:
             fill_values=fill.to_dict(),
             context_mean=ctx.mean().to_dict(),
             context_std=ctx.std().replace(0, 1).fillna(1.0).to_dict(),
+            season_length=float(max(dates.max() - dates.min() + 1, 1)),
         )
 
     @property
@@ -127,6 +132,14 @@ def build_graph(
     )
     graph.game_ids = np.asarray(game_ids)
     return graph
+
+
+def edge_time(graph, season, date, season_length: float) -> torch.Tensor:
+    """``[E, 2]``: each edge's age at (``season``, ``date``) in seasons, and
+    how many seasons back its game was."""
+    back = (season - graph.season).double()
+    age = (back * season_length + date - graph.date) / season_length
+    return torch.stack([age, back], dim=1).float()
 
 
 def _targets(games, schema: GameSchema, extra: tuple[str, ...]) -> torch.Tensor:

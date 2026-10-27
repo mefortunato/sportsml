@@ -4,7 +4,7 @@ import torch
 from torch import Tensor, nn
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
-from torch_geometric.utils import scatter
+from torch_geometric.utils import scatter, softmax
 
 from .base import GraphEncoder
 
@@ -21,8 +21,14 @@ class EdgeConvEncoderLayer(MessagePassing):
     Args:
         edge_dim: Dimensionality of edge attributes (box score stats).
         hidden_dim: Fixed dimensionality for both input and output node states.
-        aggr: Aggregation scheme ('mean', 'sum', or 'max').
+        aggr: Aggregation scheme ('mean', 'sum', 'max', or 'attention':
+            a softmax over each team's games, ``heads`` separate weightings).
         dropout: Dropout probability applied within the edge MLP.
+        update: 'mlp' (the new state is an MLP of the aggregated messages)
+            or 'gru' (a GRU cell updates the team's current state with them).
+        message_dst: Messages also see the receiving team's state, so a
+            game is read relative to the team that played it.
+        heads: Attention heads ('attention' only; divides ``hidden_dim``).
     """
 
     def __init__(
@@ -31,21 +37,40 @@ class EdgeConvEncoderLayer(MessagePassing):
         hidden_dim: int,
         aggr: str = "mean",
         dropout: float = 0.0,
+        update: str = "mlp",
+        message_dst: bool = False,
+        heads: int = 4,
     ) -> None:
-        super().__init__(aggr=aggr)
+        if update not in ("mlp", "gru"):
+            raise ValueError(f"update must be 'mlp' or 'gru', not {update!r}")
+        attention = aggr == "attention"
+        if attention and hidden_dim % heads:
+            raise ValueError("hidden_dim must be divisible by heads")
+        super().__init__(aggr="add" if attention else aggr)
+        self.attention = attention
+        self.heads = heads
+        self.message_dst = message_dst
+        self.update_kind = update
 
+        n_states = 2 if message_dst else 1
         self.edge_mlp = nn.Sequential(
-            nn.Linear(edge_dim + hidden_dim, hidden_dim),
+            nn.Linear(edge_dim + n_states * hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
+        if attention:
+            self.att = nn.Linear(hidden_dim, heads)
 
-        self.update_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
+        if update == "gru":
+            self.gru = nn.GRUCell(hidden_dim, hidden_dim)
+            self.norm = nn.LayerNorm(hidden_dim)
+        else:
+            self.update_mlp = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+            )
 
         self._reset_parameters()
 
@@ -67,15 +92,26 @@ class EdgeConvEncoderLayer(MessagePassing):
         Returns:
             Updated node embeddings of shape [N, hidden_dim].
         """
-        src = edge_index[0]
+        src, dst = edge_index
         # Message: opponent context (x_src) + game stats (edge_attr)
-        msg_input = torch.cat([edge_attr, x[src]], dim=-1)
+        parts = [edge_attr, x[src]]
+        if self.message_dst:
+            parts.append(x[dst])
+        msg_input = torch.cat(parts, dim=-1)
         n = x.size(0)
         agg = self.propagate(edge_index=edge_index, msg_input=msg_input, size=(n, n))
+        if self.update_kind == "gru":
+            return self.norm(self.gru(agg, x))
         return self.update_mlp(agg)
 
-    def message(self, msg_input: Tensor) -> Tensor:
-        return self.edge_mlp(msg_input)
+    def message(self, msg_input: Tensor, index: Tensor, ptr, size_i) -> Tensor:
+        msg = self.edge_mlp(msg_input)
+        if not self.attention:
+            return msg
+        # each head weights the team's games by a softmax over them
+        alpha = softmax(self.att(msg), index, ptr, size_i)  # [E, heads]
+        msg = msg.view(len(msg), self.heads, -1) * alpha.unsqueeze(-1)
+        return msg.view(len(msg), -1)
 
 
 class EdgeConvEncoder(GraphEncoder):
@@ -102,8 +138,8 @@ class EdgeConvEncoder(GraphEncoder):
         hidden_dim: Dimensionality of node embeddings throughout all iterations.
         out_dim: Dimensionality of the final output node embeddings.
         num_layers: Number of times the shared layer is applied (>= 1).
-        aggr: Aggregation scheme ('mean', 'sum', or 'max').
-        dropout: Dropout probability applied within the edge MLP.
+        aggr / dropout / update / message_dst / heads: See
+            :class:`EdgeConvEncoderLayer`.
     """
 
     def __init__(
@@ -114,6 +150,9 @@ class EdgeConvEncoder(GraphEncoder):
         num_layers: int = 3,
         aggr: str = "mean",
         dropout: float = 0.0,
+        update: str = "mlp",
+        message_dst: bool = False,
+        heads: int = 4,
     ) -> None:
         super().__init__()
         if num_layers < 1:
@@ -141,6 +180,9 @@ class EdgeConvEncoder(GraphEncoder):
             hidden_dim=hidden_dim,
             aggr=aggr,
             dropout=dropout,
+            update=update,
+            message_dst=message_dst,
+            heads=heads,
         )
 
         # Maps final hidden state → desired output dimension.

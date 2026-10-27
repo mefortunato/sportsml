@@ -24,6 +24,7 @@ class GraphDataModule(pl.LightningDataModule):
         num_workers: int = 0,
         min_games: int = 1,
         extra_targets: tuple[str, ...] = (),
+        carry_seasons: int = 0,
     ):
         super().__init__()
         self.schema = schema
@@ -51,7 +52,9 @@ class GraphDataModule(pl.LightningDataModule):
             self.target_std = float(y[schema.target].std())
 
         self.datasets = {
-            name: SnapshotDataset(self.graph, seasons)
+            name: SnapshotDataset(
+                self.graph, seasons, carry_seasons, self.features.season_length
+            )
             for name in ("train", "val", "test")
             if (seasons := getattr(split, name))
         }

@@ -1,4 +1,4 @@
-"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark}``.
+"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark,staking}``.
 
 Every registered sport gets the same subcommands; per-sport defaults (paths,
 GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
@@ -16,6 +16,7 @@ from .inference.utils import predict
 from .models.gnn.fit import fit_gnn, gnn_config
 from .models.sklearn.fit import fit_sklearn
 from .models.transformer.fit import fit_transformer, transformer_config
+from .staking import staking
 from .web.build import build as web_build
 from .web.export import export as web_export
 
@@ -111,6 +112,9 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.benchmark.sport": n,
         f"{n}.benchmark.games": games,
         f"{n}.benchmark.output_dir": f"backtests/{n}",
+        f"{n}.staking.sport": n,
+        f"{n}.staking.results": f"backtests/{n}/transformer_games.csv",
+        f"{n}.staking.output_dir": f"backtests/{n}",
     }
 
 
@@ -134,6 +138,7 @@ def run(args=None):
             "predict": predict,
             "backtest": backtest,
             "benchmark": benchmark,
+            "staking": staking,
         }
         for name, sport in sports.items()
     }

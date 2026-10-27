@@ -7,7 +7,9 @@ predicted, the same retrain-occasionally, refresh-weekly loop as production.
 
 Where the sport's schema names market columns, the market's spread and
 moneylines are scored on the same games, and the model's disagreements with
-the spread are scored as bets against it.
+the market are scored as bets against it: against the spread, on the
+moneyline (at the posted odds) and, for models that predict the total, on
+the over/under.
 """
 
 from __future__ import annotations
@@ -59,7 +61,11 @@ def sklearn_fitter(
     return fit
 
 
-def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
+def gnn_fitter(
+    sport: str, max_epochs: int = 100, model: dict | None = None, **kwargs
+) -> Fitter:
+    """``model``: :func:`~sportsml.models.gnn.default_model` arguments, e.g.
+    ``{"total_weight": 1.0}``; ``kwargs`` go to ``fit_gnn``."""
     from .models.gnn import default_model, default_trainer, fit_gnn
 
     def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
@@ -71,7 +77,7 @@ def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
         return fit_gnn(
             games,
             sport,
-            model=default_model(sport),
+            model=default_model(sport, kwargs.get("context"), **(model or {})),
             trainer=trainer,
             train_seasons=split.train,
             val_seasons=split.val,
@@ -175,13 +181,22 @@ def no_vig_probability(moneyline, opp_moneyline) -> np.ndarray:
     return team / (team + opp)
 
 
+def payout(odds) -> np.ndarray:
+    """Profit per unit staked on a winning bet at American ``odds``."""
+    odds = np.asarray(odds, dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(odds > 0, odds / 100, 100 / -odds)
+
+
 def market_predictions(
     rows: pd.DataFrame, schema: GameSchema, sigma: float
 ) -> pd.DataFrame:
-    """The market's margin (spread) and win probability for each row.
+    """The market's margin (spread) and win probability for each row, and
+    (with a total line and its odds) ``market_over_prob``.
 
     Probabilities come from the moneylines where both exist, else from the
-    spread with residual spread ``sigma``.
+    spread with residual spread ``sigma``; the over probability comes from
+    the no-vig over/under odds.
     """
     margin = rows[schema.market_spread].astype(float)
     prob = win_probability(margin, sigma)
@@ -189,9 +204,11 @@ def market_predictions(
         team, opp = (rows[col] for col in schema.market_moneyline)
         no_vig = no_vig_probability(team, opp)
         prob = np.where(np.isfinite(no_vig), no_vig, prob)
-    return pd.DataFrame(
-        {"market_margin": margin, "market_prob": prob}, index=rows.index
-    )
+    out = pd.DataFrame({"market_margin": margin, "market_prob": prob}, index=rows.index)
+    odds = schema.market_total_odds
+    if odds and all(col in rows for col in odds):
+        out["market_over_prob"] = no_vig_probability(rows[odds[0]], rows[odds[1]])
+    return out
 
 
 def walk_forward(
@@ -208,8 +225,9 @@ def walk_forward(
     the team state is refreshed and before that date's games are predicted.
 
     Returns one row per game (home team's perspective) with the result, the
-    model's ``pred_margin`` / ``win_prob`` and, if the schema has market
-    columns, ``market_margin`` / ``market_prob``.
+    model's ``pred_margin`` / ``win_prob`` (and ``pred_total`` /
+    ``over_prob`` from models that predict the total) and, if the schema
+    has market columns, ``market_margin`` / ``market_prob``.
     """
     schema = get_sport(sport).schema
     games = played(games, schema)
@@ -248,10 +266,36 @@ def walk_forward(
             )
 
     results = pd.concat(out, ignore_index=True)
-    keep = [*schema.key_columns, schema.location, schema.target]
+    keep = [*schema.key_columns, schema.location, schema.target, schema.total]
     keep += [schema.team_name, schema.opp_name, *schema.display]
+    keep += [schema.market_spread, schema.market_total]
+    keep += [*(schema.market_moneyline or ()), *(schema.market_total_odds or ())]
     keep += ["pred_margin", "win_prob", "market_margin", "market_prob"]
+    keep += ["cover_prob", "pred_total", "over_prob", "market_over_prob"]
     return results[[c for c in dict.fromkeys(keep) if c and c in results]]
+
+
+def _record(rows: list, t, bet, outcome, profit) -> None:
+    """One betting-record row: ``outcome`` +1 win, -1 loss, 0 push per bet."""
+    wins, losses = int((outcome > 0).sum()), int((outcome < 0).sum())
+    decided = wins + losses
+    pct = wins / decided if decided else np.nan
+    half = 1.96 * np.sqrt(pct * (1 - pct) / decided) if decided else np.nan
+    bets = int(bet.sum())
+    rows.append(
+        {
+            "min_edge": t,
+            "bets": bets,
+            "wins": wins,
+            "losses": losses,
+            "pushes": int((outcome == 0).sum()),
+            "win_pct": pct,
+            "ci95_low": pct - half,
+            "ci95_high": pct + half,
+            "units": float(profit.sum()),
+            "roi": float(profit.sum()) / max(bets, 1),
+        }
+    )
 
 
 def ats_record(
@@ -268,25 +312,101 @@ def ats_record(
     for t in thresholds:
         bet = np.abs(edge) > t
         outcome = np.sign(edge[bet]) * np.sign(cover[bet])
-        wins, losses = int((outcome > 0).sum()), int((outcome < 0).sum())
-        pushes = int((outcome == 0).sum())
-        decided = wins + losses
-        pct = wins / decided if decided else np.nan
-        half = 1.96 * np.sqrt(pct * (1 - pct) / decided) if decided else np.nan
-        rows.append(
-            {
-                "min_edge": t,
-                "bets": int(bet.sum()),
-                "wins": wins,
-                "losses": losses,
-                "pushes": pushes,
-                "win_pct": pct,
-                "ci95_low": pct - half,
-                "ci95_high": pct + half,
-                "roi": (wins * 100 / 110 - losses) / max(int(bet.sum()), 1),
-            }
-        )
+        profit = np.where(outcome > 0, 100 / 110, np.where(outcome < 0, -1, 0))
+        _record(rows, t, bet, outcome, profit)
     return pd.DataFrame(rows)
+
+
+def moneyline_record(
+    results: pd.DataFrame, schema: GameSchema, thresholds=(0, 0.02, 0.05, 0.1)
+) -> pd.DataFrame:
+    """Bet the side whose model win probability beats the market's no-vig
+    probability by more than ``t``, at that side's posted moneyline.
+
+    ``units`` / ``roi`` are profit at the posted odds (1 unit per bet); a
+    tie returns the stake. Games without both moneylines are skipped.
+    """
+    team_col, opp_col = schema.market_moneyline
+    lined = results.dropna(subset=[team_col, opp_col, "market_prob"])
+    edge = (lined["win_prob"] - lined["market_prob"]).to_numpy()
+    margin = lined[schema.target].to_numpy()
+    odds = np.where(edge > 0, lined[team_col], lined[opp_col])
+    rows = []
+    for t in thresholds:
+        bet = np.abs(edge) > t
+        outcome = np.sign(edge[bet]) * np.sign(margin[bet])
+        profit = np.where(outcome > 0, payout(odds[bet]), np.where(outcome < 0, -1, 0))
+        _record(rows, t, bet, outcome, profit)
+    return pd.DataFrame(rows)
+
+
+def totals_record(
+    results: pd.DataFrame, schema: GameSchema, thresholds=(0, 1, 2, 3, 4, 5)
+) -> pd.DataFrame:
+    """Bet the over when the model's total beats the line by more than
+    ``t`` points, the under when it is below by more than ``t``.
+
+    Profit is at the posted over/under odds where the schema has them (else
+    -110); a total landing on the line returns the stake.
+    """
+    lined = results.dropna(subset=["pred_total", schema.market_total, schema.total])
+    edge = (lined["pred_total"] - lined[schema.market_total]).to_numpy()
+    went = (lined[schema.total] - lined[schema.market_total]).to_numpy()
+    odds = np.full(len(lined), -110.0)
+    if schema.market_total_odds and all(c in lined for c in schema.market_total_odds):
+        over, under = (lined[c].to_numpy(dtype=float) for c in schema.market_total_odds)
+        odds = np.where(edge > 0, over, under)
+        odds = np.where(np.isfinite(odds), odds, -110.0)
+    rows = []
+    for t in thresholds:
+        bet = np.abs(edge) > t
+        outcome = np.sign(edge[bet]) * np.sign(went[bet])
+        profit = np.where(outcome > 0, payout(odds[bet]), np.where(outcome < 0, -1, 0))
+        _record(rows, t, bet, outcome, profit)
+    return pd.DataFrame(rows)
+
+
+def totals_summary(results: pd.DataFrame, schema: GameSchema) -> dict | None:
+    """The model's total vs the market's line on the same games: RMSE,
+    over/under Brier (on games that did not land on the line), the
+    correlation of (model - line) with (total - line), and the bet record.
+    """
+    if "pred_total" not in results or not schema.market_total:
+        return None
+    lined = results.dropna(subset=["pred_total", schema.market_total, schema.total])
+    if lined.empty:
+        return None
+    y = lined[schema.total].to_numpy(dtype=float)
+    line = lined[schema.market_total].to_numpy(dtype=float)
+    pred = lined["pred_total"].to_numpy(dtype=float)
+    out = {
+        "n": len(lined),
+        "rmse": {
+            "model": float(np.sqrt(np.mean((y - pred) ** 2))),
+            "market": float(np.sqrt(np.mean((y - line) ** 2))),
+        },
+        "record": totals_record(lined, schema).to_dict("records"),
+    }
+    decided = y != line
+    went_over = (y > line)[decided]
+    brier = {}
+    if "over_prob" in lined:
+        brier["model"] = float(np.mean((lined["over_prob"][decided] - went_over) ** 2))
+    if "market_over_prob" in lined:
+        market = lined["market_over_prob"].to_numpy(dtype=float)[decided]
+        ok = np.isfinite(market)
+        if ok.any():
+            brier["market"] = float(np.mean((market[ok] - went_over[ok]) ** 2))
+    out["brier"] = brier
+    edge, cover = pred - line, y - line
+    r = float(np.corrcoef(edge, cover)[0, 1])
+    half = 1.96 / np.sqrt(len(edge) - 3)
+    out["edge_correlation"] = {
+        "r": r,
+        "ci95_low": float(np.tanh(np.arctanh(r) - half)),
+        "ci95_high": float(np.tanh(np.arctanh(r) + half)),
+    }
+    return out
 
 
 def edge_correlation(results: pd.DataFrame, schema: GameSchema) -> dict:
@@ -330,6 +450,11 @@ def summarize(results: pd.DataFrame, schema: GameSchema, early_dates: int = 4):
     if "market" in sources:
         summary["ats"] = ats_record(results, schema).to_dict("records")
         summary["edge_correlation"] = edge_correlation(results, schema)
+        if schema.market_moneyline and set(schema.market_moneyline) <= set(results):
+            summary["moneyline"] = moneyline_record(results, schema).to_dict("records")
+        totals = totals_summary(results, schema)
+        if totals:
+            summary["totals"] = totals
     return summary
 
 
@@ -360,6 +485,24 @@ def format_summary(summary: dict) -> str:
             "Edge vs cover correlation: "
             f"{corr['r']:+.4f} (95% CI {corr['ci95_low']:+.4f} to "
             f"{corr['ci95_high']:+.4f})"
+        )
+    if "moneyline" in summary:
+        ml = pd.DataFrame(summary["moneyline"]).set_index("min_edge")
+        parts.append(
+            "Moneyline (model win probability minus the market's, profit at "
+            "the posted odds)\n" + ml.to_string(**fmt)
+        )
+    if "totals" in summary:
+        totals = summary["totals"]
+        record = pd.DataFrame(totals["record"]).set_index("min_edge")
+        brier = ", ".join(f"{k} {v:.4f}" for k, v in totals["brier"].items())
+        corr = totals["edge_correlation"]
+        parts.append(
+            f"Over/under ({totals['n']} games): total RMSE model "
+            f"{totals['rmse']['model']:.3f}, line {totals['rmse']['market']:.3f}; "
+            f"over Brier {brier}; edge vs result correlation {corr['r']:+.4f} "
+            f"(95% CI {corr['ci95_low']:+.4f} to {corr['ci95_high']:+.4f})\n"
+            + record.to_string(**fmt)
         )
     return "\n\n".join(parts)
 

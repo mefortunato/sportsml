@@ -1,6 +1,11 @@
 // Shapes of the data `sportsml web export` writes (src/sportsml/web/snapshot.py).
 
 export type Side = 'home' | 'away';
+export type TotalSide = 'over' | 'under';
+/** A side of any market: a team, or the over / under. */
+export type Pick = Side | TotalSide;
+/** Markets the model is scored on and the challenge can be played on. */
+export type Market = 'spread' | 'moneyline' | 'total';
 
 export interface Team {
 	team: string;
@@ -28,6 +33,10 @@ export interface SportInfo {
 	date_label: string;
 	has_spread: boolean;
 	challenge_games: number;
+	/** Markets the challenge offers (older exports: spread only). */
+	markets?: Market[];
+	/** What pricing a line in the browser needs (older exports: absent). */
+	pricing?: Pricing | null;
 	built_at?: string | null;
 	refreshed_at?: string | null;
 	model?: { family: string; metrics: Record<string, Metrics> } | null;
@@ -35,7 +44,17 @@ export interface SportInfo {
 		seasons: number[];
 		overall: { model: Metrics; market?: Metrics };
 		ats?: { win_pct?: number; bets?: number };
+		moneyline?: Partial<BetRow>;
+		totals?: { n?: number; record?: Partial<BetRow> };
 	} | null;
+}
+
+/** The model's residual spreads and how much of its disagreement with the
+ * market to believe, per market (0: none, 1: all), from the backtest. */
+export interface Pricing {
+	sigma: number;
+	total_sigma?: number | null;
+	trust: Partial<Record<Market, number>>;
 }
 
 export interface Prediction {
@@ -46,6 +65,19 @@ export interface Prediction {
 	/** Model margin minus the spread (home perspective). */
 	edge: number | null;
 	ats_pick: Side | null;
+	/** P(home team wins) implied by the moneylines, bookmaker margin removed. */
+	market_prob?: number | null;
+	/** Model minus market win probability (home perspective). */
+	ml_edge?: number | null;
+	/** The side the model rates above the market's odds. */
+	ml_pick?: Side | null;
+	/** Predicted combined points (models that predict the total). */
+	total?: number | null;
+	/** P(combined points > the total line). */
+	over_prob?: number | null;
+	/** Model total minus the line. */
+	total_edge?: number | null;
+	ou_pick?: TotalSide | null;
 }
 
 export interface GameHeader {
@@ -58,6 +90,12 @@ export interface GameHeader {
 	neutral: boolean;
 	/** Market's expected home margin: positive means the home team is favored. */
 	spread: number | null;
+	/** American moneylines. */
+	moneyline?: { home: number; away: number } | null;
+	/** The over/under line on combined points. */
+	total_line?: number | null;
+	/** American odds on the over and the under. */
+	total_odds?: { over: number; under: number } | null;
 }
 
 export interface UpcomingGame extends GameHeader {
@@ -120,6 +158,10 @@ export interface GameResult {
 	away_score: number | null;
 	margin: number;
 	covered: Side | 'push' | null;
+	winner?: Side | 'push' | null;
+	/** Combined points. */
+	total?: number | null;
+	went?: TotalSide | 'push' | null;
 }
 
 export interface Matchup extends GameHeader {
@@ -134,16 +176,30 @@ export interface GameDetail extends Matchup {
 
 export interface ChallengeGame extends Matchup {
 	pool_size: number;
+	/** Markets this game can be played on (it did not land on their line). */
+	markets?: Market[];
 }
 
-export interface ChallengeAnswer {
+/** A market's outcome for one game, before the player's pick is scored. */
+export interface MarketAnswer {
 	game_id: string;
-	pick: Side;
-	covered: Side | 'push' | null;
-	correct: boolean;
-	spread: number;
+	market: Market;
+	/** The winning pick. */
+	outcome: Pick;
+	/** American odds of each pick. */
+	odds: Partial<Record<Pick, number>>;
 	result: GameResult;
-	model: Prediction & { correct: boolean };
+	spread?: number;
+	covered?: Side;
+	total_line?: number;
+	model: Prediction & { pick: Pick | null; correct: boolean; units: number };
+}
+
+export interface ChallengeAnswer extends MarketAnswer {
+	pick: Pick;
+	correct: boolean;
+	/** Profit on a 1-unit bet at the odds (−1 when it loses). */
+	units: number;
 }
 
 /** Model and (when the sport has lines) market metrics on the same games. */
@@ -152,8 +208,9 @@ export interface SourceMetrics {
 	market?: Metrics;
 }
 
-/** Betting the model's side vs the spread when it disagrees by > min_edge. */
-export interface AtsRow {
+/** Betting the model's side when it disagrees with the market by > min_edge
+ * (points for the spread and total, win probability for the moneyline). */
+export interface BetRow {
 	min_edge: number;
 	bets: number;
 	wins: number;
@@ -162,7 +219,20 @@ export interface AtsRow {
 	win_pct: number | null;
 	ci95_low: number | null;
 	ci95_high: number | null;
+	/** Profit in units (1 per bet) at the odds. */
+	units?: number;
 	roi: number;
+}
+
+export type AtsRow = BetRow;
+
+export interface TotalsSummary {
+	n: number;
+	rmse: { model: number; market: number };
+	/** Over/under probability Brier score (games that did not land on the line). */
+	brier: { model?: number; market?: number };
+	edge_correlation: { r: number; ci95_low: number; ci95_high: number };
+	record: BetRow[];
 }
 
 export interface CalibrationBin {
@@ -181,6 +251,11 @@ export interface Performance {
 	ats_by_season?: Record<string, AtsRow>;
 	edge_correlation?: { r: number; ci95_low: number; ci95_high: number };
 	calibration: { model: CalibrationBin[]; market?: CalibrationBin[] };
+	moneyline?: BetRow[];
+	moneyline_by_season?: Record<string, BetRow>;
+	totals?: TotalsSummary;
+	totals_by_season?: Record<string, BetRow>;
+	over_calibration?: { model: CalibrationBin[]; market?: CalibrationBin[] };
 }
 
 export interface RankingSeries {
@@ -207,4 +282,46 @@ export interface Rankings {
 	date_label: string;
 	/** Display label per playoff stage, e.g. "Won Super Bowl". */
 	playoff_labels?: Partial<Record<PlayoffStage, string>>;
+}
+
+/** One sportsbook's line, from the home team's side (`spread` is the home
+ * team's expected margin, the opposite sign of the handicap books quote). */
+export interface BookLine {
+	spread: number | null;
+	spread_home_odds: number | null;
+	spread_away_odds: number | null;
+	ml_home: number | null;
+	ml_away: number | null;
+	total: number | null;
+	over_odds: number | null;
+	under_odds: number | null;
+}
+
+export interface BookOffer {
+	book: string;
+	odds: number | null;
+	/** Spread (home expected margin) or total of the offer. */
+	points?: number;
+}
+
+export interface GameOdds {
+	updated: string;
+	books: (BookLine & { book: string })[];
+	/** Median over books. */
+	consensus: BookLine;
+	best: {
+		spread: { home: BookOffer | null; away: BookOffer | null };
+		moneyline: { home: BookOffer | null; away: BookOffer | null };
+		total: { over: BookOffer | null; under: BookOffer | null };
+	};
+	open: { spread: number | null; total: number | null };
+	history: { t: string; spread: number | null; total: number | null; ml_home?: number | null; ml_away?: number | null }[];
+}
+
+/** `<sport>/odds.json`: current lines for upcoming games (absent without it). */
+export interface OddsFile {
+	updated: string | null;
+	provider: string | null;
+	remaining: number | null;
+	games: Record<string, GameOdds>;
 }

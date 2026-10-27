@@ -10,6 +10,7 @@ from .metrics import (
     evaluate,
     fit_sigma,
     format_metrics,
+    symmetrize,
     win_probability,
 )
 from .predictor import MatchupModel, Predictor, save_predictor
@@ -58,6 +59,29 @@ def calibrate_and_evaluate(
     return sigma, metrics, pred
 
 
+def calibrate_total(
+    rows: pd.DataFrame, raw_total, schema: GameSchema, split: SeasonSplit, metrics
+) -> float:
+    """Residual spread of the (symmetrized) predicted total on the
+    validation seasons (else test, else train); adds each split's
+    ``total_rmse`` / ``total_mae`` to ``metrics`` in place."""
+    pred = symmetrize(rows, raw_total, schema.game_id)
+    y = rows[schema.total].to_numpy(dtype=float)
+    seasons = rows[schema.season].to_numpy()
+    ok = ~np.isnan(pred) & ~np.isnan(y)
+    masks = {
+        name: np.isin(seasons, getattr(split, name)) & ok
+        for name in ("train", "val", "test")
+    }
+    for name, mask in masks.items():
+        if mask.any() and name in metrics:
+            err = y[mask] - pred[mask]
+            metrics[name]["total_rmse"] = float(np.sqrt(np.mean(err**2)))
+            metrics[name]["total_mae"] = float(np.mean(np.abs(err)))
+    source = next(n for n in ("val", "test", "train") if masks[n].any())
+    return fit_sigma(y[masks[source]], pred[masks[source]])
+
+
 def finish_fit(
     model: MatchupModel,
     games: pd.DataFrame,
@@ -67,21 +91,27 @@ def finish_fit(
     sport: str,
     save_dir: str | None = None,
     print_metrics: bool = True,
+    raw_total=None,
 ) -> dict:
     """Common tail of every ``fit_<family>``.
 
-    Calibrates and scores ``raw_pred`` (pre-game predictions for ``rows``),
-    refreshes ``model``'s state from ``games``, wraps it in a
-    :class:`Predictor` and saves it.
+    Calibrates and scores ``raw_pred`` (pre-game predictions for ``rows``)
+    and, for models that predict it, ``raw_total``; refreshes ``model``'s
+    state from ``games``, wraps it in a :class:`Predictor` and saves it.
 
     Returns:
         ``{"predictor", "metrics", "split"}``
     """
     sigma, metrics, _ = calibrate_and_evaluate(rows, raw_pred, model.schema, split)
+    total_sigma = None
+    if raw_total is not None:
+        total_sigma = calibrate_total(rows, raw_total, model.schema, split, metrics)
     if print_metrics:
         print(format_metrics(metrics))
     model.update_state(games)
-    predictor = Predictor(model, sigma=sigma, sport=sport, metrics=metrics)
+    predictor = Predictor(
+        model, sigma=sigma, sport=sport, metrics=metrics, total_sigma=total_sigma
+    )
     if save_dir is not None:
         save_predictor(predictor, save_dir)
     return {"predictor": predictor, "metrics": metrics, "split": split}

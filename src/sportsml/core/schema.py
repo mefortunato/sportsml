@@ -38,6 +38,10 @@ class GameSchema:
             favored), used as the backtest baseline.
         market_moneyline: ``(team, opponent)`` American moneyline columns,
             for market-implied win probabilities.
+        total: Combined points of both teams (missing for upcoming games);
+            models that predict it can be scored against ``market_total``.
+        market_total: The market's over/under line.
+        market_total_odds: ``(over, under)`` American odds on the total.
     """
 
     season: str
@@ -57,6 +61,9 @@ class GameSchema:
     display: tuple[str, ...] = ()
     market_spread: str | None = None
     market_moneyline: tuple[str, str] | None = None
+    total: str | None = None
+    market_total: str | None = None
+    market_total_odds: tuple[str, str] | None = None
 
     @property
     def pre_game_columns(self) -> list[str]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import lightning.pytorch as pl
 import numpy as np
+import pandas as pd
 import torch
 
 from ...core.evaluation import finish_fit
@@ -10,7 +11,7 @@ from ...core.predictor import prepare_save_dir
 from ...core.schema import GameSchema, played
 from ...core.splits import split_seasons
 from ...core.sport import get_sport
-from ..lightning import best_model, default_trainer, seed_and_reset
+from ..lightning import best_model, default_trainer, output_targets, seed_and_reset
 from .data import SequenceData, SequenceFeatures, extra_columns
 from .model import PairHead, SequenceEncoder, TransformerMatchupModel, TransformerModel
 
@@ -38,11 +39,21 @@ def transformer_config(
     context: list[str] | None = None,
     opponent_strength: bool = False,
     elo_margin: bool = False,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     **overrides,
 ) -> dict:
     """TransformerModel init args for ``sport``: sizes from
     ``Sport.transformer``, then ``overrides`` (any encoder arg, e.g.
-    ``history=34, season_decay=True``, or ``lr``)."""
+    ``history=34, season_decay=True``, or ``lr``).
+
+    ``total_weight`` / ``stats_weight`` add the total and every box-score
+    stat as extra outputs with those loss weights (see
+    :func:`~sportsml.models.lightning.output_targets`); None takes the
+    sport's ``Sport.transformer`` setting (default 0, off). With
+    ``distribution=True`` (an override or ``Sport.transformer`` key) the
+    model predicts a :class:`~sportsml.models.lightning.ScoreDistribution`
+    of the margin (and the total) instead of point values."""
     spec = get_sport(sport)
     dims = transformer_dims(
         spec.schema.with_features(context), opponent_strength, elo_margin
@@ -56,6 +67,15 @@ def transformer_config(
         **spec.transformer,
         **overrides,
     }
+    if total_weight is None:
+        total_weight = settings.get("total_weight", 0.0)
+    if stats_weight is None:
+        stats_weight = settings.get("stats_weight", 0.0)
+    distribution = bool(settings.get("distribution", False))
+    output_keys = ("total_weight", "stats_weight", "distribution")
+    settings = {k: v for k, v in settings.items() if k not in output_keys}
+    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
+    outputs = 1 + len(extra)
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
     return {
         "encoder": {"token_dim": dims["token_dim"], **encoder},
@@ -64,7 +84,11 @@ def transformer_config(
             "context_dim": dims["context_dim"],
             "hidden_dim": encoder["d_model"],
             "dropout": encoder["dropout"],
+            "out_dim": 2 * outputs if distribution else outputs,
         },
+        "extra_targets": extra,
+        "extra_weights": weights,
+        "distribution": distribution,
         **{k: v for k, v in settings.items() if k not in ENCODER_KEYS},
     }
 
@@ -74,10 +98,18 @@ def default_model(
     context: list[str] | None = None,
     opponent_strength: bool = False,
     elo_margin: bool = False,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     **overrides,
 ) -> TransformerModel:
     config = transformer_config(
-        sport, context, opponent_strength, elo_margin, **overrides
+        sport,
+        context,
+        opponent_strength,
+        elo_margin,
+        total_weight,
+        stats_weight,
+        **overrides,
     )
     return TransformerModel(
         encoder=SequenceEncoder(**config.pop("encoder")),
@@ -118,6 +150,8 @@ def fit_transformer(
     min_history: int = 1,
     opponent_strength: bool = False,
     elo_margin: bool = False,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -142,6 +176,10 @@ def fit_transformer(
             (+0.0002 +/- 0.0027) and makes state refreshes slower.
         elo_margin: Add each history game's margin minus the margin pre-game
             Elo expected, so a result is read against the opponent's rating.
+        total_weight / stats_weight: Also regress the total (served as
+            ``pred_total``) and every box-score stat, with these loss
+            weights (None: the sport's ``Sport.transformer`` setting). Used
+            to build the default model; ignored with ``model``.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:
@@ -156,13 +194,21 @@ def fit_transformer(
     if not split.val:
         raise ValueError("transformer training needs validation seasons")
 
-    model = model or default_model(sport, context, opponent_strength, elo_margin)
+    model = model or default_model(
+        sport,
+        context,
+        opponent_strength,
+        elo_margin,
+        total_weight=total_weight,
+        stats_weight=stats_weight,
+    )
     train_games = games[games[schema.season].isin(split.train)]
     features = SequenceFeatures.fit(
         train_games, schema, model.encoder.history, opponent_strength, elo_margin
     )
     _check_dims(model, features)
-    data = SequenceData(games, schema, features)
+    extra = tuple(model.extra_targets)
+    data = SequenceData(games, schema, features, extra_targets=extra)
 
     enough = np.ones(len(games), dtype=bool)
     if min_history > 0:
@@ -176,8 +222,14 @@ def fit_transformer(
     }
 
     seed_and_reset(model, seed)
-    y = games[schema.target].to_numpy(dtype=float)[rows["train"]]
-    model.set_target_scaling(float(y.mean()), float(y.std()))
+    y = games[[schema.target, *extra]].apply(pd.to_numeric, errors="coerce")
+    y = y.iloc[rows["train"]]
+    if extra:
+        std = y.std().replace(0, 1).fillna(1.0)
+        model.set_target_scaling(y.mean().fillna(0.0).to_numpy(), std.to_numpy())
+    else:
+        y = y[schema.target].to_numpy(dtype=float)
+        model.set_target_scaling(float(y.mean()), float(y.std()))
 
     trainer = trainer or default_trainer()
     trainer.fit(
@@ -195,19 +247,23 @@ def fit_transformer(
     with torch.no_grad():
         raw = np.concatenate(
             [
-                best.predict_margin(batch).numpy()
+                best.predict_outputs(batch).numpy()
                 for batch in _loader(data.with_rows(predicted), 4096, False, 0)
             ]
         )
+    raw_total = None
+    if schema.total and schema.total in extra:
+        raw_total = raw[:, 1 + extra.index(schema.total)]
     result = finish_fit(
         TransformerMatchupModel(schema, best, features),
         games,
         games.iloc[predicted],
-        raw,
+        raw[:, 0],
         split,
         sport,
         save_dir,
         print_metrics,
+        raw_total=raw_total,
     )
     if trainer.logger is not None:
         trainer.logger.log_metrics(

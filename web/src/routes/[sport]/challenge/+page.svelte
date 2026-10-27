@@ -3,23 +3,44 @@
 	import { api } from '$lib/api';
 	import { challengeStore, type ChallengeRecord, type ChallengeStore } from '$lib/challenge';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
+	import ProbabilityCompare from '$lib/components/ProbabilityCompare.svelte';
 	import Scoreboard from '$lib/components/Scoreboard.svelte';
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
-	import { handicap, marginLabel, spreadLabel } from '$lib/format';
-	import type { ChallengeAnswer, ChallengeGame, Side } from '$lib/types';
+	import TotalChart from '$lib/components/TotalChart.svelte';
+	import { handicap, marginLabel, pct, spreadLabel } from '$lib/format';
+	import {
+		americanOdds,
+		MARKET_LABELS,
+		pickLabel,
+		SPREAD_ODDS,
+		totalLabel,
+		unitsLabel
+	} from '$lib/markets';
+	import type { ChallengeAnswer, ChallengeGame, Market, Pick } from '$lib/types';
 	import { untrack } from 'svelte';
 	import { get } from 'svelte/store';
 
 	let { data } = $props();
 	const info = $derived(data.info);
 	const sport = $derived(page.params.sport ?? '');
+	const markets = $derived<Market[]>(info.markets?.length ? info.markets : ['spread']);
 
+	const MARKET_KEY = 'sportsml:challenge-market';
+	function savedMarket(): Market | null {
+		try {
+			return (globalThis.localStorage?.getItem(MARKET_KEY) as Market | null) ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	let market = $state<Market>('spread');
 	let store = $state<ChallengeStore | null>(null);
 	let record = $state<ChallengeRecord | null>(null);
 	let game = $state<ChallengeGame | null>(null);
 	let answer = $state<ChallengeAnswer | null>(null);
-	let pick = $state<Side | null>(null);
+	let pick = $state<Pick | null>(null);
 	let busy = $state(false);
 	let failure = $state<string | null>(null);
 
@@ -29,7 +50,7 @@
 		failure = null;
 		try {
 			const seen = get(store).seen.slice(-200);
-			game = await api.challengeNext(sport, seen);
+			game = await api.challengeNext(sport, seen, market);
 			answer = null;
 			pick = null;
 			window.scrollTo({ top: 0 });
@@ -44,7 +65,7 @@
 		if (!store || !game || !pick) return;
 		busy = true;
 		try {
-			answer = await api.challengeAnswer(sport, game.game_id, pick);
+			answer = await api.challengeAnswer(sport, game.game_id, pick, market);
 			store.record(answer);
 		} catch (error) {
 			failure = String(error);
@@ -53,10 +74,30 @@
 		}
 	}
 
+	function choose(next: Market) {
+		if (next === market) return;
+		market = next;
+		try {
+			globalThis.localStorage?.setItem(MARKET_KEY, next);
+		} catch {
+			// remembering the market is only a convenience
+		}
+	}
+
 	$effect(() => {
-		// one record per sport, kept in this browser. Only `sport` is a
-		// dependency: next() reads and writes state, which would re-run this.
-		const current = challengeStore(sport);
+		// the last market played here, if this sport offers it
+		const saved = untrack(savedMarket);
+		const offered = markets;
+		untrack(() => {
+			if (saved && offered.includes(saved)) market = saved;
+			else if (!offered.includes(market)) market = offered[0];
+		});
+	});
+
+	$effect(() => {
+		// one record per sport and market, kept in this browser. Only `sport`
+		// and `market` are dependencies: next() reads and writes state.
+		const current = challengeStore(sport, market);
 		const unsubscribe = current.subscribe((value) => (record = value));
 		untrack(() => {
 			store = current;
@@ -65,8 +106,75 @@
 		return unsubscribe;
 	});
 
-	const teamOf = (side: Side | 'push' | null) =>
-		!game || !side || side === 'push' ? null : side === 'home' ? game.home : game.away;
+	interface Choice {
+		pick: Pick;
+		title: string;
+		line: string;
+		note: string;
+	}
+
+	const choices = $derived.by<Choice[]>(() => {
+		const g = game;
+		if (!g) return [];
+		if (market === 'moneyline' && g.moneyline) {
+			return (['away', 'home'] as const).map((side) => ({
+				pick: side,
+				title: (side === 'home' ? g.home : g.away).name,
+				line: americanOdds(g.moneyline?.[side]),
+				note: 'wins'
+			}));
+		}
+		if (market === 'total') {
+			const odds = g.total_odds;
+			return (['over', 'under'] as const).map((side) => ({
+				pick: side,
+				title: side === 'over' ? 'Over' : 'Under',
+				line: totalLabel(g.total_line),
+				note: odds ? americanOdds(odds[side]) : americanOdds(SPREAD_ODDS)
+			}));
+		}
+		return (['away', 'home'] as const).map((side) => ({
+			pick: side,
+			title: (side === 'home' ? g.home : g.away).name,
+			line: `${side} ${handicap(g.spread ?? 0, side)}`,
+			note: 'covers'
+		}));
+	});
+
+	const lineText = $derived.by(() => {
+		const g = game;
+		if (!g) return '';
+		if (market === 'moneyline' && g.moneyline)
+			return `Moneyline ${g.away.team} ${americanOdds(g.moneyline.away)} · ${g.home.team} ${americanOdds(g.moneyline.home)}`;
+		if (market === 'total') return `Over/under ${totalLabel(g.total_line)}`;
+		return `Line ${spreadLabel(g.home, g.away, g.spread)}`;
+	});
+
+	const prompt: Record<Market, string> = {
+		spread: 'Pick the side that covers the spread',
+		moneyline: 'Pick the winner, at the posted moneyline odds',
+		total: 'Pick whether the combined score goes over or under the line'
+	};
+
+	function outcomeText(a: ChallengeAnswer, g: ChallengeGame): string {
+		if (a.market === 'moneyline') return `${pickLabel(a.outcome, g.home, g.away)} won`;
+		if (a.market === 'total')
+			return `${a.result.total} points · ${a.outcome === 'over' ? 'over' : 'under'} ${totalLabel(a.total_line)}`;
+		return `${pickLabel(a.outcome, g.home, g.away)} covered`;
+	}
+
+	function modelText(a: ChallengeAnswer, g: ChallengeGame): string {
+		const m = a.model;
+		if (a.market === 'moneyline') {
+			const side = m.pick === 'away' ? 'away' : 'home';
+			const team = side === 'home' ? g.home : g.away;
+			const p = side === 'home' ? m.win_prob : 1 - m.win_prob;
+			const v = m.market_prob == null ? null : side === 'home' ? m.market_prob : 1 - m.market_prob;
+			return `${team.team} ${pct(p)}${v === null ? '' : ` vs Vegas ${pct(v)}`}`;
+		}
+		if (a.market === 'total') return `${m.total?.toFixed(1) ?? '—'} points`;
+		return marginLabel(g.home, g.away, m.margin);
+	}
 </script>
 
 <div class="container section">
@@ -74,8 +182,8 @@
 		<div>
 			<h1>Beat the model</h1>
 			<p class="muted">
-				A past game, its Vegas line, and what both teams had done before kickoff. Pick the side
-				that covers the spread, then see the result and what the model picked.
+				A past game, its Vegas lines, and what both teams had done before kickoff. Choose a market,
+				make your pick, then see the result and what the model picked.
 			</p>
 			<p class="muted small">
 				The model never saw these games: its pick for a game from a given season comes from a
@@ -84,8 +192,22 @@
 		</div>
 	</div>
 
+	{#if markets.length > 1}
+		<div class="tabs" role="tablist" aria-label="Market">
+			{#each markets as m (m)}
+				<button
+					role="tab"
+					aria-selected={market === m}
+					class:active={market === m}
+					disabled={busy}
+					onclick={() => choose(m)}>{MARKET_LABELS[m]}</button
+				>
+			{/each}
+		</div>
+	{/if}
+
 	{#if record}
-		<Scoreboard {record} onreset={() => store?.reset()} />
+		<Scoreboard {record} {market} onreset={() => store?.reset()} />
 	{/if}
 
 	{#if failure}
@@ -97,55 +219,56 @@
 		<div class="card section pick">
 			<div class="muted small">
 				{info.date_label}
-				{g.date}, {g.season}{g.neutral ? ' · neutral site' : ''} · Line {spreadLabel(
-					g.home,
-					g.away,
-					g.spread
-				)}
+				{g.date}, {g.season}{g.neutral ? ' · neutral site' : ''} · {lineText}
 			</div>
+			<div class="small">{prompt[market]}</div>
 
 			<div class="choices">
-				{#each [['away', g.away], ['home', g.home]] as const as [side, team] (side)}
-					{@const chosen = pick === side}
-					{@const won = answer && answer.covered === side}
+				{#each choices as choice (choice.pick)}
+					{@const chosen = pick === choice.pick}
+					{@const won = answer && answer.outcome === choice.pick}
 					<button
 						class="choice"
 						class:chosen
 						class:won
 						class:lost={answer && chosen && !won}
 						disabled={!!answer || busy}
-						onclick={() => (pick = side)}
+						onclick={() => (pick = choice.pick)}
 					>
-						<TeamBadge {team} size={48} label="none" />
-						<span class="team-name">{team.name}</span>
-						<span class="line tabular">{side === 'home' ? 'home' : 'away'} {handicap(g.spread ?? 0, side)}</span>
-						<span class="covers">covers</span>
+						{#if choice.pick === 'home' || choice.pick === 'away'}
+							<TeamBadge team={choice.pick === 'home' ? g.home : g.away} size={48} label="none" />
+						{:else}
+							<span class="total-icon" aria-hidden="true">{choice.pick === 'over' ? '▲' : '▼'}</span>
+						{/if}
+						<span class="team-name">{choice.title}</span>
+						<span class="line tabular">{choice.line}</span>
+						<span class="covers">{choice.note}</span>
 					</button>
 				{/each}
 			</div>
 
 			{#if !answer}
 				<button class="primary submit" disabled={!pick || busy} onclick={submit}>
-					{pick ? `Lock in ${(pick === 'home' ? g.home : g.away).team}` : 'Pick a side'}
+					{pick ? `Lock in ${pickLabel(pick, g.home, g.away)}` : 'Make a pick'}
 				</button>
 			{:else}
-				{@const covered = teamOf(answer.covered)}
-				{@const modelTeam = teamOf(answer.model.ats_pick)}
 				<div class="reveal">
 					<div class="final">
 						Final: {g.away.team}
 						<strong class="tabular">{answer.result.away_score}</strong>
 						– <strong class="tabular">{answer.result.home_score}</strong>
 						{g.home.team}
-						· {covered ? `${covered.team} covered` : 'Push'}
+						· {outcomeText(answer, g)}
 					</div>
 					<div class="verdicts">
 						<span class="pill" class:good={answer.correct} class:bad={!answer.correct}>
-							You: {(answer.pick === 'home' ? g.home : g.away).team} {answer.correct ? '✓' : '✗'}
+							You: {pickLabel(answer.pick, g.home, g.away)} {answer.correct ? '✓' : '✗'}
+							{unitsLabel(answer.units, 2)}
 						</span>
 						<span class="pill" class:good={answer.model.correct} class:bad={!answer.model.correct}>
-							Model: {marginLabel(g.home, g.away, answer.model.margin)} → {modelTeam?.team ?? '—'}
+							Model: {modelText(answer, g)} → {pickLabel(answer.model.pick, g.home, g.away)}
 							{answer.model.correct ? '✓' : '✗'}
+							{unitsLabel(answer.model.units, 2)}
 						</span>
 					</div>
 					<p class="muted small trained">
@@ -153,13 +276,28 @@
 						before {g.season}.
 					</p>
 					<div class="chart">
-						<SpreadChart
-							home={g.home}
-							away={g.away}
-							spread={answer.spread}
-							model={answer.model.margin}
-							result={answer.result.margin}
-						/>
+						{#if answer.market === 'moneyline'}
+							<ProbabilityCompare
+								home={g.home}
+								away={g.away}
+								model={answer.model.win_prob}
+								market={answer.model.market_prob ?? null}
+							/>
+						{:else if answer.market === 'total'}
+							<TotalChart
+								line={answer.total_line ?? null}
+								model={answer.model.total ?? null}
+								result={answer.result.total ?? null}
+							/>
+						{:else}
+							<SpreadChart
+								home={g.home}
+								away={g.away}
+								spread={answer.spread ?? g.spread}
+								model={answer.model.margin}
+								result={answer.result.margin}
+							/>
+						{/if}
 					</div>
 					<button class="primary" onclick={next} disabled={busy}>Next game →</button>
 				</div>
@@ -175,6 +313,21 @@
 <style>
 	.intro p {
 		max-width: 720px;
+	}
+	.tabs {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+		margin-bottom: 12px;
+	}
+	.tabs button {
+		padding: 6px 14px;
+		border-radius: 999px;
+	}
+	.tabs button.active {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+		font-weight: 700;
 	}
 	.pick {
 		display: flex;
@@ -213,6 +366,12 @@
 	.choice:disabled {
 		opacity: 1;
 		cursor: default;
+	}
+	.total-icon {
+		font-size: 2rem;
+		line-height: 48px;
+		height: 48px;
+		color: var(--accent);
 	}
 	.team-name {
 		font-weight: 700;

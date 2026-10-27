@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.stats
 
 from sportsml.core.schema import GameSchema
 from sportsml.core.sport import Sport, register_sport
@@ -16,10 +17,20 @@ TOY_SCHEMA = GameSchema(
     location="location",
     context=("rest", "opp_rest"),
     categorical=("surface",),
-    paired=(("rest", "opp_rest"),),
+    paired=(("rest", "opp_rest"), ("moneyline", "opp_moneyline")),
     negated=("spread",),
     market_spread="spread",
+    market_moneyline=("moneyline", "opp_moneyline"),
+    total="total",
+    market_total="total_line",
+    market_total_odds=("over_odds", "under_odds"),
 )
+
+
+def american(prob: float) -> float:
+    """American odds for ``prob`` with a ~4.5% bookmaker margin."""
+    prob = min(max(prob * 1.0225, 0.01), 0.99)
+    return -100 * prob / (1 - prob) if prob >= 0.5 else 100 * (1 - prob) / prob
 
 
 def make_games(
@@ -58,17 +69,21 @@ def make_games(
                 rest_a, rest_b = rng.integers(5, 9, 2)
                 pts_a = 21 + off[a] - dfn[b] + home_advantage * loc / 2
                 pts_b = 21 + off[b] - dfn[a] - home_advantage * loc / 2
-                # a market that knows the true expected margin, to the half point
+                # a market that knows the true expected margin and total,
+                # to the half point
                 spread = round(2 * (pts_a - pts_b)) / 2
+                total_line = round(2 * (pts_a + pts_b)) / 2
+                p_a = scipy.stats.norm.cdf((pts_a - pts_b) / (noise * np.sqrt(2)))
+                ml_a, ml_b = american(p_a), american(1 - p_a)
                 pts_a += rng.normal(0, noise)
                 pts_b += rng.normal(0, noise)
                 yds_a = 300 + 12 * (off[a] - dfn[b]) + rng.normal(0, 40)
                 yds_b = 300 + 12 * (off[b] - dfn[a]) + rng.normal(0, 40)
                 game_id = f"{season}_{week:02d}_{a}_{b}"
                 surface = rng.choice(["grass", "turf"])
-                for team, opp, pts, opts, yds, oyds, sign, rest, orest in [
-                    (a, b, pts_a, pts_b, yds_a, yds_b, 1, rest_a, rest_b),
-                    (b, a, pts_b, pts_a, yds_b, yds_a, -1, rest_b, rest_a),
+                for team, opp, pts, opts, yds, oyds, sign, rest, orest, ml, oml in [
+                    (a, b, pts_a, pts_b, yds_a, yds_b, 1, rest_a, rest_b, ml_a, ml_b),
+                    (b, a, pts_b, pts_a, yds_b, yds_a, -1, rest_b, rest_a, ml_b, ml_a),
                 ]:
                     rows.append(
                         {
@@ -86,13 +101,19 @@ def make_games(
                             "yards": yds,
                             "opp_yards": oyds,
                             "margin": round(pts) - round(opts),
+                            "total": round(pts) + round(opts),
                             "spread": sign * spread,
+                            "total_line": total_line,
+                            "over_odds": -110.0,
+                            "under_odds": -110.0,
+                            "moneyline": ml,
+                            "opp_moneyline": oml,
                         }
                     )
     games = pd.DataFrame(rows)
     last = games["season"] == max(seasons)
     unplayed = last & (games["week"] > weeks - upcoming_weeks)
-    games.loc[unplayed, ["margin", *TOY_SCHEMA.stats]] = np.nan
+    games.loc[unplayed, ["margin", "total", *TOY_SCHEMA.stats]] = np.nan
     return games
 
 
@@ -113,7 +134,13 @@ def toy_sport():
             schema=TOY_SCHEMA,
             download=lambda output_file=None: make_games(),
             gnn={"hidden_dim": 16, "out_dim": 8, "num_layers": 2},
-            transformer={"history": 8, "d_model": 16, "nhead": 2, "num_layers": 1},
+            transformer={
+                "history": 8,
+                "d_model": 16,
+                "nhead": 2,
+                "num_layers": 1,
+                "total_weight": 1.0,
+            },
         )
     )
 

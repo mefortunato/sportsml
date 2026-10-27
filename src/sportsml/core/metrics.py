@@ -10,6 +10,19 @@ def win_probability(margin, sigma: float) -> np.ndarray:
     return scipy.stats.norm.cdf(np.asarray(margin, dtype=float) / sigma)
 
 
+def over_probability(total, line, sigma: float) -> np.ndarray:
+    """P(combined points > line) assuming the total ~ Normal(total, sigma)."""
+    total, line = np.asarray(total, dtype=float), np.asarray(line, dtype=float)
+    return scipy.stats.norm.sf((line - total) / sigma)
+
+
+def symmetrize(rows: pd.DataFrame, pred, game_id: str) -> np.ndarray:
+    """Average each game's two perspectives of a symmetric quantity (e.g.
+    the total), so pred(A, B) == pred(B, A)."""
+    pred = pd.Series(np.asarray(pred, dtype=float), index=rows.index)
+    return pred.groupby(rows[game_id].values).transform("mean").to_numpy()
+
+
 def fit_sigma(y, margin) -> float:
     """Spread of realized margins around predictions (residual RMSE)."""
     y, margin = np.asarray(y, dtype=float), np.asarray(margin, dtype=float)

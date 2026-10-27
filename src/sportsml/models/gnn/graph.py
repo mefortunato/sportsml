@@ -94,8 +94,11 @@ def build_graph(
     schema: GameSchema,
     features: GraphFeatures,
     min_games: int = 1,
+    extra_targets: tuple[str, ...] = (),
 ) -> pyg.data.Data:
     """One edge per played row: opponent -> team, carrying the team's stats.
+
+    ``y`` is the margin, or ``[margin, *extra_targets]`` per edge.
 
     Edge-level tensors: ``edge_attr``, ``context``, ``y``, ``season``,
     ``date``, ``game`` (index into ``graph.game_ids``) and ``valid`` (both
@@ -113,7 +116,7 @@ def build_graph(
         edge_index=torch.from_numpy(np.stack([opp, team])),
         edge_attr=features.edge_tensor(games),
         context=features.context_tensor(games),
-        y=torch.tensor(games[schema.target].to_numpy(dtype=np.float32)),
+        y=_targets(games, schema, extra_targets),
         season=torch.tensor(games[schema.season].to_numpy(dtype=np.int64)),
         date=torch.tensor(games[schema.date].to_numpy(dtype=np.float64)),
         game=torch.from_numpy(game_codes.astype(np.int64)),
@@ -124,6 +127,12 @@ def build_graph(
     )
     graph.game_ids = np.asarray(game_ids)
     return graph
+
+
+def _targets(games, schema: GameSchema, extra: tuple[str, ...]) -> torch.Tensor:
+    y = games[[schema.target, *extra]].apply(pd.to_numeric, errors="coerce")
+    y = torch.tensor(y.to_numpy(dtype=np.float32))
+    return y if extra else y[:, 0]
 
 
 EDGE_KEYS = ("edge_attr", "context", "y", "season", "date", "game", "valid")

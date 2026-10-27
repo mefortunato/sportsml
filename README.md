@@ -14,6 +14,22 @@ probability, with three interchangeable model families:
   each game the pre-game Elo of both teams and the opponent's season-to-date
   margin; on NFL 2021-2025 that did not change the backtest Brier.
 
+The neural families can also regress the total (combined points) and every
+box-score stat next to the margin, as extra outputs with their own loss
+weights (`--total_weight`, `--stats_weight` on `fit transformer`;
+`total_weight` / `stats_weight` in `Sport.transformer` or `Sport.gnn`). A
+model with the total serves `pred_total` and, where the matchup carries the
+market's line, `over_prob`.
+
+The transformer can also predict a full score distribution instead of
+point values (`distribution: true` in `Sport.transformer` or the model
+config): a bell curve per game plus a learned weight per whole-number
+margin and total, so values football scoring produces often (a 3- or
+7-point margin) get their real share, and cover / moneyline / over
+probabilities come from it with pushes left out. On NFL 2006-2025 it did not
+beat the normal model (cover Brier +0.0002 +/- 0.0016, moneyline Brier
++0.0012 +/- 0.0014), so it is off by default.
+
 NFL games also carry pre-game injury features: for each unit (`qb`, `ol`,
 `skill`, `front`, `secondary`), `inj_<unit>` / `opp_inj_<unit>` is the snap
 share the week's injury report is expected to take away (each listed
@@ -96,6 +112,13 @@ prints:
 - against-the-spread results from betting the model's side whenever it
   disagrees with the spread by more than 0-5 points, with win rate, 95% CI
   and ROI at -110 (break-even is 52.38%);
+- moneyline results from betting the side the model rates more likely to
+  win than the market's no-vig odds imply (by more than 0-10 percentage
+  points), with profit at the posted moneylines;
+- for models that predict the total: its RMSE next to the over/under
+  line's, the over/under Brier score against the no-vig over/under odds,
+  and over/under bets when the model's total beats the line by 0-5 points,
+  at the posted odds;
 - the correlation between the model's edge (model margin minus spread) and
   the cover margin (result minus spread). It is above zero only if the model
   knows something the spread does not.
@@ -111,6 +134,31 @@ meaningfully better than another when those intervals separate. It writes
 `benchmark.csv`, `benchmark.json` and `benchmark_games.csv` (every source's
 prediction per game) to `backtests/<sport>/`.
 
+### Confidence-weighted staking
+
+Flat betting stakes one unit on every pick, however close the model is to
+the line. `staking` sizes each bet from the model's edge instead and scores
+the weighted profit:
+
+```sh
+uv run sportsml nfl backtest --family transformer --n_seasons 10
+uv run sportsml nfl staking --results backtests/nfl/transformer_games.csv
+```
+
+For each market (spread, moneyline and, with a model total, over/under) it
+compares flat staking, edge thresholds, a stake proportional to the edge,
+and a learned policy: a logistic fit of P(pick wins | edge) on the earlier
+seasons' out-of-sample picks, staking the half-Kelly bet at each pick's odds
+(nothing where the edge has not beaten the odds). Each test season's
+policies only learn from earlier seasons, so the first `--min_train_seasons`
+(default 3) seasons of results are only learned from. Stakes are relative
+units (average stake 1), so ROI is profit per unit staked and comparable
+with flat betting. The summary gives profit, ROI with a bootstrap 95% CI,
+the paired ROI difference vs flat, the stake-weighted win rate, the largest
+drawdown and profit by season; `staking_summary.json` and
+`staking_bets.csv` (every pick's stake under every policy) go to
+`backtests/<sport>/`.
+
 Any model can be backtested from Python with
 `sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
 `fitter(games, split)` returns a fitted `Predictor`.
@@ -120,19 +168,35 @@ Any model can be backtested from Python with
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
 
 - **Upcoming games**: each game's Vegas line and the model's predicted
-  margin on one chart, the win probability, and the model's pick against
-  the spread.
+  margin on one chart, the win probability, and the model's pick in each
+  market: against the spread, on the moneyline and on the over/under.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
+- **Price your line** (upcoming games): enter the spread, moneyline or
+  total and odds your sportsbook offers; the page reprices every pick in the
+  browser (the model's predictions do not depend on the odds) with its win
+  chance, break-even, expected value and a quarter-Kelly stake. Win chances
+  are the model's moved toward the market by how much of its disagreement
+  has been right in the walk-forward backtest (`pricing.trust` in
+  `sports.json`, fit per market).
 - **Power rankings**: each team's average predicted margin against every
   other team, week by week, with conference, division and final-four
   filters.
 - **Model performance**: the walk-forward backtest against Vegas
-  (accuracy, Brier score, calibration, betting the model's edge).
-- **Beat the model**: a past game with its line and both teams' pre-game
-  stats. Pick the side that covers, then see the final score and what the
-  model picked. The model's picks are its walk-forward backtest predictions,
-  made without seeing those games. Your record is kept in your browser.
+  (accuracy, Brier score, calibration, and betting the model's edge on the
+  spread, the moneyline and the over/under).
+- **Beat the model**: a past game with its lines and both teams' pre-game
+  stats. Choose a market (spread, moneyline or over/under), make your pick,
+  then see the final score and what the model picked. Picks are scored in
+  units at the game's odds. The model's picks are its walk-forward backtest
+  predictions, made without seeing those games. Your record on each market
+  is kept in your browser.
+
+- **Current lines**: with `--odds`, upcoming games show every sportsbook's
+  spread, moneyline and total, the best price on each side, the opening
+  line and how the consensus moved; the cards, picks and the line
+  calculator use the current consensus, and any book can be loaded into
+  the calculator.
 
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
@@ -145,6 +209,18 @@ request. Two GitHub Actions workflows keep them current:
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
   frontend and deploys it. A failed run leaves the last deployed site up.
+
+Sportsbook lines come from `sportsml web export --odds '{nfl: oddsapi,
+cfb: cfbd}'`: [The Odds API](https://the-odds-api.com) (`ODDS_API_KEY`;
+every US book, one request per sport and refresh) and CollegeFootballData's
+`/lines` (`CFBD_API_KEY`; several books with opening lines). The Site
+workflow refreshes them about 23 times a week in season, more often on game
+days, which fits The Odds API's free tier (150 requests a month) for the
+NFL; no request is made when no game is within 8 days, and a failed fetch
+keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
+repository's **Settings → Secrets and variables → Actions**; without them
+the site builds as before, without current lines. `odds.json` reports the
+provider's remaining requests.
 
 To set it up: in the repository settings, set **Pages → Source** to
 **GitHub Actions**, then run **Train** once from the Actions tab. It starts

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
+	import { gameOdds } from '$lib/odds';
 
 	let { data } = $props();
 	const info = $derived(data.info);
@@ -45,7 +46,7 @@
 	{:else}
 		<div class="games">
 			{#each upcoming.games as game (game.game_id)}
-				<GameCard {game} sport={info.sport} />
+				<GameCard {game} sport={info.sport} odds={gameOdds(data.odds, game.game_id)} />
 			{/each}
 		</div>
 	{/if}

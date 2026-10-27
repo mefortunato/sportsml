@@ -127,7 +127,9 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
 
 
 class PairHead(nn.Module, HyperparametersMixin):
-    """MLP on (team embedding, opponent embedding, context) -> margin."""
+    """MLP on (team embedding, opponent embedding, context) -> margin, or
+    ``out_dim`` outputs (margin first, then e.g. total and box-score stats).
+    """
 
     def __init__(
         self,
@@ -135,22 +137,25 @@ class PairHead(nn.Module, HyperparametersMixin):
         context_dim: int = 0,
         hidden_dim: int = 64,
         dropout: float = 0.1,
+        out_dim: int = 1,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.hparams["cls"] = self.__class__
         self.in_dim = in_dim
         self.context_dim = context_dim
+        self.out_dim = out_dim
         self.net = nn.Sequential(
             nn.Linear(2 * in_dim + context_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(hidden_dim, out_dim),
         )
 
     def forward(self, team, opp, context) -> torch.Tensor:
         parts = [team, opp] + ([context] if self.context_dim else [])
-        return self.net(torch.cat(parts, dim=-1)).squeeze(-1)
+        out = self.net(torch.cat(parts, dim=-1))
+        return out.squeeze(-1) if getattr(self, "out_dim", 1) == 1 else out
 
 
 class TransformerModel(MarginModule):
@@ -164,10 +169,21 @@ class TransformerModel(MarginModule):
         head: PairHead,
         lr: float = 3e-4,
         weight_decay: float = 1e-4,
-        target_mean: float = 0.0,
-        target_std: float = 1.0,
+        target_mean: float | list[float] = 0.0,
+        target_std: float | list[float] = 1.0,
+        extra_targets: tuple[str, ...] = (),
+        extra_weights: tuple[float, ...] = (),
+        distribution: bool = False,
     ):
-        super().__init__(lr, weight_decay, target_mean, target_std)
+        super().__init__(
+            lr,
+            weight_decay,
+            target_mean,
+            target_std,
+            extra_targets,
+            extra_weights,
+            distribution,
+        )
         self.encoder = encoder
         self.head = head
         self.save_hyperparameters(ignore=list(self.SUBMODULES))
@@ -185,6 +201,22 @@ class TransformerModel(MarginModule):
 
     def targets(self, batch) -> torch.Tensor:
         return batch["y"]
+
+
+def distribution_outputs(module, batch) -> dict[str, np.ndarray]:
+    """A distribution model's probability tables: ``margin_pmf`` over
+    ``margin_values`` (and ``total_pmf`` over ``total_values``)."""
+    probs = {k: v.exp().numpy() for k, v in module.log_probs(batch).items()}
+    out = {
+        "margin_pmf": probs["margin"],
+        "margin_values": module.margin_dist.values.numpy(),
+    }
+    if "total" in probs:
+        out |= {
+            "total_pmf": probs["total"],
+            "total_values": module.total_dist.values.numpy(),
+        }
+    return out
 
 
 class TransformerMatchupModel(MatchupModel):
@@ -229,8 +261,11 @@ class TransformerMatchupModel(MatchupModel):
     def teams(self) -> list:
         return list(self.team_index)
 
-    @torch.no_grad()
     def predict_margin(self, matchups: pd.DataFrame) -> np.ndarray:
+        return self.predict_outputs(matchups)["margin"]
+
+    @torch.no_grad()
+    def predict_outputs(self, matchups: pd.DataFrame) -> dict[str, np.ndarray]:
         s = self.schema
         season = (
             matchups[s.season].to_numpy(dtype=np.float32)
@@ -248,4 +283,11 @@ class TransformerMatchupModel(MatchupModel):
             "opp": side(matchups[s.opp]),
             "context": torch.from_numpy(self.features.context(matchups)),
         }
-        return self.module.predict_margin(batch).numpy()
+        out = self.module.predict_outputs(batch).numpy()
+        extra = getattr(self.module, "extra_targets", ())
+        result = {"margin": out[:, 0]}
+        if s.total and s.total in extra:
+            result["total"] = out[:, 1 + extra.index(s.total)]
+        if getattr(self.module, "distribution", False):
+            result |= distribution_outputs(self.module, batch)
+        return result

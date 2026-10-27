@@ -2,13 +2,17 @@
 // built site (there is no server). The challenge's random pick and scoring
 // run here.
 import { base } from '$app/paths';
+import { units } from './markets';
 import type {
 	ChallengeAnswer,
 	ChallengeGame,
 	GameDetail,
+	Market,
+	MarketAnswer,
+	OddsFile,
 	Performance,
+	Pick,
 	Rankings,
-	Side,
 	SportInfo,
 	Team,
 	Upcoming
@@ -16,8 +20,8 @@ import type {
 
 export interface ChallengeEntry {
 	game: ChallengeGame;
-	/** The answer to either pick, without the pick-dependent fields. */
-	answer: Omit<ChallengeAnswer, 'pick' | 'correct'>;
+	/** Each playable market's answer, without the pick-dependent fields. */
+	answers: Partial<Record<Market, MarketAnswer>>;
 }
 
 interface Exported<T> {
@@ -40,21 +44,34 @@ export function revive<T>(text: string): T {
 	return resolve(parsed.data) as T;
 }
 
-/** A random pool game not in `exclude` (any game once all have been seen). */
+/** A random pool game playable on `market`, not in `exclude` (any such
+ * game once all have been seen). */
 export function pickChallenge(
 	pool: ChallengeEntry[],
 	exclude: string[] = [],
-	random: () => number = Math.random
+	random: () => number = Math.random,
+	market: Market = 'spread'
 ): ChallengeEntry {
-	if (!pool.length) throw new Error('No historical games available');
+	const playable = pool.filter((entry) => entry.answers[market]);
+	if (!playable.length) throw new Error('No historical games available');
 	const seen = new Set(exclude);
-	const fresh = pool.filter((entry) => !seen.has(entry.game.game_id));
-	const choices = fresh.length ? fresh : pool;
+	const fresh = playable.filter((entry) => !seen.has(entry.game.game_id));
+	const choices = fresh.length ? fresh : playable;
 	return choices[Math.floor(random() * choices.length)];
 }
 
-export function scoreAnswer(entry: ChallengeEntry, pick: Side): ChallengeAnswer {
-	return { ...entry.answer, pick, correct: pick === entry.answer.covered };
+/** Score `pick` on `market` (like the snapshot's challenge_answer). */
+export function scoreAnswer(
+	entry: ChallengeEntry,
+	pick: Pick,
+	market: Market = 'spread'
+): ChallengeAnswer {
+	const answer = entry.answers[market];
+	if (!answer) throw new Error(`Game ${entry.game.game_id} has no ${market} market`);
+	const correct = pick === answer.outcome;
+	const odds = answer.odds[pick];
+	if (odds === undefined) throw new Error(`No odds for ${pick}`);
+	return { ...answer, pick, correct, units: units(odds, correct) };
 }
 
 const files = new Map<string, Promise<unknown>>();
@@ -69,7 +86,9 @@ function load<T>(path: string): Promise<T> {
 				: `${base}/data/${path}`;
 		const promise = fetch(url).then(async (response) => {
 			if (!response.ok) throw new Error(`Could not load ${path} (${response.status})`);
-			return path === 'sports.json' ? response.json() : revive<T>(await response.text());
+			// files without team objects are plain JSON
+			const plain = path === 'sports.json' || path.endsWith('odds.json');
+			return plain ? response.json() : revive<T>(await response.text());
 		});
 		promise.catch(() => files.delete(path));
 		files.set(path, promise);
@@ -111,12 +130,14 @@ export const api = {
 		return game;
 	},
 	performance: (name: string) => load<Performance>(`${name}/performance.json`),
+	/** Current sportsbook lines; null when the site was built without them. */
+	odds: (name: string) => load<OddsFile>(`${name}/odds.json`).catch(() => null),
 	rankings: (name: string) => load<Rankings>(`${name}/rankings.json`),
-	challengeNext: async (name: string, exclude: string[] = []) =>
-		pickChallenge(await pool(name), exclude).game,
-	challengeAnswer: async (name: string, gameId: string, pick: Side) => {
+	challengeNext: async (name: string, exclude: string[] = [], market: Market = 'spread') =>
+		pickChallenge(await pool(name), exclude, Math.random, market).game,
+	challengeAnswer: async (name: string, gameId: string, pick: Pick, market: Market = 'spread') => {
 		const entry = (await pool(name)).find((e) => e.game.game_id === gameId);
 		if (!entry) throw new Error(`Unknown game ${gameId}`);
-		return scoreAnswer(entry, pick);
+		return scoreAnswer(entry, pick, market);
 	}
 };

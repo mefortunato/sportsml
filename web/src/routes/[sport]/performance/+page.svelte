@@ -2,7 +2,8 @@
 	import CalibrationChart from '$lib/components/CalibrationChart.svelte';
 	import { num, pct } from '$lib/format';
 	import { links } from '$lib/links';
-	import type { AtsRow, Metrics } from '$lib/types';
+	import { MARKET_LABELS, unitsLabel } from '$lib/markets';
+	import type { BetRow, Market, Metrics } from '$lib/types';
 
 	let { data } = $props();
 	const info = $derived(data.info);
@@ -17,7 +18,36 @@
 	const BREAKEVEN = 110 / 210;
 	const fixed = (v: number | null | undefined, digits = 3) =>
 		v === null || v === undefined ? '—' : v.toFixed(digits);
-	const record = (row: AtsRow) => `${row.wins}-${row.losses}${row.pushes ? `-${row.pushes}` : ''}`;
+	const record = (row: BetRow) => `${row.wins}-${row.losses}${row.pushes ? `-${row.pushes}` : ''}`;
+	const roiClass = (row: BetRow) => (row.roi > 0 ? 'win' : '');
+
+	// the betting section's markets: those the backtest scored
+	const markets = $derived<Market[]>([
+		...(perf.ats ? (['spread'] as const) : []),
+		...(perf.moneyline ? (['moneyline'] as const) : []),
+		...(perf.totals ? (['total'] as const) : [])
+	]);
+	let chosen = $state<Market>('spread');
+	const market_ = $derived(markets.includes(chosen) ? chosen : (markets[0] ?? 'spread'));
+	const betRows = $derived<BetRow[]>(
+		market_ === 'moneyline'
+			? (perf.moneyline ?? [])
+			: market_ === 'total'
+				? (perf.totals?.record ?? [])
+				: (perf.ats ?? [])
+	);
+	const edgeLabel = (row: BetRow) =>
+		market_ === 'moneyline' ? `${Math.round(row.min_edge * 100)} pct pts` : `${row.min_edge} pts`;
+	const overCalibration = $derived(
+		perf.over_calibration
+			? [
+					{ label: 'Model', slot: 1, bins: perf.over_calibration.model },
+					...(perf.over_calibration.market
+						? [{ label: 'Vegas', slot: 2, bins: perf.over_calibration.market }]
+						: [])
+				]
+			: []
+	);
 	const better = (a: number | undefined, b: number | undefined, lowerIsBetter = false) =>
 		a !== undefined && b !== undefined && (lowerIsBetter ? a < b : a > b);
 
@@ -67,6 +97,22 @@
 				</div>
 			</div>
 		{/each}
+		{#if perf.totals}
+			{@const t = perf.totals}
+			<div class="card tile">
+				<div class="muted small">Total points error, RMSE</div>
+				<div class="pair">
+					<div>
+						<div class="big" class:win={t.rmse.model < t.rmse.market}>{num(t.rmse.model, 1)}</div>
+						<div class="muted small">Model</div>
+					</div>
+					<div>
+						<div class="big" class:win={t.rmse.market < t.rmse.model}>{num(t.rmse.market, 1)}</div>
+						<div class="muted small">Vegas line</div>
+					</div>
+				</div>
+			</div>
+		{/if}
 		{#if ats}
 			<div class="card tile">
 				<div class="muted small">Against the spread (model's side every game)</div>
@@ -99,6 +145,8 @@
 						<th class="num">RMSE</th>
 						{#if market}<th class="num">Vegas</th>{/if}
 						{#if perf.ats_by_season}<th class="num">ATS</th>{/if}
+						{#if perf.moneyline_by_season}<th class="num">Moneyline</th>{/if}
+						{#if perf.totals_by_season}<th class="num">Over/under</th>{/if}
 					</tr>
 				</thead>
 				<tbody>
@@ -115,6 +163,18 @@
 							{#if s.market}<td class="num tabular muted">{num(s.market.rmse, 1)}</td>{/if}
 							{#if row}
 								<td class="num tabular">{record(row)} ({row.win_pct === null ? '—' : pct(row.win_pct, 1)})</td>
+							{/if}
+							{#if perf.moneyline_by_season}
+								{@const ml = perf.moneyline_by_season[season]}
+								<td class="num tabular" class:win={ml && ml.roi > 0}>
+									{ml ? `${record(ml)} (${unitsLabel(ml.units ?? 0)})` : '—'}
+								</td>
+							{/if}
+							{#if perf.totals_by_season}
+								{@const ou = perf.totals_by_season[season]}
+								<td class="num tabular" class:win={ou && ou.roi > 0}>
+									{ou ? `${record(ou)} (${ou.win_pct === null ? '—' : pct(ou.win_pct, 1)})` : '—'}
+								</td>
 							{/if}
 						</tr>
 					{/each}
@@ -160,12 +220,30 @@
 		</div>
 
 		<div class="stack">
-			{#if perf.ats}
+			{#if markets.length}
 				<div class="card">
 					<h2>Betting the model's edge</h2>
+					{#if markets.length > 1}
+						<div class="tabs" role="tablist" aria-label="Market">
+							{#each markets as m (m)}
+								<button role="tab" aria-selected={market_ === m} class:active={market_ === m} onclick={() => (chosen = m)}
+									>{MARKET_LABELS[m]}</button
+								>
+							{/each}
+						</div>
+					{/if}
 					<p class="muted small">
-						Take the model's side against the spread only when it disagrees with Vegas by more than a
-						few points. Above {pct(BREAKEVEN, 1)} would make money at −110.
+						{#if market_ === 'moneyline'}
+							Bet the team the model rates more likely to win than the market's odds imply (vig
+							removed), when the gap is more than a few percentage points. Profit is at the posted
+							moneyline: favorites pay less than a unit, underdogs more.
+						{:else if market_ === 'total'}
+							Bet the over when the model's total is above the line by more than a few points, the
+							under when it is below. Profit is at the posted over/under odds.
+						{:else}
+							Take the model's side against the spread only when it disagrees with Vegas by more than
+							a few points. Above {pct(BREAKEVEN, 1)} would make money at −110.
+						{/if}
 					</p>
 					<div class="scroll">
 					<table>
@@ -176,33 +254,68 @@
 								<th class="num">W-L-P</th>
 								<th class="num">Win %</th>
 								<th class="num">95% range</th>
-								<th class="num">ROI</th>
+								<th class="num">Units (ROI)</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each perf.ats as row (row.min_edge)}
+							{#each betRows as row (row.min_edge)}
 								<tr>
-									<td class="tabular">{row.min_edge} pts</td>
+									<td class="tabular">{edgeLabel(row)}</td>
 									<td class="num tabular">{row.bets}</td>
 									<td class="num tabular">{record(row)}</td>
-									<td class="num tabular" class:win={(row.win_pct ?? 0) > BREAKEVEN}>{row.win_pct === null ? '—' : pct(row.win_pct, 1)}</td>
+									<td class="num tabular" class:win={market_ === 'spread' && (row.win_pct ?? 0) > BREAKEVEN}>{row.win_pct === null ? '—' : pct(row.win_pct, 1)}</td>
 									<td class="num tabular muted">
 										{row.ci95_low === null || row.ci95_high === null ? '—' : `${pct(row.ci95_low)}–${pct(row.ci95_high)}`}
 									</td>
-									<td class="num tabular">{pct(row.roi, 1)}</td>
+									<td class="num tabular {roiClass(row)}">
+										{row.units === undefined ? '' : `${unitsLabel(row.units)} `}({pct(row.roi, 1)})
+									</td>
 								</tr>
 							{/each}
 						</tbody>
 					</table>
 					</div>
-					{#if perf.edge_correlation}
+					{#if market_ === 'spread' && perf.edge_correlation}
 						{@const c = perf.edge_correlation}
 						<p class="muted small">
 							Correlation between the model's edge and how the game finished against the spread:
 							{c.r.toFixed(3)} (95% range {c.ci95_low.toFixed(3)} to {c.ci95_high.toFixed(3)}).
 							{c.ci95_low > 0 ? 'Above zero: the model knows something the line does not.' : 'A range that includes zero means no reliable edge over the line.'}
 						</p>
+					{:else if market_ === 'total' && perf.totals}
+						{@const t = perf.totals}
+						<p class="muted small">
+							On {t.n} games the model's total missed by {num(t.rmse.model, 1)} points (RMSE), the line
+							by {num(t.rmse.market, 1)}.
+							{#if t.brier.model !== undefined}
+								Over/under Brier score: model {fixed(t.brier.model)}{t.brier.market !== undefined ? `, Vegas ${fixed(t.brier.market)}` : ''}.
+							{/if}
+							Correlation between the model's edge and how the total finished against the line:
+							{t.edge_correlation.r.toFixed(3)} (95% range {t.edge_correlation.ci95_low.toFixed(3)} to
+							{t.edge_correlation.ci95_high.toFixed(3)}).
+						</p>
+					{:else if market_ === 'moneyline' && market}
+						<p class="muted small">
+							The moneyline's win probabilities are the Vegas column of the Brier score and
+							calibration above: the model beats the market's odds only where its probabilities are
+							better.
+						</p>
 					{/if}
+				</div>
+			{/if}
+
+			{#if overCalibration.length}
+				<div class="card">
+					<h2>Over/under calibration</h2>
+					<p class="muted small">
+						When the model gives the over a 60% chance, does the game go over about 60% of the time?
+					</p>
+					<div class="legend small">
+						{#each overCalibration as s (s.label)}
+							<span><span class="swatch" style:background="var(--series-{s.slot})"></span> {s.label}</span>
+						{/each}
+					</div>
+					<CalibrationChart series={overCalibration} event="over" />
 				</div>
 			{/if}
 
@@ -295,6 +408,21 @@
 	}
 	.grid-2 > .card {
 		min-width: 0;
+	}
+	.tabs {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+		margin: 4px 0 8px;
+	}
+	.tabs button {
+		padding: 4px 12px;
+		border-radius: 999px;
+	}
+	.tabs button.active {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+		font-weight: 700;
 	}
 	.legend {
 		display: flex;

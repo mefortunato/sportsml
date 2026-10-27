@@ -1,16 +1,26 @@
 <script lang="ts">
 	import { links } from '$lib/links';
+	import LineCalculator from '$lib/components/LineCalculator.svelte';
+	import MarketTable from '$lib/components/MarketTable.svelte';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
+	import ProbabilityCompare from '$lib/components/ProbabilityCompare.svelte';
+	import Sportsbooks from '$lib/components/Sportsbooks.svelte';
+	import { gameOdds, withLine } from '$lib/odds';
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
+	import TotalChart from '$lib/components/TotalChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import WinProbBar from '$lib/components/WinProbBar.svelte';
 	import { kickoffLabel, marginLabel, signed, spreadLabel } from '$lib/format';
 
 	let { data } = $props();
 	const info = $derived(data.info);
-	const game = $derived(data.game);
-	const prediction = $derived(game.prediction);
-	const result = $derived(game.result);
+	const built = $derived(data.game);
+	const result = $derived(built.result);
+	// an upcoming game's current sportsbook lines replace the built ones
+	const odds = $derived(result ? null : gameOdds(data.odds, built.game_id));
+	const live = $derived(withLine(built, built.prediction, odds?.consensus));
+	const game = $derived(live.game);
+	const prediction = $derived(live.prediction);
 	const pickTeam = $derived(
 		prediction?.ats_pick ? (prediction.ats_pick === 'home' ? game.home : game.away) : null
 	);
@@ -70,9 +80,36 @@
 			/>
 		</div>
 		{#if prediction}
-			<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
+			{#if prediction.market_prob != null}
+				<ProbabilityCompare
+					home={game.home}
+					away={game.away}
+					model={prediction.win_prob}
+					market={prediction.market_prob}
+				/>
+			{:else}
+				<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
+			{/if}
 		{/if}
+		{#if game.total_line != null || prediction?.total != null}
+			<div class="chart">
+				<TotalChart line={game.total_line} model={prediction?.total ?? null} result={result?.total ?? null} />
+			</div>
+		{/if}
+		<MarketTable {game} {prediction} {result} />
 	</div>
+
+	{#if odds}
+		<div class="section">
+			<Sportsbooks home={game.home} away={game.away} {odds} />
+		</div>
+	{/if}
+
+	{#if prediction && !result && info.pricing}
+		<div class="section">
+			<LineCalculator {game} {prediction} pricing={info.pricing} books={odds?.books ?? []} />
+		</div>
+	{/if}
 
 	<MatchupDetails matchup={game} dateLabel={info.date_label} />
 </div>

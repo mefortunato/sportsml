@@ -28,10 +28,13 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         season_embedding: Also add a learned embedding of how many seasons
             ago each game was (0, 1, ..., ``max_seasons_ago`` and older), so
             the sequence is encoded by both game order and season.
-        season_decay: Down-weight earlier seasons' games in attention: each
-            head adds ``-slope * seasons_ago`` to every query's attention
-            logit for that game, with a learned slope per head starting at
-            ``decay_init`` per season.
+        season_decay: Down-weight games from seasons before the most recent
+            one in the sequence: each head adds ``-slope * (seasons_ago -
+            newest)`` to every query's attention logit for that game, with a
+            learned slope per head starting at ``decay_init`` per season. A
+            season opener's sequence (no games yet this season) is therefore
+            not penalized; mid-season, last season's games count for less
+            than this season's.
     """
 
     def __init__(
@@ -104,10 +107,14 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         )
 
     def _attention_bias(self, seasons_ago, pad) -> torch.Tensor:
-        """``[B * nhead, L, L]`` additive attention mask: ``-slope_h *
-        seasons_ago`` for each key game, a large negative for padding."""
+        """``[B * nhead, L, L]`` additive attention mask: ``-slope_h * (seasons
+        older than the sequence's newest game)`` for each key game (0 for
+        [CLS]), a large negative for padding."""
         batch = seasons_ago.shape[0]
-        ago = torch.cat([seasons_ago.new_zeros(batch, 1), seasons_ago], dim=1)
+        games = pad[:, 1:]
+        newest = seasons_ago.masked_fill(games, float("inf")).amin(dim=1, keepdim=True)
+        older = (seasons_ago - newest).masked_fill(games, 0.0).clamp(min=0)
+        ago = torch.cat([older.new_zeros(batch, 1), older], dim=1)
         slope = nn.functional.softplus(self.decay)  # [nhead]
         bias = -slope[None, :, None] * ago[:, None, :]  # [B, nhead, L]
         bias = bias.masked_fill(pad[:, None, :], -1e9)

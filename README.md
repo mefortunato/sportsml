@@ -18,8 +18,10 @@ NFL games also carry pre-game injury features: for each unit (`qb`, `ol`,
 `skill`, `front`, `secondary`), `inj_<unit>` / `opp_inj_<unit>` is the snap
 share the week's injury report is expected to take away (each listed
 player's share of the team's last 4 games times the chance a player with his
-status sits; 1.0 is one full-time player). They are not default features;
-pass them in `--context` to use them.
+status sits; 1.0 is one full-time player). They are default context
+features; on NFL 2021-2025 they improved the transformer's backtest Brier by
+0.0028 +/- 0.0025 (about a fifth of its gap to the market), most of it in a
+team's first game with a new quarterback.
 
 Naive baselines (`home` field only, season-to-date `point_diff`, and
 FiveThirtyEight-style `elo`) and the betting market are the yardsticks in

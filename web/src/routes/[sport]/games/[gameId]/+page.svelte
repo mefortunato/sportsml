@@ -4,6 +4,8 @@
 	import MarketTable from '$lib/components/MarketTable.svelte';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
 	import ProbabilityCompare from '$lib/components/ProbabilityCompare.svelte';
+	import Sportsbooks from '$lib/components/Sportsbooks.svelte';
+	import { gameOdds, withLine } from '$lib/odds';
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
 	import TotalChart from '$lib/components/TotalChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
@@ -12,9 +14,13 @@
 
 	let { data } = $props();
 	const info = $derived(data.info);
-	const game = $derived(data.game);
-	const prediction = $derived(game.prediction);
-	const result = $derived(game.result);
+	const built = $derived(data.game);
+	const result = $derived(built.result);
+	// an upcoming game's current sportsbook lines replace the built ones
+	const odds = $derived(result ? null : gameOdds(data.odds, built.game_id));
+	const live = $derived(withLine(built, built.prediction, odds?.consensus));
+	const game = $derived(live.game);
+	const prediction = $derived(live.prediction);
 	const pickTeam = $derived(
 		prediction?.ats_pick ? (prediction.ats_pick === 'home' ? game.home : game.away) : null
 	);
@@ -93,9 +99,15 @@
 		<MarketTable {game} {prediction} {result} />
 	</div>
 
+	{#if odds}
+		<div class="section">
+			<Sportsbooks home={game.home} away={game.away} {odds} />
+		</div>
+	{/if}
+
 	{#if prediction && !result && info.pricing}
 		<div class="section">
-			<LineCalculator {game} {prediction} pricing={info.pricing} />
+			<LineCalculator {game} {prediction} pricing={info.pricing} books={odds?.books ?? []} />
 		</div>
 	{/if}
 

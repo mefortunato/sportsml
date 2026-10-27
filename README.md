@@ -192,6 +192,12 @@ A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
   predictions, made without seeing those games. Your record on each market
   is kept in your browser.
 
+- **Current lines**: with `--odds`, upcoming games show every sportsbook's
+  spread, moneyline and total, the best price on each side, the opening
+  line and how the consensus moved; the cards, picks and the line
+  calculator use the current consensus, and any book can be loaded into
+  the calculator.
+
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
@@ -203,6 +209,18 @@ request. Two GitHub Actions workflows keep them current:
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
   frontend and deploys it. A failed run leaves the last deployed site up.
+
+Sportsbook lines come from `sportsml web export --odds '{nfl: oddsapi,
+cfb: cfbd}'`: [The Odds API](https://the-odds-api.com) (`ODDS_API_KEY`;
+every US book, one request per sport and refresh) and CollegeFootballData's
+`/lines` (`CFBD_API_KEY`; several books with opening lines). The Site
+workflow refreshes them about 23 times a week in season, more often on game
+days, which fits The Odds API's free tier (150 requests a month) for the
+NFL; no request is made when no game is within 8 days, and a failed fetch
+keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
+repository's **Settings → Secrets and variables → Actions**; without them
+the site builds as before, without current lines. `odds.json` reports the
+provider's remaining requests.
 
 To set it up: in the repository settings, set **Pages → Source** to
 **GitHub Actions**, then run **Train** once from the Actions tab. It starts

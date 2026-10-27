@@ -9,6 +9,7 @@ import type {
 	GameDetail,
 	Market,
 	MarketAnswer,
+	OddsFile,
 	Performance,
 	Pick,
 	Rankings,
@@ -85,7 +86,9 @@ function load<T>(path: string): Promise<T> {
 				: `${base}/data/${path}`;
 		const promise = fetch(url).then(async (response) => {
 			if (!response.ok) throw new Error(`Could not load ${path} (${response.status})`);
-			return path === 'sports.json' ? response.json() : revive<T>(await response.text());
+			// files without team objects are plain JSON
+			const plain = path === 'sports.json' || path.endsWith('odds.json');
+			return plain ? response.json() : revive<T>(await response.text());
 		});
 		promise.catch(() => files.delete(path));
 		files.set(path, promise);
@@ -127,6 +130,8 @@ export const api = {
 		return game;
 	},
 	performance: (name: string) => load<Performance>(`${name}/performance.json`),
+	/** Current sportsbook lines; null when the site was built without them. */
+	odds: (name: string) => load<OddsFile>(`${name}/odds.json`).catch(() => null),
 	rankings: (name: string) => load<Rankings>(`${name}/rankings.json`),
 	challengeNext: async (name: string, exclude: string[] = [], market: Market = 'spread') =>
 		pickChallenge(await pool(name), exclude, Math.random, market).game,

@@ -10,15 +10,22 @@
 		validOdds,
 		type Quote
 	} from '$lib/pricing';
-	import type { GameHeader, Market, Prediction, Pricing } from '$lib/types';
+	import type { BookLine, GameHeader, Market, Prediction, Pricing } from '$lib/types';
 
 	// Price the line your sportsbook offers: starts at the Vegas consensus;
 	// change any number and every pick, probability and stake updates.
 	let {
 		game,
 		prediction,
-		pricing
-	}: { game: GameHeader; prediction: Prediction; pricing: Pricing } = $props();
+		pricing,
+		books = []
+	}: {
+		game: GameHeader;
+		prediction: Prediction;
+		pricing: Pricing;
+		/** Sportsbooks' current lines, to load one into the calculator. */
+		books?: (BookLine & { book: string })[];
+	} = $props();
 
 	// books quote the home team's handicap: minus the expected home margin
 	const consensus = () => ({
@@ -32,7 +39,27 @@
 		under: game.total_odds?.under ?? -110
 	});
 	let line = $state(consensus());
-	const reset = () => (line = consensus());
+	let source = $state('');
+	const reset = () => {
+		line = consensus();
+		source = '';
+	};
+	// a book's line, its missing markets and prices from the consensus
+	function load(name: string) {
+		const b = books.find((x) => x.book === name);
+		if (!b) return reset();
+		const base = consensus();
+		line = {
+			handicap: b.spread == null ? base.handicap : -b.spread,
+			spreadHome: b.spread_home_odds ?? -110,
+			spreadAway: b.spread_away_odds ?? -110,
+			mlHome: b.ml_home ?? base.mlHome,
+			mlAway: b.ml_away ?? base.mlAway,
+			total: b.total ?? base.total,
+			over: b.over_odds ?? -110,
+			under: b.under_odds ?? -110
+		};
+	}
 
 	// the moneyline is moved toward the consensus market, not toward the
 	// price you enter (a better price is what you are looking for)
@@ -93,7 +120,21 @@
 <div class="card calc">
 	<div class="head">
 		<h2>Price your line</h2>
-		<button class="small" onclick={reset}>Reset to Vegas</button>
+		<div class="actions">
+			{#if books.length}
+				<select
+					bind:value={source}
+					onchange={() => load(source)}
+					aria-label="Load a sportsbook's line"
+				>
+					<option value="">Consensus</option>
+					{#each books as b (b.book)}
+						<option value={b.book}>{b.book}</option>
+					{/each}
+				</select>
+			{/if}
+			<button class="small" onclick={reset}>Reset to Vegas</button>
+		</div>
 	</div>
 	<p class="muted small">
 		Enter the line and odds your sportsbook offers. The model's prediction doesn't change with the
@@ -207,6 +248,20 @@
 	}
 	.head button {
 		padding: 4px 12px;
+	}
+	.actions {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+	select {
+		font: inherit;
+		font-size: 0.85rem;
+		padding: 4px 6px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--surface);
+		color: var(--text);
 	}
 	.inputs {
 		display: grid;

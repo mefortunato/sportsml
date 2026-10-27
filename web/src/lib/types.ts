@@ -283,3 +283,45 @@ export interface Rankings {
 	/** Display label per playoff stage, e.g. "Won Super Bowl". */
 	playoff_labels?: Partial<Record<PlayoffStage, string>>;
 }
+
+/** One sportsbook's line, from the home team's side (`spread` is the home
+ * team's expected margin, the opposite sign of the handicap books quote). */
+export interface BookLine {
+	spread: number | null;
+	spread_home_odds: number | null;
+	spread_away_odds: number | null;
+	ml_home: number | null;
+	ml_away: number | null;
+	total: number | null;
+	over_odds: number | null;
+	under_odds: number | null;
+}
+
+export interface BookOffer {
+	book: string;
+	odds: number | null;
+	/** Spread (home expected margin) or total of the offer. */
+	points?: number;
+}
+
+export interface GameOdds {
+	updated: string;
+	books: (BookLine & { book: string })[];
+	/** Median over books. */
+	consensus: BookLine;
+	best: {
+		spread: { home: BookOffer | null; away: BookOffer | null };
+		moneyline: { home: BookOffer | null; away: BookOffer | null };
+		total: { over: BookOffer | null; under: BookOffer | null };
+	};
+	open: { spread: number | null; total: number | null };
+	history: { t: string; spread: number | null; total: number | null; ml_home?: number | null; ml_away?: number | null }[];
+}
+
+/** `<sport>/odds.json`: current lines for upcoming games (absent without it). */
+export interface OddsFile {
+	updated: string | null;
+	provider: string | null;
+	remaining: number | null;
+	games: Record<string, GameOdds>;
+}

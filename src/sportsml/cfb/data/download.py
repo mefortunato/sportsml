@@ -3,7 +3,8 @@
 The schedule (``/games``) is the source of truth for which games exist, so
 upcoming games are kept with a missing result. Team box scores
 (``/games/teams``) and the betting market (``/lines``) are joined onto both
-perspectives of every game, like the NFL's :func:`~sportsml.nfl.data.download.build_games`.
+perspectives of every game, like the NFL's
+:func:`~sportsml.nfl.data.download.build_games`.
 
 Only games with at least one FBS team are kept. FCS (and lower-division)
 opponents are pooled into one team, :data:`FCS`: an FCS school plays one or
@@ -104,7 +105,9 @@ class Client:
             return json.loads(cached.read_text())
         for attempt in range(self.retries + 1):
             self.calls += 1
-            resp = httpx.get(API + path, params=params, headers=self.headers, timeout=60)
+            resp = httpx.get(
+                API + path, params=params, headers=self.headers, timeout=60
+            )
             if resp.status_code != 429 and resp.status_code < 500:
                 break
             if attempt == self.retries:
@@ -373,9 +376,7 @@ def build_games(
     box = box.reindex(columns=["game_id", "team_name", *stats])
     rows = rows.merge(box, on=["game_id", "team_name"], how="left")
     rows = rows.merge(
-        box.rename(
-            columns={"team_name": "opp_name", **{c: f"opp_{c}" for c in stats}}
-        ),
+        box.rename(columns={"team_name": "opp_name", **{c: f"opp_{c}" for c in stats}}),
         on=["game_id", "opp_name"],
         how="left",
     )

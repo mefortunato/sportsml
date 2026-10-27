@@ -1,7 +1,7 @@
 import pandas as pd
 
 from ...cfb.data.teams import load_teams
-from ..views import SportView, Stat, column, total
+from ..views import SportView, Stat, column
 
 
 def kickoff(row: pd.Series) -> str | None:
@@ -75,8 +75,6 @@ VIEW = SportView(
         Stat("turnovers", "Turnovers", column("turnovers"), 1, False),
         Stat("takeaways", "Takeaways", column("opp_turnovers")),
         Stat("sacks", "Sacks", column("sacks")),
-        Stat(
-            "penalty_yards", "Penalty yards", column("totalPenaltiesYards"), 0, False
-        ),
+        Stat("penalty_yards", "Penalty yards", column("totalPenaltiesYards"), 0, False),
     ),
 )

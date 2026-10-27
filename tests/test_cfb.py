@@ -145,9 +145,7 @@ def fake_api(calls):
         path = url.removeprefix(cfbd.API)
         season_type = params.get("seasonType")
         if path == "/games":
-            return FakeResponse(
-                [g for g in SCHEDULE if g["seasonType"] == season_type]
-            )
+            return FakeResponse([g for g in SCHEDULE if g["seasonType"] == season_type])
         if path == "/lines":
             ids = {g["id"] for g in SCHEDULE if g["seasonType"] == season_type}
             return FakeResponse([g for g in LINES if g["id"] in ids])
@@ -190,3 +188,52 @@ def test_missing_key_is_an_error(monkeypatch):
     monkeypatch.delenv("CFBD_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="CFBD_API_KEY"):
         cfbd.Client()
+
+
+def test_playoff_marks(games):
+    from sportsml.web.sports.cfb import playoffs
+
+    assert playoffs(games[games.result.notna()]) == {
+        2024: {
+            "Alabama": "semifinal",
+            "Notre Dame": "runner_up",
+            "Ohio State": "champion",
+        }
+    }
+
+
+def test_kickoff_in_eastern_time(games):
+    from sportsml.web.sports.cfb import kickoff
+
+    assert kickoff(row(games, 4, "Alabama")) == "2024-09-07 19:30"
+    assert kickoff(pd.Series({"start_date": None})) is None
+    tbd = pd.Series({"start_date": "2024-09-07T16:00:00.000Z", "start_time_tbd": True})
+    assert kickoff(tbd) == "2024-09-07"
+
+
+def test_view_stats_compute_on_games(games):
+    from sportsml.web.sports.cfb import VIEW
+
+    bama = games[(games.game_id == "4") & (games.team_name == "Alabama")]
+    values = {s.key: s.value(bama).iloc[0] for s in VIEW.stats}
+    assert values["yards"] == 500 and values["points_allowed"] == 34
+    assert values["third_down_pct"] == pytest.approx(100 * 5 / 12)
+
+
+def test_team_metadata():
+    from sportsml.cfb.data.teams import teams_frame
+    from sportsml.web.views import TEAM_COLUMNS
+
+    teams = teams_frame(
+        [
+            {"school": "Air Force", "mascot": "Falcons", "conference": "Mountain West",
+             "division": None, "color": "#003594", "alternateColor": "ffffff",
+             "logos": ["https://cdn.collegefootballdata.com/logos/500/2005.png"]},
+            {"school": "Army", "mascot": "Black Knights", "conference": "American",
+             "division": "West", "color": None, "alternateColor": None, "logos": []},
+        ]
+    ).set_index("team")  # fmt: skip
+    assert set(TEAM_COLUMNS) <= {"team", *teams.columns}
+    assert teams.loc["Air Force", "color2"] == "#ffffff"
+    assert teams.loc["Army", "division"] == "American West"
+    assert teams.loc[FCS, "conference"] == FCS

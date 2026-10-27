@@ -205,3 +205,56 @@ def test_season_options_train_and_round_trip(toy_games, tmp_path):
         res["predictor"].predict(matchups).pred_margin,
         atol=1e-5,
     )
+
+
+def test_opponent_games_are_each_tokens_opponents_earlier_games(played_games):
+    features = SequenceFeatures.fit(played_games, TOY_SCHEMA, history=8)
+    data = SequenceData(played_games, TOY_SCHEMA, features, opponent_games=3)
+    batch = data[[100, 200]]["team"]
+    rows = data.history[[100, 200]]
+    index = batch["opponent_index"][rows >= 0]
+    opponents = batch["opponents"]
+    for row, at in zip(rows[rows >= 0].tolist(), index.tolist(), strict=True):
+        game = played_games.iloc[row]
+        for k in range(3):
+            prior = int(data.opp_history[row, k])
+            if prior < 0:
+                assert opponents["pad"][at, k]
+                continue
+            earlier = played_games.iloc[prior]
+            assert earlier.team == game.opp
+            assert (earlier.season, earlier.week) < (game.season, game.week)
+            assert opponents["seasons_ago"][at, k] == game.season - earlier.season
+
+
+def test_opponent_games_train_and_serve_like_training(toy_games, tmp_path):
+    model = default_model("toy", history=8, opponent_games=4)
+    res = fit_transformer(
+        toy_games,
+        "toy",
+        model=model,
+        trainer=quick_trainer(2),
+        save_dir=str(tmp_path / "model"),
+        print_metrics=False,
+    )
+    module = res["model"]
+    games = played(toy_games, TOY_SCHEMA).reset_index(drop=True)
+    target = games[(games.season == 2024) & (games.week == 6)]
+    loaded = load_predictor(str(tmp_path / "model"))
+    loaded.update_state(games[(games.season < 2024) | (games.week < 6)])
+
+    features = loaded.model.features
+    data = SequenceData(games, TOY_SCHEMA, features, opponent_games=4)
+    batch = data.with_rows(target.index)[list(range(len(target)))]
+    with torch.no_grad():
+        raw = module.predict_margin(batch).numpy()
+    expected = antisymmetrize(target, raw, TOY_SCHEMA.game_id)
+    np.testing.assert_allclose(loaded.predict(target).pred_margin, expected, atol=1e-4)
+
+    # the opponents' own games reach the output
+    team = batch["team"]
+    changed = {**team, "opponents": {**team["opponents"]}}
+    changed["opponents"]["tokens"] = team["opponents"]["tokens"] + 1.0
+    with torch.no_grad():
+        shift = module.encoder(**changed) - module.encoder(**team)
+    assert shift.abs().max() > 1e-3

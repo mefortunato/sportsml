@@ -17,6 +17,7 @@ from .model import PairHead, SequenceEncoder, TransformerMatchupModel, Transform
 ENCODER_KEYS = (
     "history", "d_model", "nhead", "num_layers", "dropout",
     "season_embedding", "season_decay", "max_seasons_ago", "decay_init",
+    "opponent_games",
 )  # fmt: skip
 
 
@@ -154,7 +155,9 @@ def fit_transformer(
         train_games, schema, model.encoder.history, opponent_strength
     )
     _check_dims(model, features)
-    data = SequenceData(games, schema, features)
+    data = SequenceData(
+        games, schema, features, opponent_games=model.encoder.opponent_games
+    )
 
     enough = np.ones(len(games), dtype=bool)
     if min_history > 0:

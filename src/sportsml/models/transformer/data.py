@@ -3,7 +3,9 @@
 A token is one earlier game of a team: its box-score stats, result and
 location, standardized, plus (optionally) how strong both teams were going
 into it. A row's history is the team's previous ``history`` played games,
-most recent first, crossing season boundaries.
+most recent first, crossing season boundaries. Optionally each token also
+carries its opponent's own games before it (``opponent_games``), which the
+encoder turns into an embedding of how good that opponent was.
 """
 
 from __future__ import annotations
@@ -140,22 +142,46 @@ def opponent_rows(games: pd.DataFrame, schema: GameSchema) -> np.ndarray:
     return position.reindex(opp).fillna(-1).astype(np.int64).to_numpy()
 
 
-def sequence(tokens, seasons, index, season) -> dict[str, torch.Tensor]:
+def opponent_histories(
+    games: pd.DataFrame, schema: GameSchema, history: np.ndarray
+) -> np.ndarray:
+    """Each row's opponent's previous games (``history`` of the opponent's
+    row of the same game), -1 where the opponent's row is missing."""
+    opp = opponent_rows(games, schema)
+    return np.where((opp >= 0)[:, None], history[np.clip(opp, 0, None)], -1)
+
+
+def sequence(
+    tokens, seasons, index, season, opponents=None, opponent_games: int = 0
+) -> dict[str, torch.Tensor]:
     """Gather token sequences; ``index`` -1 entries are padding.
 
     Args:
         tokens: ``[N, F]`` token table; seasons: ``[N]`` their seasons.
         index: ``[B, K]`` rows of ``tokens`` per sequence.
         season: ``[B]`` season being predicted (for ``seasons_ago``).
+        opponents / opponent_games: ``[N, H]`` each token row's opponent's
+            previous games; with ``opponent_games > 0`` the first that many
+            are gathered, once per distinct token row in the batch, as
+            ``"opponents"`` (a nested sequence, ``seasons_ago`` relative to
+            the token's own season) and ``"opponent_index"`` (``[B, K]``
+            position of each token's opponent sequence).
     """
     pad = index < 0
     safe = index.clamp(min=0)
     seasons_ago = (season[:, None] - seasons[safe]).masked_fill(pad, 0)
-    return {
+    out = {
         "tokens": tokens[safe].masked_fill(pad[..., None], 0.0),
         "seasons_ago": seasons_ago.float(),
         "pad": pad,
     }
+    if opponent_games:
+        rows, inverse = torch.unique(safe, return_inverse=True)
+        out["opponents"] = sequence(
+            tokens, seasons, opponents[rows, :opponent_games], seasons[rows]
+        )
+        out["opponent_index"] = inverse
+    return out
 
 
 class SequenceData(torch.utils.data.Dataset):
@@ -171,14 +197,18 @@ class SequenceData(torch.utils.data.Dataset):
         schema: GameSchema,
         features: SequenceFeatures,
         rows: np.ndarray | None = None,
+        opponent_games: int = 0,
     ):
+        if opponent_games > features.history:
+            raise ValueError(
+                f"opponent_games={opponent_games} exceeds history={features.history}"
+            )
+        self.opponent_games = opponent_games
         self.tokens = torch.from_numpy(features.tokens(games))
         self.seasons = torch.tensor(games[schema.season].to_numpy(dtype=np.float32))
-        self.history = torch.from_numpy(histories(games, schema, features.history))
-        opp = torch.from_numpy(opponent_rows(games, schema))
-        self.opp_history = torch.where(
-            (opp >= 0)[:, None], self.history[opp.clamp(min=0)], -1
-        )
+        history = histories(games, schema, features.history)
+        self.history = torch.from_numpy(history)
+        self.opp_history = torch.from_numpy(opponent_histories(games, schema, history))
         self.context = torch.from_numpy(features.context(games))
         self.y = torch.tensor(games[schema.target].to_numpy(dtype=np.float32))
         self.rows = torch.arange(len(games)) if rows is None else torch.as_tensor(rows)
@@ -194,9 +224,16 @@ class SequenceData(torch.utils.data.Dataset):
     def __getitem__(self, positions) -> dict:
         rows = self.rows[torch.as_tensor(positions)]
         season = self.seasons[rows]
+
+        def side(index):
+            return sequence(
+                self.tokens, self.seasons, index, season,
+                self.opp_history, self.opponent_games,
+            )  # fmt: skip
+
         return {
-            "team": sequence(self.tokens, self.seasons, self.history[rows], season),
-            "opp": sequence(self.tokens, self.seasons, self.opp_history[rows], season),
+            "team": side(self.history[rows]),
+            "opp": side(self.opp_history[rows]),
             "context": self.context[rows],
             "y": self.y[rows],
         }

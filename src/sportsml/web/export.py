@@ -11,9 +11,10 @@ Writes, under ``<output_dir>/data/``:
 * ``sports.json``: each sport's info (label, model, backtest summary);
 * ``<sport>/upcoming.json``: ``{"default": ..., "by_date": {"<season>-<date>": ...}}``;
 * ``<sport>/games.json``: ``{game_id: game view}`` for every upcoming game;
-* ``<sport>/challenge.json``: ``[{"game": ..., "answers": {market: ...}}]``
+* ``<sport>/challenge/<n>.json``: ``[{"game": ..., "answers": {market: ...}}]``
   per pool game playable on some market, each answer without the
-  pick-dependent ``pick`` / ``correct`` / ``units``;
+  pick-dependent ``pick`` / ``correct`` / ``units``, in shards listed by
+  ``<sport>/challenge/index.json`` (see :func:`write_challenge`);
 * ``<sport>/performance.json`` and ``<sport>/rankings.json``;
 * ``<sport>/odds.json`` (with ``odds``): current sportsbook lines for the
   upcoming games (:mod:`sportsml.web.odds`).
@@ -72,6 +73,35 @@ def _write(path: pathlib.Path, data, teams: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"teams": teams, "data": _compact(data, teams)}
     path.write_text(json.dumps(payload, separators=(",", ":")))
+
+
+def write_challenge(
+    path: pathlib.Path, challenge: list[dict], teams: dict, shard_size: int = 100
+) -> None:
+    """The challenge pool as ``challenge/index.json`` and shards of
+    ``shard_size`` games, ``challenge/<n>.json``.
+
+    The page picks a game from the index (``[game_id, shard, markets]`` per
+    game) and fetches only that game's shard, instead of a pool file that
+    reaches tens of MB for college football. Each shard carries just the
+    teams its games reference.
+    """
+    directory = path / "challenge"
+    if directory.exists():
+        for old in directory.glob("*.json"):
+            old.unlink()
+    (path / "challenge.json").unlink(missing_ok=True)  # single-file exports
+    index = []
+    for shard, start in enumerate(range(0, len(challenge), shard_size)):
+        entries = challenge[start : start + shard_size]
+        used = {e["game"][side]["team"] for e in entries for side in ("home", "away")}
+        _write(
+            directory / f"{shard}.json",
+            entries,
+            {key: team for key, team in teams.items() if key in used},
+        )
+        index += [[e["game"]["game_id"], shard, list(e["answers"])] for e in entries]
+    _write(directory / "index.json", {"shard_size": shard_size, "games": index}, {})
 
 
 def export(
@@ -151,7 +181,7 @@ def export(
             for game_id in snap.pool.index
             if (answers := snap.challenge_answers(game_id))
         ]
-        _write(out / sport / "challenge.json", challenge, teams)
+        write_challenge(out / sport, challenge, teams)
         _write(out / sport / "performance.json", snap.performance(), teams)
         _write(out / sport / "rankings.json", snap.rankings(), teams)
         print(

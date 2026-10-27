@@ -10,6 +10,8 @@ export type Market = 'spread' | 'moneyline' | 'total';
 export interface Team {
 	team: string;
 	name: string;
+	/** Short label for chips (college teams are keyed by school name). */
+	abbr?: string;
 	nickname?: string;
 	color?: string;
 	color2?: string;

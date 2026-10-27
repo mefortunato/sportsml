@@ -29,7 +29,24 @@
 	const W = $derived(Math.max(300, Math.round(width)));
 	const narrow = $derived(W < 560);
 	const H = $derived(narrow ? 320 : 400);
-	const M = $derived({ top: 14, right: narrow ? 74 : 92, bottom: 34, left: 40 });
+	// the right margin holds the end labels: wide enough for the longest one,
+	// using teams' short abbreviations when full names (college teams are
+	// keyed by school name) would take more than a third of the chart
+	const CHAR = 7; // px per character of a 12px label, a little generous
+	const labelSpace = (texts: string[]) =>
+		24 + CHAR * Math.max(0, ...texts.map((t) => t.length));
+	const labelTexts = $derived.by(() => {
+		const labelled = labelledLines();
+		const full = labelled.map((l) => `${l.key} ${signed(l.value)}`);
+		if (labelSpace(full) <= W / 3) return new Map(labelled.map((l, i) => [l.key, full[i]]));
+		return new Map(labelled.map((l) => [l.key, `${l.team.abbr ?? l.key} ${signed(l.value)}`]));
+	});
+	const M = $derived({
+		top: 14,
+		right: Math.max(narrow ? 74 : 92, labelSpace([...labelTexts.values()])),
+		bottom: 34,
+		left: 40
+	});
 	const plotW = $derived(W - M.left - M.right);
 	const plotH = $derived(H - M.top - M.bottom);
 
@@ -78,22 +95,28 @@
 	// end labels for highlighted teams (for every line when only a few are
 	// drawn, so none is identified by color alone), nudged apart
 	const LABEL_ALL = 4;
-	const endLabels = $derived.by(() => {
-		const labelled = lines.length <= LABEL_ALL ? lines : pinned;
-		const labels = labelled
-			.map((l) => {
-				let i = l.ratings.length - 1;
-				while (i >= 0 && l.ratings[i] === null) i--;
-				return i < 0
-					? null
-					: {
-							key: l.key,
-							slot: pins[l.key] as number | undefined,
-							value: l.ratings[i] as number,
-							at: y(l.ratings[i] as number)
-						};
+	// from the season itself, not `lines`: the right margin depends on these
+	// labels, and `lines` is drawn with that margin
+	function labelledLines() {
+		const drawn = season.teams.filter((t) => !visible || visible.has(t.team.team));
+		const labelled = drawn.length <= LABEL_ALL ? drawn : drawn.filter((t) => t.team.team in pins);
+		return labelled
+			.map((t) => {
+				let i = t.ratings.length - 1;
+				while (i >= 0 && t.ratings[i] === null) i--;
+				return i < 0 ? null : { key: t.team.team, team: t.team, value: t.ratings[i] as number };
 			})
-			.filter((l) => l !== null)
+			.filter((l) => l !== null);
+	}
+	const endLabels = $derived.by(() => {
+		const labels = labelledLines()
+			.map((l) => ({
+				key: l.key,
+				slot: pins[l.key] as number | undefined,
+				value: l.value,
+				text: labelTexts.get(l.key) ?? l.key,
+				at: y(l.value)
+			}))
 			.sort((a, b) => a.at - b.at);
 		for (let i = 1; i < labels.length; i++)
 			labels[i].at = Math.max(labels[i].at, labels[i - 1].at + 15);
@@ -225,7 +248,7 @@
 				style:fill={label.slot ? `var(--series-${label.slot})` : 'var(--context-line)'}
 			/>
 			<text class="end" class:context={!label.slot} x={M.left + plotW + 18} y={label.at} dominant-baseline="middle"
-				>{label.key} {signed(label.value)}</text
+				>{label.text}</text
 			>
 		{/each}
 	</svg>

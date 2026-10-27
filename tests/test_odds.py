@@ -29,7 +29,8 @@ def nfl_lines():
     return provider, provider.fetch()
 
 
-def test_odds_api_lines_from_the_home_side():
+def test_odds_api_lines_from_the_home_side(monkeypatch):
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
     provider, lines = nfl_lines()
     assert provider.remaining == 147
     url, params = provider._get.calls[0]
@@ -213,3 +214,18 @@ def webdata_for_odds(tmp_path_factory):
         max_epochs=1,
     )
     return out
+
+
+def test_cfbd_pools_fcs_sides_like_the_games_table():
+    game = {
+        "homeTeam": "Alabama",
+        "homeClassification": "fbs",
+        "awayTeam": "Mercer",
+        "awayClassification": "fcs",
+        "startDate": "2024-11-23T19:00:00.000Z",
+        "lines": [{"provider": "DraftKings", "spread": -40.5, "overUnder": 55.5}],
+    }
+    provider = CFBD(year=2024, week=13, api_key="k", get=lambda *a: ([game], {}))
+    lines = provider.fetch()
+    assert list(lines[["home", "away"]].iloc[0]) == ["Alabama", "FCS"]
+    assert lines["spread"].iloc[0] == 40.5

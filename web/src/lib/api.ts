@@ -24,6 +24,15 @@ export interface ChallengeEntry {
 	answers: Partial<Record<Market, MarketAnswer>>;
 }
 
+/** One pool game in `challenge/index.json`: its id, the shard file
+ * (`challenge/<shard>.json`) that holds it and the markets it is playable on. */
+export type ChallengeRef = [gameId: string, shard: number, markets: Market[]];
+
+export interface ChallengeIndex {
+	shard_size: number;
+	games: ChallengeRef[];
+}
+
 interface Exported<T> {
 	teams: Record<string, Team>;
 	data: T;
@@ -47,15 +56,15 @@ export function revive<T>(text: string): T {
 /** A random pool game playable on `market`, not in `exclude` (any such
  * game once all have been seen). */
 export function pickChallenge(
-	pool: ChallengeEntry[],
+	pool: ChallengeRef[],
 	exclude: string[] = [],
 	random: () => number = Math.random,
 	market: Market = 'spread'
-): ChallengeEntry {
-	const playable = pool.filter((entry) => entry.answers[market]);
+): ChallengeRef {
+	const playable = pool.filter(([, , markets]) => markets.includes(market));
 	if (!playable.length) throw new Error('No historical games available');
 	const seen = new Set(exclude);
-	const fresh = playable.filter((entry) => !seen.has(entry.game.game_id));
+	const fresh = playable.filter(([gameId]) => !seen.has(gameId));
 	const choices = fresh.length ? fresh : playable;
 	return choices[Math.floor(random() * choices.length)];
 }
@@ -102,8 +111,17 @@ async function sport(name: string): Promise<SportInfo> {
 	return info;
 }
 
-function pool(name: string): Promise<ChallengeEntry[]> {
-	return load<ChallengeEntry[]>(`${name}/challenge.json`);
+// The pool is an index of every game plus shards of full games, so a pick
+// fetches one shard of 100 games (~0.5 MB) rather than the whole pool (tens of MB).
+function challengeIndex(name: string): Promise<ChallengeIndex> {
+	return load<ChallengeIndex>(`${name}/challenge/index.json`);
+}
+
+async function challengeEntry(name: string, [gameId, shard]: ChallengeRef) {
+	const entries = await load<ChallengeEntry[]>(`${name}/challenge/${shard}.json`);
+	const entry = entries.find((e) => e.game.game_id === gameId);
+	if (!entry) throw new Error(`Unknown game ${gameId}`);
+	return entry;
 }
 
 export const api = {
@@ -116,9 +134,10 @@ export const api = {
 		return [...teams.values()];
 	},
 	upcoming: async (name: string, season?: number | null, date?: number | null) => {
-		const file = await load<{ default: Upcoming; by_date: Record<string, Upcoming> }>(
-			`${name}/upcoming.json`
-		);
+		const file = await load<{
+			default: Upcoming;
+			by_date: Record<string, Upcoming>;
+		}>(`${name}/upcoming.json`);
 		if (season == null || date == null) return file.default;
 		const week = file.by_date[`${season}-${date}`];
 		if (!week) throw new Error(`No games for ${season} ${date}`);
@@ -133,11 +152,13 @@ export const api = {
 	/** Current sportsbook lines; null when the site was built without them. */
 	odds: (name: string) => load<OddsFile>(`${name}/odds.json`).catch(() => null),
 	rankings: (name: string) => load<Rankings>(`${name}/rankings.json`),
-	challengeNext: async (name: string, exclude: string[] = [], market: Market = 'spread') =>
-		pickChallenge(await pool(name), exclude, Math.random, market).game,
+	challengeNext: async (name: string, exclude: string[] = [], market: Market = 'spread') => {
+		const ref = pickChallenge((await challengeIndex(name)).games, exclude, Math.random, market);
+		return (await challengeEntry(name, ref)).game;
+	},
 	challengeAnswer: async (name: string, gameId: string, pick: Pick, market: Market = 'spread') => {
-		const entry = (await pool(name)).find((e) => e.game.game_id === gameId);
-		if (!entry) throw new Error(`Unknown game ${gameId}`);
-		return scoreAnswer(entry, pick, market);
+		const ref = (await challengeIndex(name)).games.find(([id]) => id === gameId);
+		if (!ref) throw new Error(`Unknown game ${gameId}`);
+		return scoreAnswer(await challengeEntry(name, ref), pick, market);
 	}
 };

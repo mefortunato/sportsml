@@ -14,7 +14,11 @@
 	const loaded = $derived(!!team.logo && loadedLogo === team.logo);
 	const failed = $derived(!!team.logo && failedLogo === team.logo);
 	const text = $derived(
-		label === 'name' ? team.name : label === 'nickname' ? (team.nickname ?? team.name) : team.team
+		label === 'name'
+			? team.name
+			: label === 'nickname'
+				? (team.nickname ?? team.name)
+				: (team.abbr ?? team.team)
 	);
 </script>
 
@@ -25,7 +29,7 @@
 				class="chip"
 				style:background={team.color ?? 'var(--muted)'}
 				style:color={team.color2 && team.color2 !== team.color ? team.color2 : '#fff'}
-				style:font-size="{Math.max(9, size * 0.32)}px">{team.team}</span
+				style:font-size="{Math.max(9, size * 0.32)}px">{team.abbr ?? team.team}</span
 			>
 		{/if}
 		{#if team.logo && !failed}

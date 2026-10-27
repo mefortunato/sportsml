@@ -228,3 +228,40 @@ def test_elo_margin_is_the_margin_elo_did_not_expect(played_games, toy_games):
         print_metrics=False,
     )  # fmt: skip
     assert res["predictor"].model.features.token_columns[-1] == "_margin_vs_elo"
+
+
+def test_sport_setting_turns_on_opponent_strength(toy_sport):
+    import dataclasses
+
+    from sportsml.core.sport import register_sport
+    from sportsml.models.transformer.fit import transformer_config
+
+    base = transformer_config("toy")["encoder"]["token_dim"]
+    strong = dataclasses.replace(
+        toy_sport, name="toy_strength", transformer={"opponent_strength": True}
+    )
+    register_sport(strong)
+    config = transformer_config("toy_strength")
+    assert config["encoder"]["token_dim"] == base + 3
+    assert "opponent_strength" not in config
+    off = transformer_config("toy_strength", opponent_strength=False)
+    assert off["encoder"]["token_dim"] == base
+
+
+def test_team_waiting_for_its_first_game_keeps_state(toy_games):
+    """Regression: a team on a bye in week 1 lost its state until it played."""
+    fitted = fit_transformer(
+        toy_games, "toy", trainer=pl.Trainer(max_epochs=1, logger=False,
+        enable_checkpointing=False, enable_progress_bar=False,
+        enable_model_summary=False), print_metrics=False,
+    )  # fmt: skip
+    model = fitted["predictor"].model
+    games = played(toy_games, TOY_SCHEMA)
+    last = games["season"].max()
+    week1 = games[(games["season"] == last) & (games["week"] == 1)]
+    resting = week1["team"].iloc[0]
+    known = pd.concat(
+        [games[games["season"] < last], week1[~week1["team"].isin([resting])]]
+    )
+    model.update_state(known)
+    assert resting in model.teams

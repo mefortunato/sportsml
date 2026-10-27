@@ -110,7 +110,7 @@ def transformer_fitter(
             model=default_model(
                 sport,
                 kwargs.get("context"),
-                kwargs.get("opponent_strength", False),
+                kwargs.get("opponent_strength"),
                 kwargs.get("elo_margin", False),
                 **(model or {}),
             ),

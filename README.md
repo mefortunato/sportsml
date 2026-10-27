@@ -86,6 +86,74 @@ uv run sportsml nfl fit gnn --model.encoder.init_args.num_layers 2 --trainer.max
 GNN and transformer runs log to MLflow (`sqlite:///mlflow.db`); view them with
 `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db`.
 
+## College football
+
+```sh
+export CFBD_API_KEY=...             # free key: collegefootballdata.com
+uv run sportsml cfb download        # CFBD games, box scores, lines -> data/cfb/raw.csv
+uv run sportsml cfb process         #                                -> data/cfb/games.csv
+uv run sportsml cfb fit transformer #                                -> models/cfb/transformer
+uv run sportsml cfb predict --model_dir models/cfb/transformer
+```
+
+`download` builds the games table from CollegeFootballData's v2 API: the
+schedule (`/games`, so upcoming games are kept and cancelled ones dropped),
+team box scores (`/games/teams`) and betting lines (`/lines`). Each market
+comes from the most preferred book that has it (consensus, DraftKings, ESPN
+Bet, Bovada, ...): `spread_line` (the team's expected margin), `total_line`
+and both moneylines from the same book. CFBD has no spread or over/under
+prices, so those bets are scored at -110. Box scores start in 2004, spreads
+in 2013, totals in 2013 (~88% of games until 2017, all of them since 2019)
+and moneylines in 2021.
+
+- **FBS vs FCS.** Only games with an FBS team are kept. FCS and
+  lower-division opponents are pooled into one team, `FCS`: a school that
+  plays one FBS game a year would otherwise have a team state years out of
+  date, while the pooled team's recent games describe a typical FCS
+  opponent (it wins ~7% of these games, by -29 on average). The school's own
+  name stays in `team_name` / `opp_name`.
+- **Neutral sites, bowls and playoffs.** Neutral-site games have
+  `location` 0 for both teams. CFBD files the whole bowl season under
+  postseason week 1; `week` instead numbers postseason games by the 7-day
+  block they fall in after the last regular week, so each playoff round is
+  predicted from state that includes the previous round. `game_type` is
+  `regular`, `bowl`, `playoff` or `final`, and `postseason`,
+  `conference_game` and rest days (`rest`, `opp_rest`) are context
+  features.
+- **API budget.** CFBD's free tier allows 1,000 calls a month and a full
+  download from 2004 takes ~450. Responses of finished seasons and weeks
+  are cached in `data/cfb/cfbd_cache`, so later downloads only fetch the
+  current season's schedule, lines and newest box scores (~6 calls).
+
+The transformer's CFB defaults differ from the NFL's: a 28-game history
+(about two seasons) and each history game's pre-game Elo of both teams
+(`opponent_strength`), because schedule strength varies far more across 130+
+FBS teams than across 32 NFL teams.
+
+Walk-forward backtest, 2021-2025 (4,441 games every family predicted with a
+spread; `brier vs market` is the paired per-game difference, 95% CI):
+
+| Source | RMSE | Accuracy | Brier | Brier vs market | ATS |
+|---|---|---|---|---|---|
+| market | 15.32 | 75.6% | 0.1612 | | |
+| transformer | 16.40 | 73.7% | 0.1699 | +0.0087 ± 0.0031 | 50.9% |
+| gnn | 17.06 | 73.1% | 0.1769 | +0.0157 ± 0.0037 | 50.4% |
+| sklearn | 17.63 | 72.2% | 0.1820 | +0.0208 ± 0.0039 | 50.6% |
+| point_diff | 18.41 | 71.7% | 0.1869 | +0.0257 ± 0.0042 | 50.7% |
+| elo | 18.53 | 72.9% | 0.1874 | +0.0262 ± 0.0035 | 51.1% |
+| home | 22.00 | 62.7% | 0.2326 | +0.0714 ± 0.0057 | 50.4% |
+
+As in the NFL, no model beats the spread (the transformer's picks win
+50.8%, -3.0% ROI at -110). Its total is the one market with a persistent
+edge: over/under picks won 53.2% of 4,516 games (+1.5% ROI at an assumed
+-110; 54.3% and +3.6% on the 2,782 with an edge over 2 points), and over
+2016-2025 the same picks won 52.8% of 8,357. CFBD records no over/under
+prices, so the true juice (and so the real ROI) is unknown. Moneyline
+picks (lines from 2021) lose at a small edge and are noisy above one.
+`staking` on the 2016-2025 backtest finds no stake sizing that rescues the
+spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
++0.8% to +6.7%) against flat betting's +1.4% over 2019-2025.
+
 ## Backtesting against the market
 
 ```sh
@@ -165,8 +233,12 @@ Any model can be backtested from Python with
 
 ## Web app
 
-A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
+A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
+the NFL and college football:
 
+- **Home**: what the site is, each sport's backtest record against Vegas
+  (winners picked, against the spread, over/under) and how the
+  predictions are made and tested.
 - **Upcoming games**: each game's Vegas line and the model's predicted
   margin on one chart, the win probability, and the model's pick in each
   market: against the spread, on the moneyline and on the over/under.
@@ -202,9 +274,9 @@ Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
-  demand) runs `sportsml web build`: download, train the transformer,
-  backtest it and record weekly power rankings (~30 minutes). It publishes
-  the result as the `webdata` release asset.
+  demand) runs `sportsml web build --sports '[nfl, cfb]'`: for each sport,
+  download, train the transformer, backtest it and record weekly power
+  rankings. It publishes the result as the `webdata` release asset.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
@@ -223,7 +295,10 @@ the site builds as before, without current lines. `odds.json` reports the
 provider's remaining requests.
 
 To set it up: in the repository settings, set **Pages → Source** to
-**GitHub Actions**, then run **Train** once from the Actions tab. It starts
+**GitHub Actions**, add a `CFBD_API_KEY` repository secret (both workflows
+download college football), then run **Train** once from the Actions tab.
+Both workflows keep CFBD's responses of finished seasons in the Actions
+cache, so a daily Site run makes only a handful of CFBD calls. It starts
 **Site** when it finishes.
 
 Locally:

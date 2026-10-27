@@ -1,7 +1,7 @@
 # Train the transformer, run the walk-forward backtest (challenge games,
 # performance page, past power rankings) and publish the result as the
 # `webdata` release asset that the daily Site workflow builds from.
-# Slow (~30 min on a GitHub runner), so it runs monthly during the season
+# Slow (~1 hour on a GitHub runner for the NFL and college football), so it runs monthly during the season
 # and on demand, e.g. after changing the model.
 name: Train
 
@@ -31,8 +31,17 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked --no-default-groups
+      - name: Cache CollegeFootballData responses
+        uses: actions/cache@v4
+        with:
+          # finished seasons and weeks; CFBD's free tier is 1,000 calls a month
+          path: data/cfb/cfbd_cache
+          key: cfbd-${{ github.run_id }}
+          restore-keys: cfbd-
       - name: Download, train, backtest
-        run: uv run sportsml web build --output_dir webdata
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: uv run sportsml web build --sports '[nfl, cfb]' --output_dir webdata
       - name: Publish webdata release asset
         env:
           GH_TOKEN: ${{ github.token }}

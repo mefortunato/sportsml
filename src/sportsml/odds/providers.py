@@ -27,6 +27,8 @@ import httpx
 import numpy as np
 import pandas as pd
 
+from ..cfb.data.download import FCS
+
 logger = logging.getLogger(__name__)
 
 COLUMNS = [
@@ -138,7 +140,7 @@ class CFBD(Provider):
     request per season week, several books per game, with opening lines.
     CFBD has no prices on spreads and totals (they are left NaN; the site
     assumes -110). Team keys are CFBD's team names, as in the CFB games
-    table.
+    table, and :data:`~sportsml.cfb.data.download.FCS` for an FCS side.
 
     Args:
         year / week / season_type: The week to fetch (default: the season
@@ -200,6 +202,11 @@ class CFBD(Provider):
         rows = []
         for game in self._call("lines", params):
             home, away = game["homeTeam"], game["awayTeam"]
+            # FCS opponents are one pooled team in the games table
+            if game.get("homeClassification") not in (None, "fbs"):
+                home = FCS
+            if game.get("awayClassification") not in (None, "fbs"):
+                away = FCS
             for line in game.get("lines", []):
                 rows.append(
                     {

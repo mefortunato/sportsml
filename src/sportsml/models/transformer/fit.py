@@ -34,10 +34,17 @@ def transformer_dims(
     }
 
 
+def sport_opponent_strength(sport: str, opponent_strength: bool | None) -> bool:
+    """``opponent_strength``, or the sport's ``Sport.transformer`` setting."""
+    if opponent_strength is None:
+        return bool(get_sport(sport).transformer.get("opponent_strength", False))
+    return opponent_strength
+
+
 def transformer_config(
     sport: str,
     context: list[str] | None = None,
-    opponent_strength: bool = False,
+    opponent_strength: bool | None = None,
     elo_margin: bool = False,
     total_weight: float | None = None,
     stats_weight: float | None = None,
@@ -53,8 +60,10 @@ def transformer_config(
     sport's ``Sport.transformer`` setting (default 0, off). With
     ``distribution=True`` (an override or ``Sport.transformer`` key) the
     model predicts a :class:`~sportsml.models.lightning.ScoreDistribution`
-    of the margin (and the total) instead of point values."""
+    of the margin (and the total) instead of point values.
+    ``opponent_strength`` None takes the sport's setting (default off)."""
     spec = get_sport(sport)
+    opponent_strength = sport_opponent_strength(sport, opponent_strength)
     dims = transformer_dims(
         spec.schema.with_features(context), opponent_strength, elo_margin
     )
@@ -72,7 +81,7 @@ def transformer_config(
     if stats_weight is None:
         stats_weight = settings.get("stats_weight", 0.0)
     distribution = bool(settings.get("distribution", False))
-    output_keys = ("total_weight", "stats_weight", "distribution")
+    output_keys = ("total_weight", "stats_weight", "distribution", "opponent_strength")
     settings = {k: v for k, v in settings.items() if k not in output_keys}
     extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     outputs = 1 + len(extra)
@@ -96,7 +105,7 @@ def transformer_config(
 def default_model(
     sport: str,
     context: list[str] | None = None,
-    opponent_strength: bool = False,
+    opponent_strength: bool | None = None,
     elo_margin: bool = False,
     total_weight: float | None = None,
     stats_weight: float | None = None,
@@ -148,7 +157,7 @@ def fit_transformer(
     val_seasons: list[int] | None = None,
     test_seasons: list[int] | None = None,
     min_history: int = 1,
-    opponent_strength: bool = False,
+    opponent_strength: bool | None = None,
     elo_margin: bool = False,
     total_weight: float | None = None,
     stats_weight: float | None = None,
@@ -171,9 +180,11 @@ def fit_transformer(
         min_history: Only use games where both teams have this many earlier
             games (any season).
         opponent_strength: Add each history game's pre-game Elo of both teams
-            and the opponent's season-to-date margin to its token. Off by
-            default: on NFL 2021-2025 it did not change the backtest Brier
-            (+0.0002 +/- 0.0027) and makes state refreshes slower.
+            and the opponent's season-to-date margin to its token. None
+            takes the sport's ``Sport.transformer`` setting: off for the
+            NFL, where on 2021-2025 it did not change the backtest Brier
+            (+0.0002 +/- 0.0027) and makes state refreshes slower; on for
+            college football, where schedule strength varies far more.
         elo_margin: Add each history game's margin minus the margin pre-game
             Elo expected, so a result is read against the opponent's rating.
         total_weight / stats_weight: Also regress the total (served as
@@ -186,6 +197,7 @@ def fit_transformer(
         ``{"predictor", "metrics", "split", "model"}``
     """
     prepare_save_dir(save_dir, overwrite)
+    opponent_strength = sport_opponent_strength(sport, opponent_strength)
     schema = get_sport(sport).schema.with_features(context, categorical=[])
     games = played(read_table(games), schema).reset_index(drop=True)
     split = split_seasons(

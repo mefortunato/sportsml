@@ -269,8 +269,19 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
     for game_id, game in games.items():
         assert game == _exported(snapshot.game(game_id))
 
-    challenge = _revive(data / "toy" / "challenge.json")
+    index = _revive(data / "toy" / "challenge" / "index.json")
+    shards = sorted({shard for _, shard, _ in index["games"]})
+    challenge = [
+        entry
+        for shard in shards
+        for entry in _revive(data / "toy" / "challenge" / f"{shard}.json")
+    ]
     assert len(challenge) == snapshot.info()["challenge_games"]
+    assert [e["game"]["game_id"] for e in challenge] == [
+        g for g, _, _ in index["games"]
+    ]
+    for entry, (_, _, markets) in zip(challenge, index["games"]):
+        assert markets == list(entry["answers"])
     for entry in challenge[:10]:
         game_id = entry["game"]["game_id"]
         assert entry["game"] == _exported(snapshot.challenge_game(game_id))
@@ -290,11 +301,41 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
                 }
                 expected = snapshot.challenge_answer(game_id, pick, market)
                 assert _as_exported(scored) == _exported(expected)
-    assert "logo.png" not in (data / "toy" / "challenge.json").read_text()
+    assert "logo.png" not in (data / "toy" / "challenge" / "0.json").read_text()
     assert _revive(data / "toy" / "rankings.json") == _exported(snapshot.rankings())
     assert _revive(data / "toy" / "performance.json") == _exported(
         snapshot.performance()
     )
+
+
+def test_challenge_shards_carry_only_their_own_teams(tmp_path):
+    from sportsml.web.export import write_challenge
+
+    def entry(game_id, home, away):
+        game = {"game_id": game_id, "home": TEAMS[home], "away": TEAMS[away]}
+        return {"game": game, "answers": {"spread": {"outcome": "home"}}}
+
+    TEAMS = {k: {"team": k, "name": k} for k in "ABCD"}
+    pool = [entry("1", "A", "B"), entry("2", "C", "A"), entry("3", "D", "C")]
+    (tmp_path / "challenge.json").write_text("stale")
+    write_challenge(tmp_path, pool, TEAMS, shard_size=2)
+
+    assert not (tmp_path / "challenge.json").exists()
+    index = json.loads((tmp_path / "challenge" / "index.json").read_text())["data"]
+    assert index["games"] == [
+        ["1", 0, ["spread"]],
+        ["2", 0, ["spread"]],
+        ["3", 1, ["spread"]],
+    ]
+    shard = json.loads((tmp_path / "challenge" / "1.json").read_text())
+    assert set(shard["teams"]) == {"C", "D"}
+    assert shard["data"][0]["game"]["home"] == {"$team": "D"}
+    # a smaller re-export leaves no stale shards behind
+    write_challenge(tmp_path, pool[:1], TEAMS, shard_size=2)
+    assert sorted(p.name for p in (tmp_path / "challenge").iterdir()) == [
+        "0.json",
+        "index.json",
+    ]
 
 
 def test_rankings_cover_backtest_and_current_season(snapshot, games):

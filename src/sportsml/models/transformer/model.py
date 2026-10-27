@@ -243,7 +243,10 @@ class TransformerMatchupModel(MatchupModel):
         self.state_season = games[s.season].max()
         tokens = self.features.tokens(games)
         seasons = games[s.season].to_numpy(dtype=np.float32)
-        current = set(games.loc[games[s.season] == self.state_season, s.team])
+        # teams of this season or the last: a team still waiting for its
+        # first game of the season (a bye, a staggered start) keeps its state
+        recent = games[s.season] >= self.state_season - 1
+        current = set(games.loc[recent, s.team])
 
         k = self.features.history
         position = pd.Series(np.arange(len(games)), index=games.index)

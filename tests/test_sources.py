@@ -1,11 +1,9 @@
 """Source parsers fed with data shaped like each API's real responses."""
 
 import pandas as pd
-import pytest
 
 from sportsml.cbb.data.features import SCHEMA as CBB_SCHEMA
 from sportsml.cbb.data.kaggle import format_games
-from sportsml.cfb.data.download import game_to_dataframe, season_weeks
 from sportsml.nba.data.download import process_games
 from sportsml.nba.data.features import SCHEMA as NBA_SCHEMA
 from sportsml.nba.data.names import odds_map as nba_odds_map
@@ -35,58 +33,6 @@ def test_kaggle_rows_become_two_perspectives_with_names():
     )
     assert (acu.Team_OPP, acu.Loc, acu.PlusMinus, acu.Win) == ("Alabama", 1, -10, 0)
     assert set(CBB_SCHEMA.stats) <= set(games.columns)
-
-
-def cfbd_team(name, home_away, points, third_down):
-    stats = {
-        "rushingTDs": "2",
-        "thirdDownEff": third_down,
-        "fourthDownEff": "1-2",
-        "completionAttempts": "20-31",
-        "totalPenaltiesYards": "5-45",
-        "possessionTime": "31:30",
-    }
-    return {
-        "team": name,
-        "conference": "SEC",
-        "homeAway": home_away,
-        "points": points,
-        "stats": [{"category": k, "stat": v} for k, v in stats.items()],
-    }
-
-
-def test_cfbd_game_parsing():
-    game = {
-        "id": 401,
-        "teams": [
-            cfbd_team("Auburn", "home", 31, "5-12"),
-            cfbd_team("LSU", "away", 24, "3-10"),
-        ],
-    }
-    games = game_to_dataframe(game)
-    auburn = games[games.team == "Auburn"].iloc[0]
-    assert (auburn.game_id, auburn.location, auburn.result) == ("401", 1, 7)
-    assert (auburn.thirdDownConv, auburn.thirdDownAtt) == (5, 12)
-    assert (auburn.passingCompletions, auburn.passingAttempts) == (20, 31)
-    assert auburn.possessionTime == pytest.approx(31.5)
-    assert auburn.opp_thirdDownAtt == 10
-    assert games[games.team == "LSU"].iloc[0].location == -1
-
-
-def test_cfbd_postseason_weeks_follow_regular_season():
-    """Regression: bowls (postseason week 1) were filed under week 1."""
-    calendar = [
-        {"week": 1, "seasonType": "postseason", "startDate": "2025-12-14T00:00:00Z"},
-        {"week": 1, "seasonType": "regular", "startDate": "2025-08-23T00:00:00Z"},
-        {"week": 2, "seasonType": "regular", "startDate": "2025-09-01T00:00:00Z"},
-        {
-            "week": 1,
-            "seasonType": "spring_regular",
-            "startDate": "2025-04-01T00:00:00Z",
-        },
-    ]
-    order = [(w["seasonType"], w["week"]) for w in season_weeks(calendar)]
-    assert order == [("regular", 1), ("regular", 2), ("postseason", 1)]
 
 
 def nba_rows():

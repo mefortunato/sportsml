@@ -16,7 +16,7 @@ const body = html.slice(html.indexOf('>', open) + 1, close);
 const styles = head.match(/<style[\s\S]*?<\/style>/g) ?? [];
 const scripts = head.match(/<script[\s\S]*?<\/script>/g) ?? [];
 const page = [
-	'<title>SportsML NFL</title>',
+	'<title>SportsML</title>',
 	'<meta name="claude:viewport-fit-sides" content="cover">',
 	...styles,
 	...scripts,

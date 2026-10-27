@@ -17,7 +17,8 @@ import pandas as pd
 # How a team's season ended, for the last rounds of the playoffs.
 PLAYOFF_STAGES = ("champion", "runner_up", "semifinal")
 
-# Team metadata columns every view's ``load_teams`` returns.
+# Team metadata columns every view's ``load_teams`` returns (it may add
+# ``abbr``, a short chip label, where team keys are long names).
 TEAM_COLUMNS = (
     "team", "name", "nickname", "color", "color2", "logo", "conference", "division",
 )  # fmt: skip
@@ -81,7 +82,7 @@ class SportView:
     playoff_labels: dict[str, str] = field(default_factory=dict)
 
 
-BUILTIN_VIEWS = ("nfl",)
+BUILTIN_VIEWS = ("nfl", "cfb")
 _views: dict[str, SportView] = {}
 
 

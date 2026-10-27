@@ -228,3 +228,21 @@ def test_elo_margin_is_the_margin_elo_did_not_expect(played_games, toy_games):
         print_metrics=False,
     )  # fmt: skip
     assert res["predictor"].model.features.token_columns[-1] == "_margin_vs_elo"
+
+
+def test_sport_setting_turns_on_opponent_strength(toy_sport):
+    import dataclasses
+
+    from sportsml.core.sport import register_sport
+    from sportsml.models.transformer.fit import transformer_config
+
+    base = transformer_config("toy")["encoder"]["token_dim"]
+    strong = dataclasses.replace(
+        toy_sport, name="toy_strength", transformer={"opponent_strength": True}
+    )
+    register_sport(strong)
+    config = transformer_config("toy_strength")
+    assert config["encoder"]["token_dim"] == base + 3
+    assert "opponent_strength" not in config
+    off = transformer_config("toy_strength", opponent_strength=False)
+    assert off["encoder"]["token_dim"] == base

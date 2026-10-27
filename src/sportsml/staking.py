@@ -148,13 +148,22 @@ class Proportional(Policy):
         return bets["edge"].to_numpy() * self.scale
 
 
+def features(bets: pd.DataFrame) -> np.ndarray:
+    """The learned policy's inputs: the edge and the log-odds of the win
+    probability the pick's odds imply (constant at -110, but on the
+    moneyline a big edge is usually an underdog, which wins less often)."""
+    implied = 1 / (1 + payout(bets["odds"].to_numpy()))
+    return np.column_stack([bets["edge"].to_numpy(), np.log(implied / (1 - implied))])
+
+
 @dataclass
 class LearnedKelly(Policy):
-    """Learns P(pick wins | edge) from earlier seasons and stakes the
+    """Learns P(pick wins | edge, odds) from earlier seasons and stakes the
     (fractional) Kelly bet at each pick's odds.
 
-    A logistic regression of win (vs loss; pushes left out) on the edge
-    gives each pick's win probability ``p``; at payout ``b`` the Kelly
+    A logistic regression of win (vs loss; pushes left out) on the edge and
+    the odds' implied win probability (:func:`features`) gives each pick's
+    win probability ``p``; at payout ``b`` the Kelly
     fraction is ``max(0, p - (1 - p) / b)``: nothing when the model's edge
     has not historically beaten the odds, more the larger an edge that has.
     Stakes are those fractions in relative units (mean 1 on the training
@@ -173,7 +182,7 @@ class LearnedKelly(Policy):
     def win_probability(self, bets) -> np.ndarray:
         if self.model is None:
             return np.full(len(bets), np.nan)
-        return self.model.predict_proba(bets[["edge"]].to_numpy())[:, 1]
+        return self.model.predict_proba(features(bets))[:, 1]
 
     def kelly(self, bets) -> np.ndarray:
         p = self.win_probability(bets)
@@ -190,14 +199,17 @@ class LearnedKelly(Policy):
                 sklearn.preprocessing.StandardScaler(),
                 sklearn.linear_model.LogisticRegression(C=1.0),
             )
-            self.model.fit(decided[["edge"]].to_numpy(), decided["outcome"] > 0)
-            edges = np.quantile(decided["edge"], [0.5, 0.9])[:, None]
-            p50, p90 = self.model.predict_proba(edges)[:, 1]
+            self.model.fit(features(decided), decided["outcome"] > 0)
+            # win probability at the median and 90th-percentile edge, at
+            # the median odds
+            edges = np.quantile(decided["edge"], [0.5, 0.9])
+            odds = float(np.median(decided["odds"]))
+            p50, p90 = self.win_probability(pd.DataFrame({"edge": edges, "odds": odds}))
             self.coef = {
-                "slope_per_sd": float(self.model[-1].coef_[0, 0]),
-                "median_edge": float(edges[0, 0]),
+                "edge_slope_per_sd": float(self.model[-1].coef_[0, 0]),
+                "median_edge": float(edges[0]),
                 "p_win_median_edge": float(p50),
-                "p90_edge": float(edges[1, 0]),
+                "p90_edge": float(edges[1]),
                 "p_win_p90_edge": float(p90),
             }
         kelly = self.kelly(bets) if self.model is not None else np.zeros(len(bets))

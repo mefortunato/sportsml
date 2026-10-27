@@ -96,7 +96,7 @@ def test_learned_stakes_grow_with_an_edge_that_has_paid():
     )
     # below break-even near the line, a sizeable stake far from it
     assert small == 0 and large > 1
-    assert policy.describe()["slope_per_sd"] > 0
+    assert policy.describe()["edge_slope_per_sd"] > 0
     train = policy.stakes(bets)
     # one unit on average, less a little where the cap binds
     assert train[train > 0].mean() == pytest.approx(1.0, abs=0.01)
@@ -109,6 +109,38 @@ def test_learned_stakes_are_zero_when_the_edge_has_not_paid():
     # a 50% pick at -110 loses money: only noise in the fit leaves a few
     # large-edge picks with a stake
     assert (stakes > 0).mean() < 0.1
+
+
+def test_learned_stakes_account_for_the_odds():
+    """Underdogs win less often: the fit must not read that as the edge
+    failing, or stake the long odds for an edge that has not paid."""
+    rng = np.random.default_rng(0)
+    rows = []
+    for season in range(2016, 2024):
+        n = 600
+        fair = rng.uniform(0.2, 0.8, n)
+        priced = fair * 1.045  # the bookmaker's margin
+        odds = np.where(
+            priced >= 0.5, -100 * priced / (1 - priced), 100 * (1 - priced) / priced
+        )
+        edge = rng.uniform(0.01, 0.15, n)
+        # picks win as often as the fair odds say, whatever the edge
+        win = rng.random(n) < fair
+        rows.append(
+            pd.DataFrame(
+                {
+                    "season": season,
+                    "date": 1,
+                    "game_id": range(n),
+                    "edge": edge,
+                    "odds": odds,
+                    "outcome": np.where(win, 1.0, -1.0),
+                }
+            )  # fmt: skip
+        )
+    bets = pd.concat(rows, ignore_index=True)
+    stakes, _ = walk_forward_stakes(bets, [LearnedKelly()], 3)
+    assert (stakes["stake_learned"] > 0).mean() < 0.1
 
 
 def test_walk_forward_stakes_learn_from_earlier_seasons_only():

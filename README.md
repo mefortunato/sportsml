@@ -236,6 +236,9 @@ Any model can be backtested from Python with
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
 the NFL and college football:
 
+- **Home**: what the site is, each sport's backtest record against Vegas
+  (winners picked, against the spread, over/under) and how the
+  predictions are made and tested.
 - **Upcoming games**: each game's Vegas line and the model's predicted
   margin on one chart, the win probability, and the model's pick in each
   market: against the spread, on the moneyline and on the over/under.

@@ -81,7 +81,7 @@ class SportView:
     playoff_labels: dict[str, str] = field(default_factory=dict)
 
 
-BUILTIN_VIEWS = ("nfl",)
+BUILTIN_VIEWS = ("nfl", "cfb")
 _views: dict[str, SportView] = {}
 
 

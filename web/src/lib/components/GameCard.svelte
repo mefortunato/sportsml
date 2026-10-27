@@ -1,15 +1,25 @@
 <script lang="ts">
 	import { links } from '$lib/links';
-	import { kickoffLabel } from '$lib/format';
-	import type { UpcomingGame } from '$lib/types';
+	import { kickoffLabel, spreadLabel } from '$lib/format';
+	import { age, withLine } from '$lib/odds';
+	import type { GameOdds, UpcomingGame } from '$lib/types';
 	import MarketTable from './MarketTable.svelte';
 	import SpreadChart from './SpreadChart.svelte';
 	import TeamBadge from './TeamBadge.svelte';
 	import WinProbBar from './WinProbBar.svelte';
 
-	let { game, sport }: { game: UpcomingGame; sport: string } = $props();
+	let {
+		game: built,
+		sport,
+		odds = null
+	}: { game: UpcomingGame; sport: string; odds?: GameOdds | null } = $props();
 
-	const prediction = $derived(game.prediction);
+	// current sportsbook lines, when the site has them, replace the ones it
+	// was built with; the picks follow the lines
+	const live = $derived(withLine(built, built.prediction, odds?.consensus));
+	const game = $derived(live.game);
+	const prediction = $derived(live.prediction ?? built.prediction);
+	const openSpread = $derived(odds?.open.spread ?? null);
 </script>
 
 <a class="card game" href={links.game(sport, game.game_id)}>
@@ -32,6 +42,15 @@
 	<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
 
 	<MarketTable {game} {prediction} />
+
+	{#if odds}
+		<div class="lines muted small">
+			Lines from {odds.books.length} book{odds.books.length === 1 ? '' : 's'}, {age(odds.updated)}
+			{#if openSpread !== null && game.spread !== null && openSpread !== game.spread}
+				· opened {spreadLabel(game.home, game.away, openSpread)}
+			{/if}
+		</div>
+	{/if}
 </a>
 
 <style>

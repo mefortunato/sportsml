@@ -3,13 +3,27 @@
 # (Train workflow); this re-downloads results, refreshes team state, exports
 # every page's data and builds the frontend. A failed run leaves the last
 # deployed site in place.
+#
+# Each run also refreshes sportsbook lines (The Odds API, ODDS_API_KEY
+# secret; no game within 8 days: no request). The schedule fits the free
+# tier's 150 requests a month for the NFL: about 23 runs a week in season,
+# more on game days (times in UTC, before each Eastern kickoff window).
 name: Site
 
 on:
   workflow_dispatch:
+    inputs:
+      webdata_sha256:
+        description: The webdata asset to wait for (set by the Train workflow)
+        required: false
+        default: ""
   schedule:
     - cron: "17 10 * * *" # daily, early morning US time
     - cron: "17 6 * * 2" # Tuesday, after Monday night's game
+    - cron: "17 16,22 * * 2-6" # Tue-Sat midday and evening lines
+    - cron: "17 16 * * 0" # Sunday morning, before the 1 pm games
+    - cron: "47 19 * * 0" # before the late afternoon games
+    - cron: "47 23 * * 0,1,4" # before Sunday, Monday and Thursday night
 
 permissions:
   contents: read
@@ -34,18 +48,35 @@ jobs:
       - name: Fetch the trained model
         env:
           GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.webdata_sha256 }}
         run: |
-          gh release download webdata --pattern webdata.tar.gz
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            rm -f webdata.tar.gz
+            gh release download webdata --pattern webdata.tar.gz
+            got="$(sha256sum webdata.tar.gz | cut -d' ' -f1)"
+            if [ -z "$WANT" ] || [ "$got" = "$WANT" ]; then break; fi
+            if [ "$attempt" = 10 ]; then
+              echo "::error::webdata asset is $got, not the trained $WANT"; exit 1
+            fi
+            echo "webdata asset is still the previous one ($got); retrying"
+            sleep 30
+          done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
-      - name: Export fresh data
-        run: uv run sportsml web export --data_dir webdata --output_dir web/static --refresh true
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Export fresh data and lines
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: >
+          uv run sportsml web export --data_dir webdata --output_dir web/static
+          --refresh true --odds "{nfl: oddsapi}"
+          --odds_history "${{ steps.pages.outputs.base_url }}/data"
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - id: pages
-        uses: actions/configure-pages@v5
       - name: Build
         working-directory: web
         env:

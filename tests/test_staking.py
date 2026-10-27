@@ -177,6 +177,9 @@ def test_summary_weighs_profit_by_stake():
     assert summary.loc["big", "weighted_win_pct"] == pytest.approx(3 / 4)
     assert summary.loc["flat", "roi_vs_flat"] == 0
     assert max_drawdown(np.array([1.0, -2.0, 0.5, -1.0, 3.0])) == pytest.approx(2.5)
+    # a subset keeps its original row labels
+    subset = summarize_stakes(stakes.set_index(np.arange(10, 14)), ["big"], n_boot=50)
+    assert subset.loc["big", "profit"] == summary.loc["big", "profit"]
 
 
 def test_staking_on_walk_forward_results(toy_games, tmp_path):

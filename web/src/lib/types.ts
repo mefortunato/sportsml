@@ -35,6 +35,8 @@ export interface SportInfo {
 	challenge_games: number;
 	/** Markets the challenge offers (older exports: spread only). */
 	markets?: Market[];
+	/** What pricing a line in the browser needs (older exports: absent). */
+	pricing?: Pricing | null;
 	built_at?: string | null;
 	refreshed_at?: string | null;
 	model?: { family: string; metrics: Record<string, Metrics> } | null;
@@ -45,6 +47,14 @@ export interface SportInfo {
 		moneyline?: Partial<BetRow>;
 		totals?: { n?: number; record?: Partial<BetRow> };
 	} | null;
+}
+
+/** The model's residual spreads and how much of its disagreement with the
+ * market to believe, per market (0: none, 1: all), from the backtest. */
+export interface Pricing {
+	sigma: number;
+	total_sigma?: number | null;
+	trust: Partial<Record<Market, number>>;
 }
 
 export interface Prediction {
@@ -272,4 +282,46 @@ export interface Rankings {
 	date_label: string;
 	/** Display label per playoff stage, e.g. "Won Super Bowl". */
 	playoff_labels?: Partial<Record<PlayoffStage, string>>;
+}
+
+/** One sportsbook's line, from the home team's side (`spread` is the home
+ * team's expected margin, the opposite sign of the handicap books quote). */
+export interface BookLine {
+	spread: number | null;
+	spread_home_odds: number | null;
+	spread_away_odds: number | null;
+	ml_home: number | null;
+	ml_away: number | null;
+	total: number | null;
+	over_odds: number | null;
+	under_odds: number | null;
+}
+
+export interface BookOffer {
+	book: string;
+	odds: number | null;
+	/** Spread (home expected margin) or total of the offer. */
+	points?: number;
+}
+
+export interface GameOdds {
+	updated: string;
+	books: (BookLine & { book: string })[];
+	/** Median over books. */
+	consensus: BookLine;
+	best: {
+		spread: { home: BookOffer | null; away: BookOffer | null };
+		moneyline: { home: BookOffer | null; away: BookOffer | null };
+		total: { over: BookOffer | null; under: BookOffer | null };
+	};
+	open: { spread: number | null; total: number | null };
+	history: { t: string; spread: number | null; total: number | null; ml_home?: number | null; ml_away?: number | null }[];
+}
+
+/** `<sport>/odds.json`: current lines for upcoming games (absent without it). */
+export interface OddsFile {
+	updated: string | null;
+	provider: string | null;
+	remaining: number | null;
+	games: Record<string, GameOdds>;
 }

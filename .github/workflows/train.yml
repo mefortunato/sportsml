@@ -45,4 +45,8 @@ jobs:
       - name: Rebuild the site
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run site.yml --ref "${{ github.ref_name }}"
+        # Site waits for this exact asset: a download right after the upload
+        # can still be served the previous one
+        run: >
+          gh workflow run site.yml --ref "${{ github.ref_name }}"
+          -f webdata_sha256="$(sha256sum webdata.tar.gz | cut -d' ' -f1)"

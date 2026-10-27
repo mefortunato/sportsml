@@ -21,6 +21,15 @@ weights (`--total_weight`, `--stats_weight` on `fit transformer`;
 model with the total serves `pred_total` and, where the matchup carries the
 market's line, `over_prob`.
 
+The transformer can also predict a full score distribution instead of
+point values (`distribution: true` in `Sport.transformer` or the model
+config): a bell curve per game plus a learned weight per whole-number
+margin and total, so values football scoring produces often (a 3- or
+7-point margin) get their real share, and cover / moneyline / over
+probabilities come from it with pushes left out. On NFL 2006-2025 it did not
+beat the normal model (cover Brier +0.0002 +/- 0.0016, moneyline Brier
++0.0012 +/- 0.0014), so it is off by default.
+
 NFL games also carry pre-game injury features: for each unit (`qb`, `ol`,
 `skill`, `front`, `secondary`), `inj_<unit>` / `opp_inj_<unit>` is the snap
 share the week's injury report is expected to take away (each listed
@@ -163,6 +172,13 @@ A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
   market: against the spread, on the moneyline and on the over/under.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
+- **Price your line** (upcoming games): enter the spread, moneyline or
+  total and odds your sportsbook offers; the page reprices every pick in the
+  browser (the model's predictions do not depend on the odds) with its win
+  chance, break-even, expected value and a quarter-Kelly stake. Win chances
+  are the model's moved toward the market by how much of its disagreement
+  has been right in the walk-forward backtest (`pricing.trust` in
+  `sports.json`, fit per market).
 - **Power rankings**: each team's average predicted margin against every
   other team, week by week, with conference, division and final-four
   filters.
@@ -176,6 +192,12 @@ A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
   predictions, made without seeing those games. Your record on each market
   is kept in your browser.
 
+- **Current lines**: with `--odds`, upcoming games show every sportsbook's
+  spread, moneyline and total, the best price on each side, the opening
+  line and how the consensus moved; the cards, picks and the line
+  calculator use the current consensus, and any book can be loaded into
+  the calculator.
+
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
@@ -187,6 +209,18 @@ request. Two GitHub Actions workflows keep them current:
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
   frontend and deploys it. A failed run leaves the last deployed site up.
+
+Sportsbook lines come from `sportsml web export --odds '{nfl: oddsapi,
+cfb: cfbd}'`: [The Odds API](https://the-odds-api.com) (`ODDS_API_KEY`;
+every US book, one request per sport and refresh) and CollegeFootballData's
+`/lines` (`CFBD_API_KEY`; several books with opening lines). The Site
+workflow refreshes them about 23 times a week in season, more often on game
+days, which fits The Odds API's free tier (150 requests a month) for the
+NFL; no request is made when no game is within 8 days, and a failed fetch
+keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
+repository's **Settings → Secrets and variables → Actions**; without them
+the site builds as before, without current lines. `odds.json` reports the
+provider's remaining requests.
 
 To set it up: in the repository settings, set **Pages → Source** to
 **GitHub Actions**, then run **Train** once from the Actions tab. It starts

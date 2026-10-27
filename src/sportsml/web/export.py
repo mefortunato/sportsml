@@ -14,7 +14,9 @@ Writes, under ``<output_dir>/data/``:
 * ``<sport>/challenge.json``: ``[{"game": ..., "answers": {market: ...}}]``
   per pool game playable on some market, each answer without the
   pick-dependent ``pick`` / ``correct`` / ``units``;
-* ``<sport>/performance.json`` and ``<sport>/rankings.json``.
+* ``<sport>/performance.json`` and ``<sport>/rankings.json``;
+* ``<sport>/odds.json`` (with ``odds``): current sportsbook lines for the
+  upcoming games (:mod:`sportsml.web.odds`).
 
 Team objects are written once per file (``"teams"``) and referenced as
 ``{"$team": key}``; floats are rounded to 6 decimals.
@@ -30,6 +32,8 @@ import pandas as pd
 
 from ..core.process import process
 from ..core.sport import get_sport
+from ..odds.providers import provider_for
+from .odds import load_previous, refresh_odds
 from .snapshot import Snapshot
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,8 @@ def export(
     data_dir: str = "webdata",
     output_dir: str = "web/static",
     refresh: bool = False,
+    odds: dict[str, str] | None = None,
+    odds_history: str | None = None,
 ) -> None:
     """Write every sport's page data as static JSON.
 
@@ -83,6 +89,13 @@ def export(
         refresh: Re-download each sport's results first (team state is
             refreshed with the saved model; nothing is retrained). A failed
             download fails the export, so the last published site stays.
+        odds: Fetch current lines per sport from a provider, e.g.
+            ``{nfl: oddsapi, cfb: cfbd}`` (keys ``ODDS_API_KEY`` /
+            ``CFBD_API_KEY``). Skipped when no game kicks off within 8
+            days; a failed fetch keeps the previous lines and does not fail
+            the export.
+        odds_history: The previous ``data/`` (a directory or the deployed
+            site's URL) whose ``<sport>/odds.json`` line history to extend.
     """
     snapshots = load_snapshots(data_dir)
     if refresh:
@@ -111,6 +124,23 @@ def export(
             {"default": default, "by_date": by_date},
             teams,
         )
+
+        if odds and sport in odds:
+            cards = [g for week in by_date.values() for g in week["games"]]
+            payload = refresh_odds(
+                provider_for(sport, odds[sport]),
+                cards,
+                load_previous(odds_history, sport),
+            )
+            if payload:
+                (out / sport).mkdir(parents=True, exist_ok=True)
+                (out / sport / "odds.json").write_text(
+                    json.dumps(payload, separators=(",", ":"), default=float)
+                )
+                print(
+                    f"odds {sport}: {len(payload['games'])} games from "
+                    f"{payload['provider']} (requests left: {payload['remaining']})"
+                )
 
         game_ids = {g["game_id"] for week in by_date.values() for g in week["games"]}
         games = {game_id: snap.game(game_id) for game_id in sorted(game_ids)}

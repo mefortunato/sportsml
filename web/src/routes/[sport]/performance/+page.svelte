@@ -37,7 +37,7 @@
 				: (perf.ats ?? [])
 	);
 	const edgeLabel = (row: BetRow) =>
-		market_ === 'moneyline' ? `${pct(row.min_edge)} pts` : `${row.min_edge} pts`;
+		market_ === 'moneyline' ? `${Math.round(row.min_edge * 100)} pct pts` : `${row.min_edge} pts`;
 	const overCalibration = $derived(
 		perf.over_calibration
 			? [
@@ -254,8 +254,7 @@
 								<th class="num">W-L-P</th>
 								<th class="num">Win %</th>
 								<th class="num">95% range</th>
-								<th class="num">Units</th>
-								<th class="num">ROI</th>
+								<th class="num">Units (ROI)</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -268,8 +267,9 @@
 									<td class="num tabular muted">
 										{row.ci95_low === null || row.ci95_high === null ? '—' : `${pct(row.ci95_low)}–${pct(row.ci95_high)}`}
 									</td>
-									<td class="num tabular">{row.units === undefined ? '—' : unitsLabel(row.units)}</td>
-									<td class="num tabular {roiClass(row)}">{pct(row.roi, 1)}</td>
+									<td class="num tabular {roiClass(row)}">
+										{row.units === undefined ? '' : `${unitsLabel(row.units)} `}({pct(row.roi, 1)})
+									</td>
 								</tr>
 							{/each}
 						</tbody>

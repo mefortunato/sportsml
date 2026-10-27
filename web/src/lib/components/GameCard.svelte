@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { links } from '$lib/links';
-	import { kickoffLabel, signed, spreadLabel } from '$lib/format';
+	import { kickoffLabel } from '$lib/format';
 	import type { UpcomingGame } from '$lib/types';
 	import MarketTable from './MarketTable.svelte';
 	import SpreadChart from './SpreadChart.svelte';
@@ -10,11 +10,6 @@
 	let { game, sport }: { game: UpcomingGame; sport: string } = $props();
 
 	const prediction = $derived(game.prediction);
-	const pick = $derived(
-		prediction.ats_pick === null ? null : prediction.ats_pick === 'home' ? game.home : game.away
-	);
-	// edge toward the picked side, always positive
-	const edge = $derived(prediction.edge === null ? null : Math.abs(prediction.edge));
 </script>
 
 <a class="card game" href={links.game(sport, game.game_id)}>
@@ -37,15 +32,6 @@
 	<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
 
 	<MarketTable {game} {prediction} />
-
-	<div class="bottom small">
-		<span class="pill">Vegas {spreadLabel(game.home, game.away, game.spread)}</span>
-		{#if pick && edge !== null}
-			<span class="pill accent">Model: {pick.team} covers · edge {signed(edge)}</span>
-		{:else}
-			<span class="pill">No line yet</span>
-		{/if}
-	</div>
 </a>
 
 <style>
@@ -75,10 +61,5 @@
 	}
 	.at {
 		font-weight: 600;
-	}
-	.bottom {
-		display: flex;
-		gap: 8px;
-		flex-wrap: wrap;
 	}
 </style>

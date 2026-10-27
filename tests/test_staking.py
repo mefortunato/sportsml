@@ -190,7 +190,10 @@ def test_staking_on_walk_forward_results(toy_games, tmp_path):
     )  # fmt: skip
     assert set(report) == {"spread", "moneyline", "total"}
     summary = report["spread"]["summary"]
-    assert {"flat", "edge>2", "edge>4", "proportional", "learned"} == set(summary.index)
+    # walk-forward results carry the model's probabilities: its own Kelly too
+    assert {
+        "flat", "edge>2", "edge>4", "proportional", "learned", "model_kelly"
+    } == set(summary.index)  # fmt: skip
     assert summary.loc["flat", "bets"] == len(report["spread"]["stakes"])
     saved = json.loads((tmp_path / "staking_summary.json").read_text())
     assert set(saved) == {"spread", "moneyline", "total"}

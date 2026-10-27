@@ -45,20 +45,27 @@ def market_bets(results: pd.DataFrame, schema: GameSchema, market: Market):
     ``date``, ``game_id``, ``edge`` (the model's disagreement with the
     market toward its pick: points for the spread and total, win
     probability for the moneyline; always > 0), ``odds`` (American, of the
-    picked side) and ``outcome`` (+1 the pick won, -1 lost, 0 push).
+    picked side), ``outcome`` (+1 the pick won, -1 lost, 0 push) and
+    ``prob``: the model's probability that the pick wins, a push left out
+    (from ``cover_prob`` / ``win_prob`` / ``over_prob``; NaN where the
+    results lack it).
     """
     s = schema
+    prob = None
     if market == "spread":
         frame = results.dropna(subset=["pred_margin", "market_margin", s.target])
         signed = frame["pred_margin"] - frame["market_margin"]
         went = frame[s.target] - frame["market_margin"]
         odds = np.full(len(frame), SPREAD_ODDS)
+        if "cover_prob" in frame:
+            prob = frame["cover_prob"]
     elif market == "moneyline":
         team, opp = s.market_moneyline
         frame = results.dropna(subset=["win_prob", "market_prob", team, opp, s.target])
         signed = frame["win_prob"] - frame["market_prob"]
         went = frame[s.target]
         odds = np.where(signed > 0, frame[team], frame[opp]).astype(float)
+        prob = frame["win_prob"]
     elif market == "total":
         if "pred_total" not in results:
             raise ValueError(
@@ -72,6 +79,8 @@ def market_bets(results: pd.DataFrame, schema: GameSchema, market: Market):
             over, under = (frame[c].to_numpy(dtype=float) for c in s.market_total_odds)
             odds = np.where(signed > 0, over, under)
             odds = np.where(np.isfinite(odds), odds, SPREAD_ODDS)
+        if "over_prob" in frame:
+            prob = frame["over_prob"]
     else:
         raise ValueError(f"unknown market {market!r}; choose from {MARKETS}")
     bets = pd.DataFrame(
@@ -82,6 +91,9 @@ def market_bets(results: pd.DataFrame, schema: GameSchema, market: Market):
             "edge": np.abs(signed.to_numpy(dtype=float)),
             "odds": np.asarray(odds, dtype=float),
             "outcome": (np.sign(signed) * np.sign(went)).to_numpy(dtype=float),
+            "prob": np.nan
+            if prob is None
+            else np.where(signed > 0, prob, 1 - prob).astype(float),
         }
     )
     return bets[bets["edge"] > 0].reset_index(drop=True)
@@ -148,12 +160,26 @@ class Proportional(Policy):
         return bets["edge"].to_numpy() * self.scale
 
 
+def logit(p) -> np.ndarray:
+    p = np.clip(np.asarray(p, dtype=float), 1e-4, 1 - 1e-4)
+    return np.log(p / (1 - p))
+
+
+def has_prob(bets: pd.DataFrame) -> bool:
+    return "prob" in bets and len(bets) > 0 and bool(bets["prob"].notna().all())
+
+
 def features(bets: pd.DataFrame) -> np.ndarray:
-    """The learned policy's inputs: the edge and the log-odds of the win
+    """The learned policy's inputs: the edge, the log-odds of the win
     probability the pick's odds imply (constant at -110, but on the
-    moneyline a big edge is usually an underdog, which wins less often)."""
+    moneyline a big edge is usually an underdog, which wins less often) and,
+    where the results have it, the log-odds of the model's own
+    probability that the pick wins."""
     implied = 1 / (1 + payout(bets["odds"].to_numpy()))
-    return np.column_stack([bets["edge"].to_numpy(), np.log(implied / (1 - implied))])
+    columns = [bets["edge"].to_numpy(), logit(implied)]
+    if has_prob(bets):
+        columns.append(logit(bets["prob"]))
+    return np.column_stack(columns)
 
 
 @dataclass
@@ -201,10 +227,12 @@ class LearnedKelly(Policy):
             )
             self.model.fit(features(decided), decided["outcome"] > 0)
             # win probability at the median and 90th-percentile edge, at
-            # the median odds
+            # the median odds (and model probability)
             edges = np.quantile(decided["edge"], [0.5, 0.9])
-            odds = float(np.median(decided["odds"]))
-            p50, p90 = self.win_probability(pd.DataFrame({"edge": edges, "odds": odds}))
+            typical = {"edge": edges, "odds": float(np.median(decided["odds"]))}
+            if has_prob(decided):
+                typical["prob"] = float(np.median(decided["prob"]))
+            p50, p90 = self.win_probability(pd.DataFrame(typical))
             self.coef = {
                 "edge_slope_per_sd": float(self.model[-1].coef_[0, 0]),
                 "median_edge": float(edges[0]),
@@ -226,10 +254,46 @@ class LearnedKelly(Policy):
         return {**self.coef, "unit_fraction": self.unit}
 
 
-def default_policies(market: Market) -> list[Policy]:
-    """Flat, a few edge thresholds, proportional and learned (Kelly)."""
+@dataclass
+class ModelKelly(Policy):
+    """Takes the model's probability that the pick wins at face value and
+    stakes the (fractional) Kelly bet at its odds: nothing where the model
+    does not beat the odds' break-even. Nothing is learned but the unit
+    (mean 1 on the training bets that get a stake)."""
+
+    name = "model_kelly"
+    fraction: float = 0.25
+    max_units: float = 5.0
+    unit: float = 0.0
+
+    def kelly(self, bets) -> np.ndarray:
+        if not has_prob(bets):
+            return np.zeros(len(bets))
+        p = bets["prob"].to_numpy()
+        b = payout(bets["odds"].to_numpy())
+        return self.fraction * np.clip(p - (1 - p) / b, 0, None)
+
+    def fit(self, bets):
+        kelly = self.kelly(bets)
+        staked = kelly[kelly > 0]
+        self.unit = float(staked.mean()) if len(staked) else 0.0
+        return self
+
+    def stakes(self, bets):
+        if self.unit == 0:
+            return np.zeros(len(bets))
+        return np.clip(self.kelly(bets) / self.unit, 0, self.max_units)
+
+    def describe(self) -> dict:
+        return {"unit_fraction": self.unit}
+
+
+def default_policies(market: Market, with_prob: bool = False) -> list[Policy]:
+    """Flat, a few edge thresholds, proportional, learned (Kelly) and, for
+    results with the model's probabilities, the model's own Kelly."""
     cuts = (0.03, 0.06) if market == "moneyline" else (2.0, 4.0)
-    return [Flat(), *(Threshold(c) for c in cuts), Proportional(), LearnedKelly()]
+    policies = [Flat(), *(Threshold(c) for c in cuts), Proportional(), LearnedKelly()]
+    return policies + ([ModelKelly()] if with_prob else [])
 
 
 def walk_forward_stakes(
@@ -378,7 +442,7 @@ def staking(
     report = {}
     for market in markets:
         bets = market_bets(results, schema, market)
-        policies = default_policies(market)
+        policies = default_policies(market, has_prob(bets))
         stakes, fits = walk_forward_stakes(bets, policies, min_train_seasons)
         names = [p.name for p in policies]
         report[market] = {

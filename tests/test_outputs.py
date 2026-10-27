@@ -125,3 +125,82 @@ def test_walk_forward_scores_totals_and_moneylines(toy_games):
     assert len(summary["moneyline"]) == 4
     text = format_summary(summary)
     assert "Over/under" in text and "Moneyline" in text
+
+
+def test_score_distribution_learns_values_a_bell_curve_misses():
+    from sportsml.models.lightning import ScoreDistribution
+
+    dist = ScoreDistribution(-20, 20, symmetric=True)
+    assert len(dist.bias) == 21  # |k| for k in -20..20
+    log_prob = dist.log_prob(torch.tensor([2.0]), torch.tensor([np.log(6.0)]))
+    assert torch.exp(log_prob).sum().item() == pytest.approx(1.0)
+
+    # margins of about +-3 far more often than a bell curve allows
+    rng = np.random.default_rng(0)
+    y = np.where(
+        rng.random(4000) < 0.3, rng.choice([-3, 3], 4000), rng.normal(0, 8, 4000)
+    )
+    y = torch.tensor(np.clip(np.round(y), -20, 20), dtype=torch.float32)
+    loc = torch.zeros(1, requires_grad=True)
+    log_scale = torch.full((1,), np.log(8.0), requires_grad=True)
+    opt = torch.optim.Adam([loc, log_scale, *dist.parameters()], lr=0.05)
+    for _ in range(300):
+        opt.zero_grad()
+        lp = dist.log_prob(loc.expand(len(y)), log_scale.expand(len(y)))
+        dist.nll(lp, y).backward()
+        opt.step()
+    p = torch.exp(dist.log_prob(loc, log_scale))[0].detach().numpy()
+    at = {k: p[k + 20] for k in (2, 3, 4, -3)}
+    assert at[3] > 2 * at[4] and at[3] > 2 * at[2]
+    assert at[3] == pytest.approx(at[-3], rel=0.05)  # tied weights
+    # games without an outcome add nothing to the loss
+    assert dist.nll(lp, torch.full_like(y, np.nan)).item() == 0
+
+
+def test_distribution_model_prices_every_market_consistently(toy_games, tmp_path):
+    from sportsml.models.transformer import default_model, fit_transformer
+
+    model = default_model("toy", total_weight=1.0, distribution=True)
+    assert model.n_outputs == 4 and model.head.out_dim == 4
+    res = fit_transformer(
+        toy_games, "toy", model=model, trainer=transformer_trainer(3),
+        save_dir=str(tmp_path / "dist"), print_metrics=False,
+    )  # fmt: skip
+    predictor = res["predictor"]
+    games = played(toy_games, TOY_SCHEMA)
+    matchups = games[games.season == 2024].drop_duplicates("game_id").head(8)
+    # integer lines, so pushes are possible and left out
+    matchups = matchups.assign(spread=matchups["spread"].round(), total_line=44.0)
+    out = predictor.predict(matchups)
+    assert {"pred_margin", "win_prob", "cover_prob", "pred_total", "over_prob"} <= set(
+        out
+    )
+    assert out[["win_prob", "cover_prob", "over_prob"]].stack().between(0, 1).all()
+    flipped = predictor.predict(mirror(matchups, TOY_SCHEMA))
+    np.testing.assert_allclose(out.pred_margin, -flipped.pred_margin, atol=1e-4)
+    np.testing.assert_allclose(out.win_prob, 1 - flipped.win_prob, atol=1e-5)
+    np.testing.assert_allclose(out.cover_prob, 1 - flipped.cover_prob, atol=1e-5)
+    np.testing.assert_allclose(out.over_prob, flipped.over_prob, atol=1e-5)
+    np.testing.assert_allclose(out.pred_total, flipped.pred_total, atol=1e-4)
+    # covering a 0-point spread is winning
+    even = predictor.predict(matchups.assign(spread=0.0))
+    np.testing.assert_allclose(even.cover_prob, even.win_prob, atol=1e-6)
+
+    loaded = load_predictor(str(tmp_path / "dist"))
+    loaded.update_state(toy_games)
+    predictor.update_state(toy_games)
+    np.testing.assert_allclose(
+        loaded.predict(matchups).cover_prob, predictor.predict(matchups).cover_prob,
+        atol=1e-5,
+    )  # fmt: skip
+
+
+def test_normal_models_price_the_cover_too(toy_games, tmp_path):
+    res = fit("transformer", toy_games, tmp_path, total_weight=1.0)
+    predictor = res["predictor"]
+    games = played(toy_games, TOY_SCHEMA).drop_duplicates("game_id").head(4)
+    out = predictor.predict(games)
+    expected = 1 - torch.distributions.Normal(0.0, predictor.sigma).cdf(
+        torch.tensor((out.spread - out.pred_margin).to_numpy())
+    )
+    np.testing.assert_allclose(out.cover_prob, expected.numpy(), atol=1e-5)

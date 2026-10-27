@@ -173,9 +173,16 @@ class TransformerModel(MarginModule):
         target_std: float | list[float] = 1.0,
         extra_targets: tuple[str, ...] = (),
         extra_weights: tuple[float, ...] = (),
+        distribution: bool = False,
     ):
         super().__init__(
-            lr, weight_decay, target_mean, target_std, extra_targets, extra_weights
+            lr,
+            weight_decay,
+            target_mean,
+            target_std,
+            extra_targets,
+            extra_weights,
+            distribution,
         )
         self.encoder = encoder
         self.head = head
@@ -194,6 +201,22 @@ class TransformerModel(MarginModule):
 
     def targets(self, batch) -> torch.Tensor:
         return batch["y"]
+
+
+def distribution_outputs(module, batch) -> dict[str, np.ndarray]:
+    """A distribution model's probability tables: ``margin_pmf`` over
+    ``margin_values`` (and ``total_pmf`` over ``total_values``)."""
+    probs = {k: v.exp().numpy() for k, v in module.log_probs(batch).items()}
+    out = {
+        "margin_pmf": probs["margin"],
+        "margin_values": module.margin_dist.values.numpy(),
+    }
+    if "total" in probs:
+        out |= {
+            "total_pmf": probs["total"],
+            "total_values": module.total_dist.values.numpy(),
+        }
+    return out
 
 
 class TransformerMatchupModel(MatchupModel):
@@ -265,4 +288,6 @@ class TransformerMatchupModel(MatchupModel):
         result = {"margin": out[:, 0]}
         if s.total and s.total in extra:
             result["total"] = out[:, 1 + extra.index(s.total)]
+        if getattr(self.module, "distribution", False):
+            result |= distribution_outputs(self.module, batch)
         return result

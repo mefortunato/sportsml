@@ -50,7 +50,10 @@ def transformer_config(
     ``total_weight`` / ``stats_weight`` add the total and every box-score
     stat as extra outputs with those loss weights (see
     :func:`~sportsml.models.lightning.output_targets`); None takes the
-    sport's ``Sport.transformer`` setting (default 0, off)."""
+    sport's ``Sport.transformer`` setting (default 0, off). With
+    ``distribution=True`` (an override or ``Sport.transformer`` key) the
+    model predicts a :class:`~sportsml.models.lightning.ScoreDistribution`
+    of the margin (and the total) instead of point values."""
     spec = get_sport(sport)
     dims = transformer_dims(
         spec.schema.with_features(context), opponent_strength, elo_margin
@@ -68,10 +71,11 @@ def transformer_config(
         total_weight = settings.get("total_weight", 0.0)
     if stats_weight is None:
         stats_weight = settings.get("stats_weight", 0.0)
-    settings = {
-        k: v for k, v in settings.items() if k not in ("total_weight", "stats_weight")
-    }
+    distribution = bool(settings.get("distribution", False))
+    output_keys = ("total_weight", "stats_weight", "distribution")
+    settings = {k: v for k, v in settings.items() if k not in output_keys}
     extra, weights = output_targets(spec.schema, total_weight, stats_weight)
+    outputs = 1 + len(extra)
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
     return {
         "encoder": {"token_dim": dims["token_dim"], **encoder},
@@ -80,10 +84,11 @@ def transformer_config(
             "context_dim": dims["context_dim"],
             "hidden_dim": encoder["d_model"],
             "dropout": encoder["dropout"],
-            "out_dim": 1 + len(extra),
+            "out_dim": 2 * outputs if distribution else outputs,
         },
         "extra_targets": extra,
         "extra_weights": weights,
+        "distribution": distribution,
         **{k: v for k, v in settings.items() if k not in ENCODER_KEYS},
     }
 

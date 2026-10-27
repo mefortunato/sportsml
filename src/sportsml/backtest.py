@@ -271,7 +271,7 @@ def walk_forward(
     keep += [schema.market_spread, schema.market_total]
     keep += [*(schema.market_moneyline or ()), *(schema.market_total_odds or ())]
     keep += ["pred_margin", "win_prob", "market_margin", "market_prob"]
-    keep += ["pred_total", "over_prob", "market_over_prob"]
+    keep += ["cover_prob", "pred_total", "over_prob", "market_over_prob"]
     return results[[c for c in dict.fromkeys(keep) if c and c in results]]
 
 

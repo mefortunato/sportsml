@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from sportsml.nfl.data.download import build_games
 from sportsml.nfl.data.features import SCHEMA, STATS_COLUMNS
@@ -80,3 +81,77 @@ def test_odds_names_map_to_current_teams():
     }  # fmt: skip
     assert set(odds_map.values()) == current
     assert odds_map["Las Vegas Raiders"] == "LV"
+
+
+def injury_frames():
+    """KC's QB and a corner across six weeks; snap counts for weeks 1-5."""
+    games = pd.DataFrame(
+        {"season": 2023, "week": list(range(1, 7)), "team": "KC", "opp_team": "BUF"}
+    )
+    snaps = pd.DataFrame(
+        [
+            # the QB plays every snap; the corner half the snaps in weeks 1-4
+            {"season": 2023, "week": w, "team": "KC", "pfr_player_id": "qb1",
+             "offense_pct": 1.0, "defense_pct": 0.0}
+            for w in range(1, 6)
+        ]
+        + [
+            {"season": 2023, "week": w, "team": "KC", "pfr_player_id": "cb1",
+             "offense_pct": 0.0, "defense_pct": 0.5}
+            for w in range(1, 5)
+        ]
+    )  # fmt: skip
+    players = pd.DataFrame({"gsis_id": ["g-qb", "g-cb"], "pfr_id": ["qb1", "cb1"]})
+
+    def report(week, gsis_id, position, status, modified="2023-01-01"):
+        return {"season": 2023, "week": week, "team": "KC", "gsis_id": gsis_id,
+                "position": position, "report_status": status,
+                "date_modified": modified}  # fmt: skip
+
+    injuries = pd.DataFrame(
+        [
+            report(3, "g-qb", "QB", "Questionable"),
+            report(5, "g-cb", "CB", "Out"),
+            # the later report wins
+            report(6, "g-qb", "QB", "Questionable", "2023-01-01"),
+            report(6, "g-qb", "QB", "Out", "2023-01-02"),
+            report(6, "g-cb", "CB", None),
+        ]
+    )
+    return games, injuries, snaps, players
+
+
+def test_injury_features_weigh_status_by_recent_snap_share():
+    from sportsml.nfl.data.injuries import INJURY_COLUMNS, injury_features
+
+    features = injury_features(*injury_frames()).set_index("week")
+    assert list(features.columns) == ["season", "team", *INJURY_COLUMNS]
+    # week 1 has no earlier games: unknown, not "healthy"
+    assert features.loc[1, INJURY_COLUMNS].isna().all()
+    assert features.loc[2, "inj_qb"] == 0.0
+    # questionable (0.33) x every snap of weeks 1-2
+    assert features.loc[3, "inj_qb"] == pytest.approx(0.33)
+    # out x half the snaps over weeks 1-4
+    assert features.loc[5, "inj_secondary"] == pytest.approx(0.5)
+    assert features.loc[5, "inj_qb"] == 0.0
+    # out (latest report) x the QB's share over weeks 2-5; the corner was
+    # listed without a game status and missed week 5 already
+    assert features.loc[6, "inj_qb"] == pytest.approx(1.0)
+    assert features.loc[6, "inj_secondary"] == 0.0
+
+
+def test_build_games_adds_both_sides_injury_features():
+    from sportsml.nfl.data.injuries import INJURY_COLUMNS, OPP_INJURY_COLUMNS
+
+    schedule, team_stats = nflverse_frames()
+    healthy = dict.fromkeys(INJURY_COLUMNS, 0.0)
+    injuries = pd.DataFrame(
+        [
+            {"season": 2010, "week": 1, "team": "KC", **healthy, "inj_qb": 1.0},
+            {"season": 2010, "week": 1, "team": "LV", **healthy, "inj_ol": 2.0},
+        ]
+    )
+    games = build_games(schedule, team_stats, injuries).set_index("team")
+    assert (games.loc["KC", "inj_qb"], games.loc["KC", "opp_inj_ol"]) == (1.0, 2.0)
+    assert (games.loc["LV", "opp_inj_qb"], games.loc["LV", "inj_ol"]) == (1.0, 2.0)
+    assert games.loc["LA", OPP_INJURY_COLUMNS].isna().all()

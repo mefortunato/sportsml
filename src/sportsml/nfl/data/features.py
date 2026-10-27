@@ -1,4 +1,5 @@
 from ...core.schema import GameSchema
+from .injuries import INJURY_COLUMNS, OPP_INJURY_COLUMNS
 
 STATS_COLUMNS = [
     "completions",
@@ -120,6 +121,7 @@ SCHEMA = GameSchema(
         ("qb_id", "opp_qb_id"),
         ("qb_name", "opp_qb_name"),
         ("coach", "opp_coach"),
+        *zip(INJURY_COLUMNS, OPP_INJURY_COLUMNS),
     ),
     negated=("spread_line",),
     display=("gameday", "gametime", *MARKET_COLUMNS),

@@ -31,8 +31,8 @@ ENCODER_KEYS = ("hidden_dim", "out_dim", "num_layers", "dropout", "aggr")
 def gnn_config(
     sport: str,
     context: list[str] | None = None,
-    total_weight: float = 0.0,
-    stats_weight: float = 0.0,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
 ) -> dict:
     """GraphModel init args for ``sport``: EdgeConvEncoder + EdgeFFN.
 
@@ -40,12 +40,20 @@ def gnn_config(
     the sport's schema. Used by :func:`default_model` and the CLI defaults.
     ``total_weight`` / ``stats_weight`` add the total and every box-score
     stat as extra outputs (see
-    :func:`~sportsml.models.lightning.output_targets`).
+    :func:`~sportsml.models.lightning.output_targets`); None takes the
+    sport's ``Sport.gnn`` setting (default 0, off).
     """
     spec = get_sport(sport)
-    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     dims = graph_dims(spec.schema.with_features(context))
     settings = {"hidden_dim": 128, "out_dim": 64, "num_layers": 3, **spec.gnn}
+    if total_weight is None:
+        total_weight = settings.get("total_weight", 0.0)
+    if stats_weight is None:
+        stats_weight = settings.get("stats_weight", 0.0)
+    settings = {
+        k: v for k, v in settings.items() if k not in ("total_weight", "stats_weight")
+    }
+    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
     return {
         "encoder": {"edge_dim": dims["edge_dim"], **encoder},
@@ -64,8 +72,8 @@ def gnn_config(
 def default_model(
     sport: str,
     context: list[str] | None = None,
-    total_weight: float = 0.0,
-    stats_weight: float = 0.0,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
 ) -> GraphModel:
     """EdgeConvEncoder + EdgeFFN configured for ``sport`` (see ``Sport.gnn``)."""
     config = gnn_config(sport, context, total_weight, stats_weight)

@@ -39,8 +39,8 @@ def transformer_config(
     context: list[str] | None = None,
     opponent_strength: bool = False,
     elo_margin: bool = False,
-    total_weight: float = 0.0,
-    stats_weight: float = 0.0,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     **overrides,
 ) -> dict:
     """TransformerModel init args for ``sport``: sizes from
@@ -49,9 +49,9 @@ def transformer_config(
 
     ``total_weight`` / ``stats_weight`` add the total and every box-score
     stat as extra outputs with those loss weights (see
-    :func:`~sportsml.models.lightning.output_targets`)."""
+    :func:`~sportsml.models.lightning.output_targets`); None takes the
+    sport's ``Sport.transformer`` setting (default 0, off)."""
     spec = get_sport(sport)
-    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     dims = transformer_dims(
         spec.schema.with_features(context), opponent_strength, elo_margin
     )
@@ -64,6 +64,14 @@ def transformer_config(
         **spec.transformer,
         **overrides,
     }
+    if total_weight is None:
+        total_weight = settings.get("total_weight", 0.0)
+    if stats_weight is None:
+        stats_weight = settings.get("stats_weight", 0.0)
+    settings = {
+        k: v for k, v in settings.items() if k not in ("total_weight", "stats_weight")
+    }
+    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
     return {
         "encoder": {"token_dim": dims["token_dim"], **encoder},
@@ -85,8 +93,8 @@ def default_model(
     context: list[str] | None = None,
     opponent_strength: bool = False,
     elo_margin: bool = False,
-    total_weight: float = 0.0,
-    stats_weight: float = 0.0,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     **overrides,
 ) -> TransformerModel:
     config = transformer_config(
@@ -137,8 +145,8 @@ def fit_transformer(
     min_history: int = 1,
     opponent_strength: bool = False,
     elo_margin: bool = False,
-    total_weight: float = 0.0,
-    stats_weight: float = 0.0,
+    total_weight: float | None = None,
+    stats_weight: float | None = None,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -165,7 +173,8 @@ def fit_transformer(
             Elo expected, so a result is read against the opponent's rating.
         total_weight / stats_weight: Also regress the total (served as
             ``pred_total``) and every box-score stat, with these loss
-            weights. Used to build the default model; ignored with ``model``.
+            weights (None: the sport's ``Sport.transformer`` setting). Used
+            to build the default model; ignored with ``model``.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:

@@ -11,8 +11,9 @@ Writes, under ``<output_dir>/data/``:
 * ``sports.json``: each sport's info (label, model, backtest summary);
 * ``<sport>/upcoming.json``: ``{"default": ..., "by_date": {"<season>-<date>": ...}}``;
 * ``<sport>/games.json``: ``{game_id: game view}`` for every upcoming game;
-* ``<sport>/challenge.json``: ``[{"game": ..., "answer": ...}]`` per pool game,
-  the answer without the pick-dependent ``pick`` / ``correct``;
+* ``<sport>/challenge.json``: ``[{"game": ..., "answers": {market: ...}}]``
+  per pool game playable on some market, each answer without the
+  pick-dependent ``pick`` / ``correct`` / ``units``;
 * ``<sport>/performance.json`` and ``<sport>/rankings.json``.
 
 Team objects are written once per file (``"teams"``) and referenced as
@@ -115,11 +116,11 @@ def export(
         games = {game_id: snap.game(game_id) for game_id in sorted(game_ids)}
         _write(out / sport / "games.json", games, teams)
 
-        challenge = []
-        for game_id in snap.pool.index:
-            answer = snap.challenge_answer(game_id, "home")
-            del answer["pick"], answer["correct"]
-            challenge.append({"game": snap.challenge_game(game_id), "answer": answer})
+        challenge = [
+            {"game": snap.challenge_game(game_id), "answers": answers}
+            for game_id in snap.pool.index
+            if (answers := snap.challenge_answers(game_id))
+        ]
         _write(out / sport / "challenge.json", challenge, teams)
         _write(out / sport / "performance.json", snap.performance(), teams)
         _write(out / sport / "rankings.json", snap.rankings(), teams)

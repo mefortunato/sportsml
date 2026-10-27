@@ -134,7 +134,13 @@ def toy_sport():
             schema=TOY_SCHEMA,
             download=lambda output_file=None: make_games(),
             gnn={"hidden_dim": 16, "out_dim": 8, "num_layers": 2},
-            transformer={"history": 8, "d_model": 16, "nhead": 2, "num_layers": 1},
+            transformer={
+                "history": 8,
+                "d_model": 16,
+                "nhead": 2,
+                "num_layers": 1,
+                "total_weight": 1.0,
+            },
         )
     )
 

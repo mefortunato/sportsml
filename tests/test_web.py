@@ -109,37 +109,91 @@ def test_challenge_hides_the_outcome(snapshot):
         recent = game["summaries"][side]["recent"]
         assert game["game_id"] not in {r["game_id"] for r in recent}
 
-    keep = snapshot.pool.index[0]
+    playable = [g for g in snapshot.pool.index if "spread" in snapshot.markets(g)]
+    keep = playable[0]
     exclude = [g for g in snapshot.pool.index if g != keep]
     assert snapshot.challenge_next(random.Random(0), exclude)["game_id"] == keep
+    # every market draws only games it can be played on
+    for market in ("spread", "moneyline", "total"):
+        game = snapshot.challenge_next(random.Random(1), market=market)
+        assert market in game["markets"]
+        assert {"moneyline", "total_line", "total_odds"} <= set(game)
+
+
+def test_info_lists_the_challenge_markets(snapshot):
+    assert snapshot.info()["markets"] == ["spread", "moneyline", "total"]
 
 
 @pytest.mark.parametrize("pick", ["home", "away"])
-def test_challenge_answer_scores_player_and_model(snapshot, pick):
-    game_id = snapshot.pool.index[3]
+def test_challenge_answer_scores_player_and_model_on_the_spread(snapshot, pick):
+    game_id = next(g for g in snapshot.pool.index if "spread" in snapshot.markets(g))
     row = snapshot.pool.loc[game_id]
     answer = snapshot.challenge_answer(game_id, pick)
 
     covered = "home" if row["margin"] > row["market_margin"] else "away"
     model_pick = "home" if row["pred_margin"] > row["market_margin"] else "away"
-    assert answer["covered"] == covered
+    assert answer["covered"] == answer["outcome"] == covered
     assert answer["correct"] == (pick == covered)
-    assert answer["model"]["ats_pick"] == model_pick
+    assert answer["units"] == pytest.approx(100 / 110 if pick == covered else -1)
+    assert answer["model"]["ats_pick"] == answer["model"]["pick"] == model_pick
     assert answer["model"]["correct"] == (model_pick == covered)
     assert answer["result"]["margin"] == row["margin"]
 
 
-def test_pushes_are_left_out_of_the_pool(snapshot):
+@pytest.mark.parametrize("pick", ["home", "away"])
+def test_moneyline_answer_pays_the_posted_odds(snapshot, pick):
+    from sportsml.backtest import no_vig_probability
+
+    game_id = next(g for g in snapshot.pool.index if "moneyline" in snapshot.markets(g))
+    row = snapshot.pool.loc[game_id]
+    answer = snapshot.challenge_answer(game_id, pick, market="moneyline")
+    winner = "home" if row["margin"] > 0 else "away"
+    assert answer["outcome"] == winner
+    odds = {"home": row["moneyline"], "away": row["opp_moneyline"]}[pick]
+    win = odds / 100 if odds > 0 else 100 / -odds
+    assert answer["units"] == pytest.approx(win if pick == winner else -1)
+    # the model takes the side it rates above the market's no-vig odds
+    market = no_vig_probability(row["moneyline"], row["opp_moneyline"])
+    value = "home" if row["win_prob"] > market else "away"
+    assert answer["model"]["pick"] == answer["model"]["ml_pick"] == value
+    assert answer["model"]["market_prob"] == pytest.approx(market)
+
+
+@pytest.mark.parametrize("pick", ["over", "under"])
+def test_total_answer_scores_over_and_under(snapshot, pick):
+    game_id = next(g for g in snapshot.pool.index if "total" in snapshot.markets(g))
+    row = snapshot.pool.loc[game_id]
+    answer = snapshot.challenge_answer(game_id, pick, market="total")
+    went = "over" if row["total"] > row["total_line"] else "under"
+    assert answer["outcome"] == answer["result"]["went"] == went
+    assert answer["correct"] == (pick == went)
+    model = "over" if row["pred_total"] > row["total_line"] else "under"
+    assert answer["model"]["pick"] == answer["model"]["ou_pick"] == model
+    assert answer["model"]["total"] == pytest.approx(row["pred_total"])
+    with pytest.raises(LookupError):
+        snapshot.challenge_answer(game_id, pick, market="parlay")
+
+
+def test_a_push_is_only_unplayable_on_its_own_market(snapshot):
     pool = snapshot.pool.reset_index()
-    pushed = pool.iloc[:1].assign(game_id="push", margin=3.0, market_margin=3.0)
+    game_id = pool.loc[0, "game_id"]
+    games = snapshot.games.copy()
+    rows = games["game_id"] == game_id
+    # land the home team's margin exactly on the spread (both perspectives)
+    spread = games.loc[rows, "spread"]
+    games.loc[rows, "margin"] = spread.round()
+    games.loc[rows, "spread"] = spread.round()
+    home = rows & (games["team"] == pool.loc[0, "team"])
+    pool.loc[0, "market_margin"] = games.loc[home, "spread"].iloc[0]
     rebuilt = Snapshot(
         snapshot.view,
-        snapshot.games,
+        games,
         load_predictor(snapshot.model_dir),
-        pd.concat([pool, pushed]),
+        pool,
         pd.DataFrame(list(snapshot.teams.values())),
     )
-    assert "push" not in rebuilt.pool.index
+    markets = rebuilt.markets(game_id)
+    assert "spread" not in markets and "moneyline" in markets
     assert cover_side(3, 3.0) == "push" and cover_side(4, 3.5) == "home"
 
 
@@ -220,14 +274,22 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
     for entry in challenge[:10]:
         game_id = entry["game"]["game_id"]
         assert entry["game"] == _exported(snapshot.challenge_game(game_id))
-        for pick in ("home", "away"):
-            # the browser adds the pick-dependent fields (static-api.ts scoreAnswer)
-            scored = {
-                **entry["answer"],
-                "pick": pick,
-                "correct": pick == entry["answer"]["covered"],
-            }
-            assert scored == _exported(snapshot.challenge_answer(game_id, pick))
+        assert set(entry["answers"]) == set(entry["game"]["markets"])
+        for market, answer in entry["answers"].items():
+            for pick in answer["odds"]:
+                # the browser adds the pick-dependent fields (api.ts scoreAnswer)
+                correct = pick == answer["outcome"]
+                odds = answer["odds"][pick]
+                scored = {
+                    **answer,
+                    "pick": pick,
+                    "correct": correct,
+                    "units": (odds / 100 if odds > 0 else 100 / -odds)
+                    if correct
+                    else -1.0,
+                }
+                expected = snapshot.challenge_answer(game_id, pick, market)
+                assert _as_exported(scored) == _exported(expected)
     assert "logo.png" not in (data / "toy" / "challenge.json").read_text()
     assert _revive(data / "toy" / "rankings.json") == _exported(snapshot.rankings())
     assert _revive(data / "toy" / "performance.json") == _exported(
@@ -301,3 +363,25 @@ def test_rankings_carry_the_views_playoff_results(webdata, monkeypatch):
     by_season = {s["season"]: s["playoffs"] for s in rankings["seasons"]}
     assert by_season == {2024: {}, 2023: {"T00": "champion", "T01": "runner_up"}}
     assert rankings["playoff_labels"]["champion"] == "Won the final"
+
+
+def test_performance_and_games_cover_every_market(snapshot):
+    perf = snapshot.performance()
+    assert {"ats", "moneyline", "totals"} <= set(perf)
+    assert set(perf["moneyline_by_season"]) == set(perf["totals_by_season"]) == {2023}
+    assert {"model", "market"} == set(perf["over_calibration"])
+    decided = sum(b["n"] for b in perf["over_calibration"]["model"])
+    assert decided == perf["totals"]["n"] - sum(
+        r["pushes"] for r in perf["totals"]["record"][:1]
+    )
+
+    game = snapshot.upcoming()["games"][0]
+    assert game["total_line"] is not None and game["moneyline"] is not None
+    pred = game["prediction"]
+    assert pred["total_edge"] == pytest.approx(pred["total"] - game["total_line"])
+    assert pred["ou_pick"] == ("over" if pred["total_edge"] > 0 else "under")
+    assert pred["ml_edge"] == pytest.approx(pred["win_prob"] - pred["market_prob"])
+    played = snapshot.game(snapshot.pool.index[0])
+    result = played["result"]
+    assert result["total"] == result["home_score"] + result["away_score"]
+    assert result["winner"] in ("home", "away", "push")

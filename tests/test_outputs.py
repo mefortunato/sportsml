@@ -72,7 +72,8 @@ def test_total_and_stats_outputs_train_and_serve(family, toy_games, tmp_path):
 
 @pytest.mark.parametrize("family", ["transformer", "gnn"])
 def test_margin_only_models_serve_no_total(family, toy_games, tmp_path):
-    res = fit(family, toy_games, tmp_path)
+    # the toy sport's transformer predicts the total by default
+    res = fit(family, toy_games, tmp_path, total_weight=0.0)
     out = res["predictor"].predict(
         played(toy_games, TOY_SCHEMA).drop_duplicates("game_id").head(3)
     )
@@ -91,7 +92,7 @@ def test_missing_stats_are_left_out_of_the_loss(toy_games, tmp_path):
 
 def test_predictors_saved_before_totals_still_serve(toy_games, tmp_path):
     """A pickled margin-only module lacks the new attributes."""
-    res = fit("transformer", toy_games, tmp_path)
+    res = fit("transformer", toy_games, tmp_path, total_weight=0.0)
     predictor = res["predictor"]
     module = predictor.model.module
     del module.extra_targets

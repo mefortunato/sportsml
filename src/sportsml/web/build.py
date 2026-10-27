@@ -96,6 +96,13 @@ def build(
                 "seasons": summary["seasons"],
                 "overall": summary["overall"],
                 "ats": summary.get("ats", [{}])[0],
+                "moneyline": summary.get("moneyline", [{}])[0],
+                "totals": {
+                    k: v
+                    for k, v in summary.get("totals", {}).items()
+                    if k in ("n", "rmse", "brier")
+                }
+                | {"record": summary.get("totals", {}).get("record", [{}])[0]},
             },
         }
         (path / "meta.json").write_text(json.dumps(meta, indent=2, default=float))

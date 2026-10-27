@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import lightning.pytorch as pl
 
-from ...core.evaluation import calibrate_and_evaluate
+from ...core.evaluation import calibrate_and_evaluate, calibrate_total
 from ...core.io import Table, read_table
 from ...core.metrics import format_metrics
 from ...core.predictor import Predictor, prepare_save_dir, save_predictor
 from ...core.schema import played
 from ...core.splits import split_seasons
 from ...core.sport import get_sport
-from ..lightning import best_model, default_trainer, seed_and_reset
+from ..lightning import best_model, default_trainer, output_targets, seed_and_reset
 from .datamodule import GraphDataModule
 from .model import GraphMatchupModel, GraphModel
 from .nn.encoder.edge_conv_encoder import EdgeConvEncoder
@@ -28,13 +28,22 @@ def graph_dims(schema) -> dict[str, int]:
 ENCODER_KEYS = ("hidden_dim", "out_dim", "num_layers", "dropout", "aggr")
 
 
-def gnn_config(sport: str, context: list[str] | None = None) -> dict:
+def gnn_config(
+    sport: str,
+    context: list[str] | None = None,
+    total_weight: float = 0.0,
+    stats_weight: float = 0.0,
+) -> dict:
     """GraphModel init args for ``sport``: EdgeConvEncoder + EdgeFFN.
 
     Sizes and optimizer settings come from ``Sport.gnn``; feature counts from
     the sport's schema. Used by :func:`default_model` and the CLI defaults.
+    ``total_weight`` / ``stats_weight`` add the total and every box-score
+    stat as extra outputs (see
+    :func:`~sportsml.models.lightning.output_targets`).
     """
     spec = get_sport(sport)
+    extra, weights = output_targets(spec.schema, total_weight, stats_weight)
     dims = graph_dims(spec.schema.with_features(context))
     settings = {"hidden_dim": 128, "out_dim": 64, "num_layers": 3, **spec.gnn}
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
@@ -44,14 +53,22 @@ def gnn_config(sport: str, context: list[str] | None = None) -> dict:
             "in_dim": encoder["out_dim"],
             "hidden_dim": encoder["out_dim"],
             "context_dim": dims["context_dim"],
+            "out_dim": 1 + len(extra),
         },
+        "extra_targets": extra,
+        "extra_weights": weights,
         **{k: v for k, v in settings.items() if k not in ENCODER_KEYS},
     }
 
 
-def default_model(sport: str, context: list[str] | None = None) -> GraphModel:
+def default_model(
+    sport: str,
+    context: list[str] | None = None,
+    total_weight: float = 0.0,
+    stats_weight: float = 0.0,
+) -> GraphModel:
     """EdgeConvEncoder + EdgeFFN configured for ``sport`` (see ``Sport.gnn``)."""
-    config = gnn_config(sport, context)
+    config = gnn_config(sport, context, total_weight, stats_weight)
     return GraphModel(
         encoder=EdgeConvEncoder(**config.pop("encoder")),
         predictor=EdgeFFN(**config.pop("predictor")),
@@ -104,7 +121,10 @@ def fit_gnn(
     if not split.val:
         raise ValueError("GNN training needs validation seasons (early stopping)")
 
-    data = GraphDataModule(games, schema, split, batch_size, num_workers, min_games)
+    extra = tuple(model.extra_targets)
+    data = GraphDataModule(
+        games, schema, split, batch_size, num_workers, min_games, extra
+    )
     _check_dims(model, data)
     seed_and_reset(model, seed)
     model.set_target_scaling(data.target_mean, data.target_std)
@@ -114,7 +134,12 @@ def fit_gnn(
 
     best = best_model(trainer, model)
     rows, raw = data.predict_targets(best)
-    sigma, metrics, _ = calibrate_and_evaluate(rows, raw, schema, split)
+    raw = raw.reshape(len(rows), -1)
+    sigma, metrics, _ = calibrate_and_evaluate(rows, raw[:, 0], schema, split)
+    total_sigma = None
+    if schema.total and schema.total in extra:
+        total = raw[:, 1 + extra.index(schema.total)]
+        total_sigma = calibrate_total(rows, total, schema, split, metrics)
     if print_metrics:
         print(format_metrics(metrics))
     if trainer.logger is not None:
@@ -124,7 +149,13 @@ def fit_gnn(
 
     matchup_model = GraphMatchupModel(schema, best, data.features)
     matchup_model.update_state(games)
-    predictor = Predictor(matchup_model, sigma=sigma, sport=sport, metrics=metrics)
+    predictor = Predictor(
+        matchup_model,
+        sigma=sigma,
+        sport=sport,
+        metrics=metrics,
+        total_sigma=total_sigma,
+    )
     if save_dir is not None:
         save_predictor(predictor, save_dir)
     return {"predictor": predictor, "metrics": metrics, "split": split, "model": best}

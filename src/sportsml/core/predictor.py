@@ -17,7 +17,7 @@ import mlflow.pyfunc
 import numpy as np
 import pandas as pd
 
-from .metrics import win_probability
+from .metrics import over_probability, win_probability
 from .schema import GameSchema, mirror
 
 
@@ -44,6 +44,13 @@ class MatchupModel(abc.ABC):
         :class:`Predictor`, which also averages in the mirrored perspective.
         """
 
+    def predict_outputs(self, matchups: pd.DataFrame) -> dict[str, np.ndarray]:
+        """Raw ``margin`` and, for models that predict it, ``total``.
+
+        Override when a model predicts more than the margin in one pass.
+        """
+        return {"margin": self.predict_margin(matchups)}
+
     @property
     @abc.abstractmethod
     def teams(self) -> list:
@@ -55,7 +62,9 @@ class Predictor(mlflow.pyfunc.PythonModel):
 
     ``predict`` takes a DataFrame with the schema's ``team`` and ``opp``
     columns plus any pre-game columns (location, context, categorical) and
-    returns it with ``pred_margin`` and ``win_prob`` appended.
+    returns it with ``pred_margin`` and ``win_prob`` appended. A model that
+    predicts the total also gets ``pred_total`` and, where the matchup
+    carries the market's total line, ``over_prob``.
     """
 
     def __init__(
@@ -64,11 +73,13 @@ class Predictor(mlflow.pyfunc.PythonModel):
         sigma: float,
         sport: str,
         metrics: dict[str, dict[str, float]] | None = None,
+        total_sigma: float | None = None,
     ):
         self.model = model
         self.sigma = float(sigma)
         self.sport = sport
         self.metrics = metrics or {}
+        self.total_sigma = None if total_sigma is None else float(total_sigma)
 
     @property
     def schema(self) -> GameSchema:
@@ -90,12 +101,22 @@ class Predictor(mlflow.pyfunc.PythonModel):
         if schema.location and schema.location not in matchups:
             matchups[schema.location] = 0
 
-        forward = self.model.predict_margin(matchups)
-        backward = self.model.predict_margin(mirror(matchups, schema))
-        margin = (np.asarray(forward) - np.asarray(backward)) / 2
-        return matchups.assign(
+        forward = self.model.predict_outputs(matchups)
+        backward = self.model.predict_outputs(mirror(matchups, schema))
+        margin = (np.asarray(forward["margin"]) - np.asarray(backward["margin"])) / 2
+        out = matchups.assign(
             pred_margin=margin, win_prob=win_probability(margin, self.sigma)
         )
+        if "total" in forward:
+            total = (np.asarray(forward["total"]) + np.asarray(backward["total"])) / 2
+            out["pred_total"] = total
+            # saved before totals existed: no total_sigma attribute
+            sigma = getattr(self, "total_sigma", None)
+            if sigma and schema.market_total and schema.market_total in out:
+                out["over_prob"] = over_probability(
+                    total, out[schema.market_total], sigma
+                )
+        return out
 
 
 def prepare_save_dir(path: str | None, overwrite: bool = False) -> None:

@@ -59,7 +59,11 @@ def sklearn_fitter(
     return fit
 
 
-def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
+def gnn_fitter(
+    sport: str, max_epochs: int = 100, model: dict | None = None, **kwargs
+) -> Fitter:
+    """``model``: :func:`~sportsml.models.gnn.default_model` arguments, e.g.
+    ``{"total_weight": 1.0}``; ``kwargs`` go to ``fit_gnn``."""
     from .models.gnn import default_model, default_trainer, fit_gnn
 
     def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
@@ -71,7 +75,7 @@ def gnn_fitter(sport: str, max_epochs: int = 100, **kwargs) -> Fitter:
         return fit_gnn(
             games,
             sport,
-            model=default_model(sport),
+            model=default_model(sport, kwargs.get("context"), **(model or {})),
             trainer=trainer,
             train_seasons=split.train,
             val_seasons=split.val,
@@ -208,8 +212,9 @@ def walk_forward(
     the team state is refreshed and before that date's games are predicted.
 
     Returns one row per game (home team's perspective) with the result, the
-    model's ``pred_margin`` / ``win_prob`` and, if the schema has market
-    columns, ``market_margin`` / ``market_prob``.
+    model's ``pred_margin`` / ``win_prob`` (and ``pred_total`` /
+    ``over_prob`` from models that predict the total) and, if the schema
+    has market columns, ``market_margin`` / ``market_prob``.
     """
     schema = get_sport(sport).schema
     games = played(games, schema)
@@ -248,9 +253,10 @@ def walk_forward(
             )
 
     results = pd.concat(out, ignore_index=True)
-    keep = [*schema.key_columns, schema.location, schema.target]
+    keep = [*schema.key_columns, schema.location, schema.target, schema.total]
     keep += [schema.team_name, schema.opp_name, *schema.display]
     keep += ["pred_margin", "win_prob", "market_margin", "market_prob"]
+    keep += ["pred_total", "over_prob"]
     return results[[c for c in dict.fromkeys(keep) if c and c in results]]
 
 

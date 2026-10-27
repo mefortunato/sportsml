@@ -23,6 +23,7 @@ class GraphDataModule(pl.LightningDataModule):
         batch_size: int = 8,
         num_workers: int = 0,
         min_games: int = 1,
+        extra_targets: tuple[str, ...] = (),
     ):
         super().__init__()
         self.schema = schema
@@ -34,10 +35,20 @@ class GraphDataModule(pl.LightningDataModule):
         games = games[games[schema.season].isin(split.all)]
         train_games = games[games[schema.season].isin(split.train)]
         self.features = GraphFeatures.fit(games, train_games, schema)
-        self.graph = build_graph(games, schema, self.features, min_games)
+        self.graph = build_graph(
+            games, schema, self.features, min_games, tuple(extra_targets)
+        )
 
-        self.target_mean = float(train_games[schema.target].mean())
-        self.target_std = float(train_games[schema.target].std())
+        self.extra_targets = tuple(extra_targets)
+        y = train_games[[schema.target, *self.extra_targets]].apply(
+            pd.to_numeric, errors="coerce"
+        )
+        if self.extra_targets:
+            self.target_mean = y.mean().fillna(0.0).to_numpy()
+            self.target_std = y.std().replace(0, 1).fillna(1.0).to_numpy()
+        else:
+            self.target_mean = float(y[schema.target].mean())
+            self.target_std = float(y[schema.target].std())
 
         self.datasets = {
             name: SnapshotDataset(self.graph, seasons)
@@ -67,24 +78,26 @@ class GraphDataModule(pl.LightningDataModule):
     def predict_targets(self, model) -> tuple[pd.DataFrame, np.ndarray]:
         """Each split's target edges with ``model``'s unscaled predictions.
 
-        Returns played-game rows (season, game_id, target) and predictions.
+        Returns played-game rows (season, game_id, target, and the total if
+        it is an extra target) and predictions (``[n, n_outputs]``).
         """
+        total = self.schema.total
         model.eval()
         rows, preds = [], []
         for name in self.datasets:
             for batch in self._loader(name):
                 batch = batch.to(model.device)
-                preds.append(model.predict_margin(batch).cpu().numpy())
+                preds.append(model.predict_outputs(batch).cpu().numpy())
                 t = batch.target
-                rows.append(
-                    pd.DataFrame(
-                        {
-                            self.schema.season: batch.season[t].cpu().numpy(),
-                            self.schema.game_id: self.graph.game_ids[
-                                batch.game[t].cpu().numpy()
-                            ],
-                            self.schema.target: batch.y[t].cpu().numpy(),
-                        }
-                    )
-                )
+                y = batch.y[t].cpu().numpy().reshape(int(t.sum()), -1)
+                frame = {
+                    self.schema.season: batch.season[t].cpu().numpy(),
+                    self.schema.game_id: self.graph.game_ids[
+                        batch.game[t].cpu().numpy()
+                    ],
+                    self.schema.target: y[:, 0],
+                }
+                if total and total in self.extra_targets:
+                    frame[total] = y[:, 1 + self.extra_targets.index(total)]
+                rows.append(pd.DataFrame(frame))
         return pd.concat(rows, ignore_index=True), np.concatenate(preds)

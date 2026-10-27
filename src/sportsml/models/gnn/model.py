@@ -31,10 +31,14 @@ class GraphModel(MarginModule):
         predictor: EdgeFFN,
         lr: float = 1e-3,
         weight_decay: float = 0.0,
-        target_mean: float = 0.0,
-        target_std: float = 1.0,
+        target_mean: float | list[float] = 0.0,
+        target_std: float | list[float] = 1.0,
+        extra_targets: tuple[str, ...] = (),
+        extra_weights: tuple[float, ...] = (),
     ):
-        super().__init__(lr, weight_decay, target_mean, target_std)
+        super().__init__(
+            lr, weight_decay, target_mean, target_std, extra_targets, extra_weights
+        )
         self.encoder = encoder
         self.predictor = predictor
         self.save_hyperparameters(ignore=list(self.SUBMODULES))
@@ -49,9 +53,10 @@ class GraphModel(MarginModule):
             num_nodes=graph.num_nodes,
         )
         target = graph.target
-        return self.predictor(
+        out = self.predictor(
             x, graph.edge_index[:, target], context=graph.context[target]
-        ).squeeze(-1)
+        )
+        return out.squeeze(-1) if self.n_outputs == 1 else out
 
     def targets(self, graph) -> torch.Tensor:
         return graph.y[graph.target]
@@ -91,8 +96,11 @@ class GraphMatchupModel(MatchupModel):
     def teams(self) -> list:
         return [t for t, active in zip(self.features.teams, self.active) if active]
 
-    @torch.no_grad()
     def predict_margin(self, matchups: pd.DataFrame) -> np.ndarray:
+        return self.predict_outputs(matchups)["margin"]
+
+    @torch.no_grad()
+    def predict_outputs(self, matchups: pd.DataFrame) -> dict[str, np.ndarray]:
         if self.embeddings is None:
             raise RuntimeError("call update_state before predicting")
         team = self.features.index(matchups[self.schema.team])
@@ -100,6 +108,12 @@ class GraphMatchupModel(MatchupModel):
         edge_index = torch.from_numpy(np.stack([opp, team]))
         pred = self.module.predictor(
             self.embeddings, edge_index, context=self.features.context_tensor(matchups)
-        ).squeeze(-1)
+        )
         module = self.module
-        return (pred * module.target_std + module.target_mean).numpy()
+        out = (pred * module.target_std + module.target_mean).numpy()
+        extra = getattr(module, "extra_targets", ())
+        result = {"margin": out[:, 0]}
+        total = self.schema.total
+        if total and total in extra:
+            result["total"] = out[:, 1 + extra.index(total)]
+        return result

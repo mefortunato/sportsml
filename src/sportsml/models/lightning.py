@@ -6,18 +6,44 @@ import tempfile
 from pathlib import Path
 
 import lightning.pytorch as pl
+import numpy as np
 import torch
 import torchmetrics
 
 
-class MarginModule(pl.LightningModule):
-    """A LightningModule that regresses the point margin.
+def output_targets(
+    schema, total_weight: float = 0.0, stats_weight: float = 0.0
+) -> tuple[tuple[str, ...], tuple[float, ...]]:
+    """Targets a neural model regresses besides the margin, and their loss
+    weights: the total (``schema.total``) with ``total_weight`` and every
+    box-score stat with ``stats_weight`` shared between them (each stat's
+    loss is averaged, so the weight does not grow with the number of stats).
+    """
+    names, weights = [], []
+    if total_weight:
+        if not schema.total:
+            raise ValueError("the sport's schema has no total column")
+        names.append(schema.total)
+        weights.append(float(total_weight))
+    if stats_weight:
+        stats = [c for c in schema.stats if c not in names]
+        names += stats
+        weights += [float(stats_weight) / len(stats)] * len(stats)
+    return tuple(names), tuple(weights)
 
-    Handles target standardization, the MSE loss, metric logging, the
-    optimizer and checkpoint loading. Subclasses implement ``forward(batch)``
-    (scaled predictions for the batch's targets) and ``targets(batch)``,
-    list their ``nn.Module`` constructor arguments in ``SUBMODULES`` (each
-    with ``hparams`` including its ``cls``), and call
+
+class MarginModule(pl.LightningModule):
+    """A LightningModule that regresses the point margin, optionally with
+    more targets (``extra_targets``: e.g. the total and box-score stats).
+
+    Handles per-target standardization, the (NaN-masked) MSE loss, metric
+    logging, the optimizer and checkpoint loading. The loss is the margin's
+    MSE plus each extra target's MSE times its ``extra_weights`` entry.
+    Subclasses implement ``forward(batch)`` (scaled predictions: ``[B]`` for
+    the margin alone, else ``[B, 1 + len(extra_targets)]`` with the margin
+    first) and ``targets(batch)`` (the same shape, unscaled), list their
+    ``nn.Module`` constructor arguments in ``SUBMODULES`` (each with
+    ``hparams`` including its ``cls``), and call
     ``self.save_hyperparameters(ignore=list(self.SUBMODULES))`` followed by
     ``self.save_submodules()`` at the end of ``__init__``.
     """
@@ -28,14 +54,27 @@ class MarginModule(pl.LightningModule):
         self,
         lr: float = 1e-3,
         weight_decay: float = 0.0,
-        target_mean: float = 0.0,
-        target_std: float = 1.0,
+        target_mean: float | list[float] = 0.0,
+        target_std: float | list[float] = 1.0,
+        extra_targets: tuple[str, ...] = (),
+        extra_weights: tuple[float, ...] = (),
     ):
         super().__init__()
+        if len(extra_weights) != len(extra_targets):
+            raise ValueError("extra_weights needs one weight per extra target")
         self.lr = lr
         self.weight_decay = weight_decay
-        self.register_buffer("target_mean", torch.tensor(target_mean))
-        self.register_buffer("target_std", torch.tensor(target_std))
+        self.extra_targets = tuple(extra_targets)
+        n = 1 + len(self.extra_targets)
+        mean = torch.as_tensor(target_mean, dtype=torch.float32)
+        std = torch.as_tensor(target_std, dtype=torch.float32)
+        if n > 1:
+            mean, std = mean.expand(n).clone(), std.expand(n).clone()
+        self.register_buffer("target_mean", mean)
+        self.register_buffer("target_std", std)
+        self.register_buffer(
+            "loss_weights", torch.tensor([1.0, *extra_weights], dtype=torch.float32)
+        )
         self.metrics = torch.nn.ModuleDict(
             {
                 stage: torch.nn.ModuleDict(
@@ -54,11 +93,18 @@ class MarginModule(pl.LightningModule):
             {key: getattr(self, key).hparams for key in self.SUBMODULES}
         )
 
-    def set_target_scaling(self, mean: float, std: float) -> None:
-        """Standardize the regression target (set from the training data)."""
-        self.target_mean.fill_(mean)
-        self.target_std.fill_(std)
-        self.hparams.update({"target_mean": mean, "target_std": std})
+    @property
+    def n_outputs(self) -> int:
+        return 1 + len(getattr(self, "extra_targets", ()))
+
+    def set_target_scaling(self, mean, std) -> None:
+        """Standardize the regression targets (set from the training data):
+        scalars for the margin alone, else one value per output."""
+        mean = torch.as_tensor(np.asarray(mean, dtype=np.float32))
+        std = torch.as_tensor(np.asarray(std, dtype=np.float32))
+        self.target_mean.copy_(mean.reshape(self.target_mean.shape))
+        self.target_std.copy_(std.reshape(self.target_std.shape))
+        self.hparams.update({"target_mean": mean.tolist(), "target_std": std.tolist()})
 
     def configure_optimizers(self):
         return torch.optim.Adam(
@@ -68,19 +114,34 @@ class MarginModule(pl.LightningModule):
     def targets(self, batch) -> torch.Tensor:
         raise NotImplementedError
 
+    def predict_outputs(self, batch) -> torch.Tensor:
+        """Unscaled predictions, ``[B, n_outputs]`` (margin first)."""
+        pred = self(batch)
+        if pred.dim() == 1:
+            pred = pred[:, None]
+        return pred * self.target_std + self.target_mean
+
     def predict_margin(self, batch) -> torch.Tensor:
-        return self(batch) * self.target_std + self.target_mean
+        return self.predict_outputs(batch)[:, 0]
 
     def _step(self, batch, stage: str):
         y = self.targets(batch)
         pred = self(batch)
-        loss = torch.nn.functional.mse_loss(
-            pred, (y - self.target_mean) / self.target_std
-        )
-        n = y.numel()
+        if y.dim() == 1:
+            y, pred = y[:, None], pred[:, None]
+        z = (y - self.target_mean) / self.target_std
+        known = ~torch.isnan(z)
+        error = (pred - torch.nan_to_num(z)) ** 2 * known
+        per_target = error.sum(0) / known.sum(0).clamp(min=1)
+        weights = getattr(self, "loss_weights", None)
+        loss = per_target[0] if weights is None else (per_target * weights).sum()
+        n = len(y)
         self.log(f"{stage}_loss", loss, prog_bar=True, on_epoch=True, batch_size=n)
+        if y.shape[1] > 1:
+            self.log(f"{stage}_margin_loss", per_target[0], on_epoch=True, batch_size=n)
+        y = y[:, 0]
         if f"{stage}_metrics" in self.metrics:
-            margin = pred * self.target_std + self.target_mean
+            margin = (pred * self.target_std + self.target_mean)[:, 0]
             metrics = self.metrics[f"{stage}_metrics"]
             metrics["rmse"].update(margin, y)
             metrics["mae"].update(margin, y)

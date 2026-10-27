@@ -100,7 +100,14 @@ OPP_STATS_COLUMNS = [f"opp_{col}" for col in STATS_COLUMNS]
 # Betting-market columns from the nflverse schedule. Only the next week's games
 # carry lines, and using them makes a model echo the market, so they are not
 # default features; pass them as `context` to opt in.
-MARKET_COLUMNS = ["spread_line", "total_line", "moneyline", "opp_moneyline"]
+MARKET_COLUMNS = [
+    "spread_line",
+    "total_line",
+    "moneyline",
+    "opp_moneyline",
+    "over_odds",
+    "under_odds",
+]
 
 SCHEMA = GameSchema(
     season="season",
@@ -129,4 +136,7 @@ SCHEMA = GameSchema(
     display=("gameday", "gametime", *MARKET_COLUMNS),
     market_spread="spread_line",
     market_moneyline=("moneyline", "opp_moneyline"),
+    total="total",
+    market_total="total_line",
+    market_total_odds=("over_odds", "under_odds"),
 )

@@ -198,6 +198,7 @@ class SequenceData(torch.utils.data.Dataset):
         schema: GameSchema,
         features: SequenceFeatures,
         rows: np.ndarray | None = None,
+        extra_targets: tuple[str, ...] = (),
     ):
         self.tokens = torch.from_numpy(features.tokens(games))
         self.seasons = torch.tensor(games[schema.season].to_numpy(dtype=np.float32))
@@ -207,7 +208,11 @@ class SequenceData(torch.utils.data.Dataset):
             (opp >= 0)[:, None], self.history[opp.clamp(min=0)], -1
         )
         self.context = torch.from_numpy(features.context(games))
-        self.y = torch.tensor(games[schema.target].to_numpy(dtype=np.float32))
+        targets = [schema.target, *extra_targets]
+        y = games[targets].apply(pd.to_numeric, errors="coerce")
+        self.y = torch.tensor(y.to_numpy(dtype=np.float32))
+        if not extra_targets:
+            self.y = self.y[:, 0]
         self.rows = torch.arange(len(games)) if rows is None else torch.as_tensor(rows)
 
     def with_rows(self, rows) -> SequenceData:

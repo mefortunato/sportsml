@@ -21,6 +21,15 @@ weights (`--total_weight`, `--stats_weight` on `fit transformer`;
 model with the total serves `pred_total` and, where the matchup carries the
 market's line, `over_prob`.
 
+The transformer can also predict a full score distribution instead of
+point values (`distribution: true` in `Sport.transformer` or the model
+config): a bell curve per game plus a learned weight per whole-number
+margin and total, so values football scoring produces often (a 3- or
+7-point margin) get their real share, and cover / moneyline / over
+probabilities come from it with pushes left out. On NFL 2006-2025 it did not
+beat the normal model (cover Brier +0.0002 +/- 0.0016, moneyline Brier
++0.0012 +/- 0.0014), so it is off by default.
+
 NFL games also carry pre-game injury features: for each unit (`qb`, `ol`,
 `skill`, `front`, `secondary`), `inj_<unit>` / `opp_inj_<unit>` is the snap
 share the week's injury report is expected to take away (each listed

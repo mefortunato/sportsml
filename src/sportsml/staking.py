@@ -354,7 +354,8 @@ def summarize_stakes(
     n = len(stakes)
     draws = rng.integers(0, n, size=(n_boot, n))
     r = stakes["return"].to_numpy()
-    ordered = stakes.sort_values(["season", "date"], kind="stable").index
+    # positions in season / date order (the index may be any labels)
+    ordered = np.lexsort((stakes["date"].to_numpy(), stakes["season"].to_numpy()))
     decided = stakes["outcome"].to_numpy() != 0
     won = stakes["outcome"].to_numpy() > 0
     flat = stakes.get("stake_flat", pd.Series(np.ones(n))).to_numpy()

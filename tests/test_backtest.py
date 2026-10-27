@@ -82,6 +82,55 @@ def test_ats_record_counts_wins_losses_and_pushes():
     assert BREAKEVEN == pytest.approx(0.5238, abs=1e-4)
 
 
+def test_moneyline_record_bets_the_value_side_at_the_posted_odds():
+    from sportsml.backtest import moneyline_record
+
+    results = pd.DataFrame(
+        {
+            "win_prob": [0.70, 0.30, 0.55, 0.62],
+            "market_prob": [0.60, 0.40, 0.54, 0.60],
+            "moneyline": [-150.0, 120.0, -120.0, -150.0],
+            "opp_moneyline": [130.0, -140.0, 100.0, 130.0],
+            "margin": [7.0, 3.0, -3.0, 0.0],
+        }
+    )
+    # team at -150 wins (+2/3); opponent at -140 loses (team won: -1);
+    # team at -120 loses (-1); team at -150 ties (push)
+    ml = moneyline_record(results, TOY_SCHEMA, thresholds=(0, 0.05))
+    ml = ml.set_index("min_edge")
+    assert ml.loc[0, ["bets", "wins", "losses", "pushes"]].tolist() == [4, 1, 2, 1]
+    assert ml.loc[0, "units"] == pytest.approx(100 / 150 - 2)
+    assert ml.loc[0.05, ["bets", "wins", "losses"]].tolist() == [2, 1, 1]
+
+
+def test_totals_record_and_summary():
+    from sportsml.backtest import totals_record, totals_summary
+
+    results = pd.DataFrame(
+        {
+            "pred_total": [50.0, 40.0, 45.0, 44.0],
+            "total_line": [45.0, 44.0, 45.0, 42.0],
+            "total": [51.0, 47.0, 30.0, 42.0],
+            "over_odds": [-105.0, -110.0, -110.0, -110.0],
+            "under_odds": [-115.0, -110.0, -110.0, -110.0],
+            "over_prob": [0.7, 0.4, 0.5, 0.55],
+        }
+    )
+    # over at -105 wins; under loses; no bet on the line; over pushes
+    record = totals_record(results, TOY_SCHEMA, thresholds=(0, 3)).set_index("min_edge")
+    assert record.loc[0, ["bets", "wins", "losses", "pushes"]].tolist() == [3, 1, 1, 1]
+    assert record.loc[0, "units"] == pytest.approx(100 / 105 - 1)
+    assert record.loc[3, ["bets", "wins", "losses"]].tolist() == [2, 1, 1]
+
+    summary = totals_summary(results, TOY_SCHEMA)
+    assert summary["n"] == 4
+    assert summary["rmse"]["market"] == pytest.approx(np.sqrt(np.mean([36, 9, 225, 0])))
+    # the push is left out of the over/under Brier
+    assert summary["brier"]["model"] == pytest.approx(
+        np.mean([(0.7 - 1) ** 2, (0.4 - 1) ** 2, 0.5**2])
+    )
+
+
 def test_no_vig_probability():
     assert no_vig_probability(-110, -110) == pytest.approx(0.5)
     fav, dog = no_vig_probability(-200, 170), no_vig_probability(170, -200)

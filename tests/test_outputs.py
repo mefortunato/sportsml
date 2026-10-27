@@ -100,3 +100,27 @@ def test_predictors_saved_before_totals_still_serve(toy_games, tmp_path):
     del module.head.out_dim
     matchups = pd.DataFrame({"team": ["T00"], "opp": ["T01"], "location": [1]})
     assert np.isfinite(predictor.predict(matchups).pred_margin).all()
+
+
+def test_walk_forward_scores_totals_and_moneylines(toy_games):
+    from sportsml.backtest import (
+        format_summary,
+        summarize,
+        transformer_fitter,
+        walk_forward,
+    )
+
+    fitter = transformer_fitter("toy", max_epochs=2, model={"total_weight": 1.0})
+    results = walk_forward(toy_games, "toy", fitter, [2023])
+    assert {"pred_total", "over_prob", "market_over_prob", "total"} <= set(results)
+    assert results.market_over_prob.round(6).eq(0.5).all()  # -110 both ways
+
+    summary = summarize(results, TOY_SCHEMA)
+    totals = summary["totals"]
+    assert totals["n"] == len(results)
+    assert {"model", "market"} == set(totals["brier"])
+    # the toy market knows the expected total
+    assert totals["rmse"]["market"] < totals["rmse"]["model"]
+    assert len(summary["moneyline"]) == 4
+    text = format_summary(summary)
+    assert "Over/under" in text and "Moneyline" in text

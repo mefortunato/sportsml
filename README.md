@@ -14,6 +14,13 @@ probability, with three interchangeable model families:
   each game the pre-game Elo of both teams and the opponent's season-to-date
   margin; on NFL 2021-2025 that did not change the backtest Brier.
 
+The neural families can also regress the total (combined points) and every
+box-score stat next to the margin, as extra outputs with their own loss
+weights (`--total_weight`, `--stats_weight` on `fit transformer`;
+`total_weight` / `stats_weight` in `Sport.transformer` or `Sport.gnn`). A
+model with the total serves `pred_total` and, where the matchup carries the
+market's line, `over_prob`.
+
 NFL games also carry pre-game injury features: for each unit (`qb`, `ol`,
 `skill`, `front`, `secondary`), `inj_<unit>` / `opp_inj_<unit>` is the snap
 share the week's injury report is expected to take away (each listed
@@ -96,6 +103,13 @@ prints:
 - against-the-spread results from betting the model's side whenever it
   disagrees with the spread by more than 0-5 points, with win rate, 95% CI
   and ROI at -110 (break-even is 52.38%);
+- moneyline results from betting the side the model rates more likely to
+  win than the market's no-vig odds imply (by more than 0-10 percentage
+  points), with profit at the posted moneylines;
+- for models that predict the total: its RMSE next to the over/under
+  line's, the over/under Brier score against the no-vig over/under odds,
+  and over/under bets when the model's total beats the line by 0-5 points,
+  at the posted odds;
 - the correlation between the model's edge (model margin minus spread) and
   the cover margin (result minus spread). It is above zero only if the model
   knows something the spread does not.
@@ -120,19 +134,22 @@ Any model can be backtested from Python with
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
 
 - **Upcoming games**: each game's Vegas line and the model's predicted
-  margin on one chart, the win probability, and the model's pick against
-  the spread.
+  margin on one chart, the win probability, and the model's pick in each
+  market: against the spread, on the moneyline and on the over/under.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
 - **Power rankings**: each team's average predicted margin against every
   other team, week by week, with conference, division and final-four
   filters.
 - **Model performance**: the walk-forward backtest against Vegas
-  (accuracy, Brier score, calibration, betting the model's edge).
-- **Beat the model**: a past game with its line and both teams' pre-game
-  stats. Pick the side that covers, then see the final score and what the
-  model picked. The model's picks are its walk-forward backtest predictions,
-  made without seeing those games. Your record is kept in your browser.
+  (accuracy, Brier score, calibration, and betting the model's edge on the
+  spread, the moneyline and the over/under).
+- **Beat the model**: a past game with its lines and both teams' pre-game
+  stats. Choose a market (spread, moneyline or over/under), make your pick,
+  then see the final score and what the model picked. Picks are scored in
+  units at the game's odds. The model's picks are its walk-forward backtest
+  predictions, made without seeing those games. Your record on each market
+  is kept in your browser.
 
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:

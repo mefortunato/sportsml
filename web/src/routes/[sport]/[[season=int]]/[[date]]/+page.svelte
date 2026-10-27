@@ -2,10 +2,35 @@
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
 	import { gameOdds } from '$lib/odds';
+	import { SORT_LABELS, sortGames, sortOptions, type GameSort } from '$lib/upcoming';
 
 	let { data } = $props();
 	const info = $derived(data.info);
 	const upcoming = $derived(data.upcoming);
+
+	const SORT_KEY = 'sportsml:upcoming-sort';
+	function savedSort(): GameSort {
+		try {
+			return (globalThis.localStorage?.getItem(SORT_KEY) as GameSort | null) ?? 'kickoff';
+		} catch {
+			return 'kickoff';
+		}
+	}
+
+	let sort = $state<GameSort>(savedSort());
+	const options = $derived(sortOptions(upcoming.games));
+	// a remembered market this week's games have no lines for falls back to kickoff
+	const active = $derived(options.includes(sort) ? sort : 'kickoff');
+	const games = $derived(sortGames(upcoming.games, active));
+
+	function choose(next: GameSort) {
+		sort = next;
+		try {
+			globalThis.localStorage?.setItem(SORT_KEY, next);
+		} catch {
+			// remembering the order is only a convenience
+		}
+	}
 </script>
 
 <div class="container section">
@@ -44,8 +69,24 @@
 			</p>
 		</div>
 	{:else}
+		{#if options.length > 1}
+			<div class="sort" role="group" aria-label="Order games">
+				<span class="muted small">Sort by</span>
+				{#each options as option (option)}
+					<button
+						class="pill"
+						class:accent={active === option}
+						aria-pressed={active === option}
+						onclick={() => choose(option)}>{SORT_LABELS[option]}</button
+					>
+				{/each}
+				{#if active !== 'kickoff'}
+					<span class="muted small">biggest disagreement with the market first</span>
+				{/if}
+			</div>
+		{/if}
 		<div class="games">
-			{#each upcoming.games as game (game.game_id)}
+			{#each games as game (game.game_id)}
 				<GameCard {game} sport={info.sport} odds={gameOdds(data.odds, game.game_id)} />
 			{/each}
 		</div>
@@ -94,6 +135,13 @@
 	}
 	.dates a:hover {
 		text-decoration: none;
+	}
+	.sort {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+		margin-bottom: 16px;
 	}
 	.games {
 		display: grid;

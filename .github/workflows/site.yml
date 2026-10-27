@@ -12,6 +12,11 @@ name: Site
 
 on:
   workflow_dispatch:
+    inputs:
+      webdata_sha256:
+        description: The webdata asset to wait for (set by the Train workflow)
+        required: false
+        default: ""
   schedule:
     - cron: "17 10 * * *" # daily, early morning US time
     - cron: "17 6 * * 2" # Tuesday, after Monday night's game
@@ -43,8 +48,19 @@ jobs:
       - name: Fetch the trained model
         env:
           GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.webdata_sha256 }}
         run: |
-          gh release download webdata --pattern webdata.tar.gz
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            rm -f webdata.tar.gz
+            gh release download webdata --pattern webdata.tar.gz
+            got="$(sha256sum webdata.tar.gz | cut -d' ' -f1)"
+            if [ -z "$WANT" ] || [ "$got" = "$WANT" ]; then break; fi
+            if [ "$attempt" = 10 ]; then
+              echo "::error::webdata asset is $got, not the trained $WANT"; exit 1
+            fi
+            echo "webdata asset is still the previous one ($got); retrying"
+            sleep 30
+          done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
       - id: pages
         uses: actions/configure-pages@v5

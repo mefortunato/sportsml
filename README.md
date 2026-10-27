@@ -172,6 +172,13 @@ A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages:
   market: against the spread, on the moneyline and on the over/under.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
+- **Price your line** (upcoming games): enter the spread, moneyline or
+  total and odds your sportsbook offers; the page reprices every pick in the
+  browser (the model's predictions do not depend on the odds) with its win
+  chance, break-even, expected value and a quarter-Kelly stake. Win chances
+  are the model's moved toward the market by how much of its disagreement
+  has been right in the walk-forward backtest (`pricing.trust` in
+  `sports.json`, fit per market).
 - **Power rankings**: each team's average predicted margin against every
   other team, week by week, with conference, division and final-four
   filters.

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { links } from '$lib/links';
+	import LineCalculator from '$lib/components/LineCalculator.svelte';
 	import MarketTable from '$lib/components/MarketTable.svelte';
 	import MatchupDetails from '$lib/components/MatchupDetails.svelte';
 	import ProbabilityCompare from '$lib/components/ProbabilityCompare.svelte';
@@ -91,6 +92,12 @@
 		{/if}
 		<MarketTable {game} {prediction} {result} />
 	</div>
+
+	{#if prediction && !result && info.pricing}
+		<div class="section">
+			<LineCalculator {game} {prediction} pricing={info.pricing} />
+		</div>
+	{/if}
 
 	<MatchupDetails matchup={game} dateLabel={info.date_label} />
 </div>

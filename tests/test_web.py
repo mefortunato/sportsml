@@ -11,7 +11,7 @@ from sportsml.web.build import build
 from sportsml.web.export import export, load_snapshots
 from sportsml.web.snapshot import Snapshot, cover_side
 
-from .conftest import make_games
+from .conftest import TOY_SCHEMA, make_games
 
 
 @pytest.fixture(scope="module")
@@ -385,3 +385,32 @@ def test_performance_and_games_cover_every_market(snapshot):
     result = played["result"]
     assert result["total"] == result["home_score"] + result["away_score"]
     assert result["winner"] in ("home", "away", "push")
+
+
+def test_info_carries_what_the_browser_prices_lines_with(snapshot):
+    pricing = snapshot.info()["pricing"]
+    assert pricing["sigma"] == pytest.approx(snapshot.sigma)
+    assert pricing["total_sigma"] > 0
+    assert set(pricing["trust"]) == {"spread", "moneyline", "total"}
+    assert all(0 <= k <= 1 for k in pricing["trust"].values())
+
+
+def test_trust_is_the_brier_optimal_shrink_toward_the_market():
+    import dataclasses
+
+    from sportsml.web.snapshot import Snapshot
+
+    # disagreements that are right half as often as the model claims
+    rng = np.random.default_rng(0)
+    n = 20000
+    market = rng.uniform(0.3, 0.7, n)
+    model = np.clip(market + rng.normal(0, 0.1, n), 0.01, 0.99)
+    truth = market + 0.5 * (model - market)
+    won = rng.random(n) < truth
+    results = pd.DataFrame(
+        {"margin": np.where(won, 3.0, -3.0), "win_prob": model, "market_prob": market}
+    )
+    fake = object.__new__(Snapshot)
+    fake.schema = dataclasses.replace(TOY_SCHEMA, market_spread=None)
+    fake.results, fake.total_sigma, fake.sigma = results, None, 13.0
+    assert fake._trust()["moneyline"] == pytest.approx(0.5, abs=0.05)

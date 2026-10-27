@@ -121,6 +121,7 @@ class Snapshot:
         self.meta = meta or {}
         self.model_dir = model_dir
         self.sigma = predictor.sigma
+        self.total_sigma = getattr(predictor, "total_sigma", None)
         self._rows = self.games.groupby(schema.game_id).indices
         self.stat_values = pd.DataFrame(
             {stat.key: stat.value(self.played) for stat in view.stats},
@@ -135,6 +136,7 @@ class Snapshot:
             pool = pool.assign(**{schema.game_id: pool[schema.game_id].astype(str)})
         self.results = pool  # every backtest game, pushes included
         self.performance_summary = self._performance() if len(pool) else None
+        self.trust = self._trust() if len(pool) else {}
         if len(pool) and schema.market_spread:
             # lined games; a push on one market can still be played on another
             pool = pool.dropna(subset=["market_margin"])
@@ -384,6 +386,57 @@ class Snapshot:
             }
         summary["seasons"] = sorted(int(x) for x in results[s.season].unique())
         return py(summary)
+
+    def _trust(self) -> dict:
+        """How much of the model's disagreement with the market to believe,
+        per market, fit on the walk-forward backtest (the browser prices
+        any line with it).
+
+        A probability is moved toward the market's by ``1 - k``: ``p = m +
+        k (p_model - m)``, with ``m`` 0.5 for the spread and total (the
+        market's line) and the no-vig win probability for the moneyline.
+        ``k`` minimizes the Brier score on the backtest's decided games
+        (clipped to 0-1): 0 when the disagreements have not paid, 1 when
+        they were as right as the model claimed.
+        """
+        from scipy.stats import norm
+
+        s, r = self.schema, self.results
+
+        def fit(prob, market, happened):
+            ok = np.isfinite(prob) & np.isfinite(market) & np.isfinite(happened)
+            gap = (prob - market)[ok]
+            denom = float((gap**2).sum())
+            if not denom:
+                return None
+            k = float((gap * (happened - market)[ok]).sum()) / denom
+            return float(np.clip(k, 0, 1))
+
+        out = {}
+        if s.market_spread and "market_margin" in r:
+            lined = r.dropna(subset=["market_margin"])
+            lined = lined[lined[s.target] != lined["market_margin"]]
+            prob = norm.cdf(
+                (lined["pred_margin"] - lined["market_margin"]) / self.sigma
+            )
+            covered = (lined[s.target] > lined["market_margin"]).astype(float)
+            out["spread"] = fit(prob, 0.5, covered.to_numpy())
+        if "market_prob" in r:
+            decided = r.dropna(subset=["market_prob"])
+            decided = decided[decided[s.target] != 0]
+            won = (decided[s.target] > 0).astype(float).to_numpy()
+            out["moneyline"] = fit(
+                decided["win_prob"].to_numpy(), decided["market_prob"].to_numpy(), won
+            )
+        if self.total_sigma and "pred_total" in r and s.market_total in r:
+            lined = r.dropna(subset=["pred_total", s.market_total, s.total])
+            lined = lined[lined[s.total] != lined[s.market_total]]
+            prob = norm.cdf(
+                (lined["pred_total"] - lined[s.market_total]) / self.total_sigma
+            )
+            over = (lined[s.total] > lined[s.market_total]).astype(float)
+            out["total"] = fit(prob, 0.5, over.to_numpy())
+        return {k: v for k, v in out.items() if v is not None}
 
     def _predict_upcoming(self, predictor: Predictor) -> pd.DataFrame:
         predictor.update_state(self.games)
@@ -677,6 +730,13 @@ class Snapshot:
                 "label": self.view.label,
                 "date_label": self.view.date_label,
                 "has_spread": bool(self.schema.market_spread),
+                # what the browser needs to price any line: the model's
+                # residual spreads and how much to trust its disagreements
+                "pricing": {
+                    "sigma": self.sigma,
+                    "total_sigma": self.total_sigma,
+                    "trust": self.trust,
+                },
                 "challenge_games": len(self.pool),
                 "markets": self.available_markets(),
                 "built_at": self.meta.get("built_at"),

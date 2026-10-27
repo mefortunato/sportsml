@@ -35,6 +35,8 @@ export interface SportInfo {
 	challenge_games: number;
 	/** Markets the challenge offers (older exports: spread only). */
 	markets?: Market[];
+	/** What pricing a line in the browser needs (older exports: absent). */
+	pricing?: Pricing | null;
 	built_at?: string | null;
 	refreshed_at?: string | null;
 	model?: { family: string; metrics: Record<string, Metrics> } | null;
@@ -45,6 +47,14 @@ export interface SportInfo {
 		moneyline?: Partial<BetRow>;
 		totals?: { n?: number; record?: Partial<BetRow> };
 	} | null;
+}
+
+/** The model's residual spreads and how much of its disagreement with the
+ * market to believe, per market (0: none, 1: all), from the backtest. */
+export interface Pricing {
+	sigma: number;
+	total_sigma?: number | null;
+	trust: Partial<Record<Market, number>>;
 }
 
 export interface Prediction {

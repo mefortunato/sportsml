@@ -224,8 +224,8 @@ def test_team_metadata():
 
     teams = teams_frame(
         [
-            {"school": "Air Force", "mascot": "Falcons", "abbreviation": "AF", "conference": "Mountain West",
-             "division": None, "color": "#003594", "alternateColor": "ffffff",
+            {"school": "Air Force", "mascot": "Falcons", "abbreviation": "AF",
+             "conference": "Mountain West", "division": None, "color": "#003594", "alternateColor": "ffffff",
              "logos": ["https://cdn.collegefootballdata.com/logos/500/2005.png"]},
             {"school": "Army", "mascot": "Black Knights", "conference": "American",
              "division": "West", "color": None, "alternateColor": None, "logos": []},

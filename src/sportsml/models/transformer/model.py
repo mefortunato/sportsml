@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import torch
@@ -23,6 +25,13 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         token_dim: Features per game token.
         history: Maximum number of earlier games per sequence.
         d_model / nhead / num_layers / dropout: Transformer sizes.
+        season_embedding: Also add a learned embedding of how many seasons
+            ago each game was (0, 1, ..., ``max_seasons_ago`` and older), so
+            the sequence is encoded by both game order and season.
+        season_decay: Down-weight earlier seasons' games in attention: each
+            head adds ``-slope * seasons_ago`` to every query's attention
+            logit for that game, with a learned slope per head starting at
+            ``decay_init`` per season.
     """
 
     def __init__(
@@ -33,6 +42,10 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         nhead: int = 4,
         num_layers: int = 2,
         dropout: float = 0.1,
+        season_embedding: bool = False,
+        season_decay: bool = False,
+        max_seasons_ago: int = 3,
+        decay_init: float = 1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -43,6 +56,17 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
 
         self.embed = nn.Linear(token_dim + 1, d_model)
         self.position = nn.Embedding(history + 1, d_model)
+        self.nhead = nhead
+        self.max_seasons_ago = max_seasons_ago
+        self.season = (
+            nn.Embedding(max_seasons_ago + 1, d_model) if season_embedding else None
+        )
+        # softplus(raw) is each head's penalty per season ago
+        self.decay = (
+            nn.Parameter(torch.full((nhead,), math.log(math.expm1(decay_init))))
+            if season_decay
+            else None
+        )
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         layer = nn.TransformerEncoderLayer(
             d_model,
@@ -67,10 +91,32 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         """
         batch, length, _ = tokens.shape
         x = self.embed(torch.cat([tokens, seasons_ago.unsqueeze(-1)], dim=-1))
+        if self.season is not None:
+            ago = seasons_ago.clamp(0, self.max_seasons_ago).long()
+            x = x + self.season(ago)
         x = torch.cat([self.cls_token.expand(batch, -1, -1), x], dim=1)
         x = x + self.position(torch.arange(length + 1, device=x.device))
-        mask = torch.cat([pad.new_zeros(batch, 1), pad], dim=1)
-        return self.norm(self.encoder(x, src_key_padding_mask=mask)[:, 0])
+        pad = torch.cat([pad.new_zeros(batch, 1), pad], dim=1)
+        if self.decay is None:
+            return self.norm(self.encoder(x, src_key_padding_mask=pad)[:, 0])
+        return self.norm(
+            self.encoder(x, mask=self._attention_bias(seasons_ago, pad))[:, 0]
+        )
+
+    def _attention_bias(self, seasons_ago, pad) -> torch.Tensor:
+        """``[B * nhead, L, L]`` additive attention mask: ``-slope_h *
+        seasons_ago`` for each key game, a large negative for padding."""
+        batch = seasons_ago.shape[0]
+        ago = torch.cat([seasons_ago.new_zeros(batch, 1), seasons_ago], dim=1)
+        slope = nn.functional.softplus(self.decay)  # [nhead]
+        bias = -slope[None, :, None] * ago[:, None, :]  # [B, nhead, L]
+        bias = bias.masked_fill(pad[:, None, :], -1e9)
+        length = ago.shape[1]
+        return (
+            bias[:, :, None, :]
+            .expand(-1, -1, length, -1)
+            .reshape(batch * self.nhead, length, length)
+        )
 
 
 class PairHead(nn.Module, HyperparametersMixin):

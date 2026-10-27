@@ -160,3 +160,48 @@ def test_strength_features_use_only_earlier_games(played_games):
     # Elo going into a game reflects earlier results: better teams rate higher
     gap = full["_team_elo"] - full["_opp_elo"]
     assert np.corrcoef(gap, games.margin)[0, 1] > 0.2
+
+
+def test_season_decay_down_weights_earlier_seasons():
+    from sportsml.models.transformer.model import SequenceEncoder
+
+    torch.manual_seed(0)
+    tokens = torch.randn(4, 6, 5)
+    ago = torch.tensor([[0.0, 0, 0, 1, 1, 2]] * 4)
+    pad = torch.zeros(4, 6, dtype=torch.bool)
+    changed = tokens.clone()
+    changed[:, 3:] += 5.0  # only last season's and older games differ
+
+    def shift(**options):
+        enc = SequenceEncoder(token_dim=5, history=6, d_model=16, nhead=2,
+                              num_layers=2, dropout=0.0, **options).eval()  # fmt: skip
+        with torch.no_grad():
+            return (enc(tokens, ago, pad) - enc(changed, ago, pad)).abs().max()
+
+    assert shift() > 0.1
+    # a steep penalty per season leaves earlier seasons almost unseen
+    assert shift(season_decay=True, season_embedding=True, decay_init=30.0) < 1e-3
+
+
+def test_season_options_train_and_round_trip(toy_games, tmp_path):
+    model = default_model("toy", history=10, season_embedding=True, season_decay=True)
+    res = fit_transformer(
+        toy_games,
+        "toy",
+        model=model,
+        trainer=quick_trainer(2),
+        save_dir=str(tmp_path / "model"),
+        print_metrics=False,
+    )
+    encoder = res["model"].encoder
+    assert encoder.history == 10 and encoder.decay is not None
+
+    loaded = load_predictor(str(tmp_path / "model"))
+    for predictor in (res["predictor"], loaded):
+        predictor.update_state(toy_games)
+    matchups = pd.DataFrame({"team": ["T00"], "opp": ["T03"], "location": [1]})
+    np.testing.assert_allclose(
+        loaded.predict(matchups).pred_margin,
+        res["predictor"].predict(matchups).pred_margin,
+        atol=1e-5,
+    )

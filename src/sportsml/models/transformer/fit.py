@@ -14,7 +14,10 @@ from ..lightning import best_model, default_trainer, seed_and_reset
 from .data import STRENGTH_COLUMNS, SequenceData, SequenceFeatures
 from .model import PairHead, SequenceEncoder, TransformerMatchupModel, TransformerModel
 
-ENCODER_KEYS = ("history", "d_model", "nhead", "num_layers", "dropout")
+ENCODER_KEYS = (
+    "history", "d_model", "nhead", "num_layers", "dropout",
+    "season_embedding", "season_decay", "max_seasons_ago", "decay_init",
+)  # fmt: skip
 
 
 def transformer_dims(
@@ -32,9 +35,14 @@ def transformer_dims(
 
 
 def transformer_config(
-    sport: str, context: list[str] | None = None, opponent_strength: bool = False
+    sport: str,
+    context: list[str] | None = None,
+    opponent_strength: bool = False,
+    **overrides,
 ) -> dict:
-    """TransformerModel init args for ``sport`` (sizes from ``Sport.transformer``)."""
+    """TransformerModel init args for ``sport``: sizes from
+    ``Sport.transformer``, then ``overrides`` (any encoder arg, e.g.
+    ``history=34, season_decay=True``, or ``lr``)."""
     spec = get_sport(sport)
     dims = transformer_dims(spec.schema.with_features(context), opponent_strength)
     settings = {
@@ -44,6 +52,7 @@ def transformer_config(
         "num_layers": 2,
         "dropout": 0.1,
         **spec.transformer,
+        **overrides,
     }
     encoder = {k: v for k, v in settings.items() if k in ENCODER_KEYS}
     return {
@@ -59,9 +68,12 @@ def transformer_config(
 
 
 def default_model(
-    sport: str, context: list[str] | None = None, opponent_strength: bool = False
+    sport: str,
+    context: list[str] | None = None,
+    opponent_strength: bool = False,
+    **overrides,
 ) -> TransformerModel:
-    config = transformer_config(sport, context, opponent_strength)
+    config = transformer_config(sport, context, opponent_strength, **overrides)
     return TransformerModel(
         encoder=SequenceEncoder(**config.pop("encoder")),
         head=PairHead(**config.pop("head")),

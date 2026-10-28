@@ -274,9 +274,10 @@ Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
-  demand) runs `sportsml web build --sports '[nfl, cfb, nba]'`: for each
-  sport, download, train the transformer, backtest it and record power
-  rankings before every date. It publishes the result as the `webdata` release asset.
+  demand) runs `sportsml web build --sports '[<sport>]'` in one job per
+  sport, in parallel (the NBA's takes 2-3 hours): download, train the
+  transformer, backtest it and record power rankings before every date. It
+  publishes the merged result as the `webdata` release asset.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the

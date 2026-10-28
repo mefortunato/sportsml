@@ -5,8 +5,10 @@ import pandas as pd
 import pytest
 
 from sportsml.models.baselines import (
+    CalibratedEloModel,
     EloModel,
     EloParams,
+    fit_calibrated_elo,
     fit_elo,
     fit_home,
     fit_point_diff,
@@ -56,7 +58,7 @@ def test_elo_regresses_ratings_in_a_new_season():
     )
 
 
-@pytest.mark.parametrize("fit", [fit_home, fit_point_diff, fit_elo])
+@pytest.mark.parametrize("fit", [fit_home, fit_point_diff, fit_elo, fit_calibrated_elo])
 def test_baselines_serve_like_any_model(fit, toy_games):
     res = fit(toy_games, "toy", print_metrics=False)
     predictor = res["predictor"]
@@ -88,3 +90,33 @@ def test_rating_baselines_beat_home_field(toy_games):
     }
     assert accuracy["fit_point_diff"] > accuracy["fit_home"]
     assert accuracy["fit_elo"] > accuracy["fit_home"]
+
+
+def test_calibrated_elo_with_538_mapping_matches_plain_elo():
+    games = two_games()
+    plain = EloModel(TOY_SCHEMA)
+    plain.replay(games)
+    calibrated = CalibratedEloModel(TOY_SCHEMA)
+    calibrated.replay(games)
+    matchups = pd.DataFrame(
+        {"team": ["A", "B"], "opp": ["B", "A"], "location": [1, 0], "season": 2024}
+    )
+    np.testing.assert_allclose(
+        calibrated.predict_margin(matchups), plain.predict_margin(matchups)
+    )
+
+
+def test_calibrated_elo_tunes_and_fits_the_point_scale(toy_games):
+    res = fit_calibrated_elo(toy_games, "toy", print_metrics=False)
+    model = res["predictor"].model
+    p = model.params
+    assert p.k in (10, 15, 20, 25, 30, 40) and p.regress in (1 / 4, 1 / 3, 1 / 2)
+    # toy home teams win by 3 points on average
+    assert model.home_advantage == pytest.approx(3, abs=1.5)
+    assert model.coef > 0
+    neutral = pd.DataFrame({"team": ["T00"], "opp": ["T00"], "location": [1]})
+    assert model.predict_margin(neutral)[0] == pytest.approx(model.home_advantage)
+    # calibrating the point scale beats a fixed 25 Elo per point
+    test = res["metrics"]["test"]
+    plain = fit_elo(toy_games, "toy", print_metrics=False)["metrics"]["test"]
+    assert test["rmse"] < plain["rmse"]

@@ -128,11 +128,7 @@ def transformer_fitter(
 def baseline_fitter(sport: str, name: str) -> Fitter:
     from .models import baselines
 
-    fit_fn = {
-        "home": baselines.fit_home,
-        "point_diff": baselines.fit_point_diff,
-        "elo": baselines.fit_elo,
-    }[name]
+    fit_fn = baselines.FITTERS[name]
 
     def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
         return fit_fn(
@@ -142,7 +138,9 @@ def baseline_fitter(sport: str, name: str) -> Fitter:
     return fit
 
 
-Family = Literal["home", "point_diff", "elo", "sklearn", "gnn", "transformer"]
+Family = Literal[
+    "home", "point_diff", "elo", "calibrated_elo", "sklearn", "gnn", "transformer"
+]
 FAMILIES: tuple[str, ...] = typing.get_args(Family)
 
 
@@ -158,7 +156,7 @@ def family_fitter(
     training of the neural families, which get a fresh default model and
     trainer for every fit.
     """
-    if family in ("home", "point_diff", "elo"):
+    if family in ("home", "point_diff", "elo", "calibrated_elo"):
         return baseline_fitter(sport, family)
     if family == "sklearn":
         return sklearn_fitter(sport, model=model)
@@ -532,7 +530,8 @@ def backtest(
         games: Processed games table.
         sport: Sport name, e.g. ``"nfl"``.
         family: Model family: a naive baseline (``home``, ``point_diff``,
-            ``elo``) or ``sklearn`` / ``gnn`` / ``transformer``.
+            ``elo``, ``calibrated_elo``) or ``sklearn`` / ``gnn`` /
+            ``transformer``.
         seasons: Test seasons; default the last ``n_seasons`` complete ones.
         model: sklearn regressor (``family="sklearn"``); default random forest.
         max_epochs: Training epochs per season for ``gnn`` / ``transformer``.

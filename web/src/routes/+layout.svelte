@@ -3,6 +3,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { pct, seasonsText } from '$lib/format';
+	import { modelInfo } from '$lib/models';
 
 	let { data, children } = $props();
 
@@ -11,11 +12,12 @@
 	// route ids, not page.url: in the hash-routed build the URL is the frame's
 	const route = $derived(page.route.id ?? '');
 	const backtest = $derived(info?.backtest);
+	const model = $derived(modelInfo((info ?? data.sports[0])?.model?.family));
 </script>
 
 <header>
 	<div class="container bar">
-		<a class="brand" href={links.home()}>SportsML</a>
+		<a class="brand" href={links.home()}>SportsML{#if data.sports.length}<span class="badge">{model.name}</span>{/if}</a>
 		{#if data.sports.length > 1}
 			<nav class="sports">
 				{#each data.sports as s (s.sport)}
@@ -48,7 +50,7 @@
 
 <footer class="container small muted">
 	{#if info}
-		<span>{info.label} predictions by a transformer over each team's recent games.</span>
+		<span>{info.label} predictions from {model.source}.</span>
 		{#if backtest?.overall?.model?.brier && backtest.overall.market?.brier}
 			<span>
 				Walk-forward backtest {seasonsText(backtest.seasons, info.split_season)}: Brier
@@ -92,6 +94,23 @@
 		font-weight: 800;
 		font-size: 1.1rem;
 		color: var(--text);
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+	.brand:hover {
+		text-decoration: none;
+	}
+	.badge {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--accent);
+		background: var(--accent-soft);
+		border-radius: 999px;
+		padding: 1px 7px;
 	}
 	nav {
 		display: flex;

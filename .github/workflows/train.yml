@@ -1,13 +1,11 @@
-# Train the transformer, run the walk-forward backtest (challenge games,
-# performance page, past power rankings) and publish the result as the
-# `webdata` release asset that the daily Site workflow builds from.
-# Runs monthly during the seasons and on demand, e.g. after changing the
-# model. Each sport builds in its own job, in parallel. Backtest seasons are
-# reused from the previous `webdata` release while the model and its code
-# are unchanged, so a routine run only trains the model for upcoming games
-# (~15 min for the NFL or college football, ~20 for the NBA); a full
-# backtest (after a model change, or with refresh_backtest) takes ~1 hour
-# for the NFL and college football and 2-3 hours for the NBA.
+# Fit the site's model (calibrated Elo), run the walk-forward backtest
+# (challenge games, performance page, past power rankings) and publish the
+# result as the `webdata` release asset that the daily Site workflow builds
+# from. Runs monthly during the seasons and on demand, e.g. after changing
+# the model. Each sport builds in its own job, in parallel. Backtest seasons
+# are reused from the previous `webdata` release while the model and its
+# code are unchanged, so a routine run only fits the model for upcoming
+# games and backtests newly finished seasons.
 name: Train
 
 on:

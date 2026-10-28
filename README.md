@@ -41,7 +41,10 @@ team's first game with a new quarterback.
 
 Naive baselines (`home` field only, season-to-date `point_diff`, and
 FiveThirtyEight-style `elo`) and the betting market are the yardsticks in
-backtests.
+backtests. `calibrated_elo` is the same Elo tuned per sport: its K-factor,
+home edge and between-season regression are picked by grid search on the
+training seasons, and the rating gap is converted to points by least squares
+(instead of a fixed 25 Elo per point). It is what the web app serves.
 
 ## Installation
 
@@ -227,7 +230,7 @@ uv run sportsml nfl benchmark                # every family + baselines + market
 ```
 
 `--family` takes any model family or baseline: `home`, `point_diff`, `elo`,
-`sklearn`, `gnn`, `transformer`.
+`calibrated_elo`, `sklearn`, `gnn`, `transformer`.
 
 For each test season the model is fit on earlier seasons only, then the season
 is replayed week by week: team state is refreshed from the games played so far
@@ -298,7 +301,12 @@ Any model can be backtested from Python with
 ## Web app
 
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
-the NFL, college football and the NBA:
+the NFL, college football and the NBA. It serves calibrated Elo
+(`calibrated_elo`) as a transparent baseline while the neural families are
+still being tested; `sportsml web build --family transformer` (or any
+backtest family) serves another model instead, and the site's copy follows
+`model.family` in `sports.json` (`web/src/lib/models.ts`). Elo predicts no
+total, so with it the site shows the spread and moneyline only.
 
 - **Home**: what the site is, each sport's backtest record against Vegas
   (winners picked, against the spread, over/under) and how the
@@ -339,17 +347,17 @@ request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
   demand) runs `sportsml web build --sports '[<sport>]'` in one job per
-  sport, in parallel: download, train the transformer, backtest it and
-  record power rankings before every date. It publishes the merged result
+  sport, in parallel: download, fit the model (calibrated Elo), backtest it
+  and record power rankings before every date. It publishes the merged result
   as the `webdata` release asset; a sport whose job fails keeps its
   previous build there. Backtest seasons are reused from the
   previous release when nothing that shapes them changed: each season's
   key in `meta.json` covers the model settings, training epochs and a hash
-  of the model code. A routine run therefore only trains the model for
-  upcoming games (~15 minutes for the NFL or college football, ~20 for the
-  NBA), and once a year backtests the season that just finished. Changing
-  the model reruns the whole backtest (~1 hour for the NFL and college
-  football, 2-3 hours for the NBA). Old seasons' game data is treated as
+  of the model code. A routine run therefore only fits the model for
+  upcoming games, and once a year backtests the season that just finished.
+  Changing the model reruns the whole backtest (with the transformer, ~1
+  hour for the NFL and college football and 2-3 hours for the NBA; Elo
+  takes minutes). Old seasons' game data is treated as
   final; after a source revises it, run Train with **refresh_backtest**
   (`sportsml web build --refresh_backtest true`) to backtest every season
   again.

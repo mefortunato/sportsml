@@ -5,6 +5,10 @@
   squares (plus home field).
 * ``elo``: FiveThirtyEight-style Elo with margin-of-victory updates and
   regression to the mean between seasons; no fitted parameters.
+* ``calibrated_elo``: the same Elo with its K-factor, home edge and
+  between-season regression tuned per sport on the training seasons, and
+  its rating gap mapped to points by least squares instead of a fixed
+  25 Elo per point. The web app's predictions.
 
 Each is a :class:`~sportsml.core.predictor.MatchupModel`, so it is served,
 calibrated and backtested exactly like the learned families.
@@ -276,6 +280,109 @@ def fit_elo(
         print_metrics,
     )  # fmt: skip
 
+
+class CalibratedEloModel(EloModel):
+    """Margin = coef x (team Elo - opponent Elo) + home_advantage x location.
+
+    Ratings evolve as in :class:`EloModel` (with tuned ``params``); only the
+    mapping from ratings to points is fit.
+    """
+
+    def __init__(
+        self,
+        schema: GameSchema,
+        params: EloParams = EloParams(),
+        coef: float = EloParams.points_per_elo,
+        home_advantage: float = EloParams.home * EloParams.points_per_elo,
+    ):
+        super().__init__(schema, params)
+        self.coef = coef
+        self.home_advantage = home_advantage
+
+    def predict_margin(self, matchups: pd.DataFrame) -> np.ndarray:
+        s, p = self.schema, self.params
+        location = _location(matchups, s)
+        # EloModel's margin, home edge removed, back in Elo points
+        gap = super().predict_margin(matchups) / p.points_per_elo - p.home * location
+        return self.coef * gap + self.home_advantage * location
+
+
+# Searched on the training seasons; FiveThirtyEight's NFL settings are in it.
+ELO_GRID = {
+    "k": (10.0, 15.0, 20.0, 25.0, 30.0, 40.0),
+    "home": (0.0, 35.0, 65.0, 100.0),
+    "regress": (1 / 4, 1 / 3, 1 / 2),
+}
+
+
+def _calibrate_elo(
+    model: CalibratedEloModel, games: pd.DataFrame, fit_rows: np.ndarray
+) -> tuple[float, float, float]:
+    """Least-squares ``(coef, home_advantage)`` of the margin on the Elo gap
+    and location over ``fit_rows``, and the mean squared error."""
+    s, p = model.schema, model.params
+    location = _location(games, s)
+    gap = (model.replay(games) - p.home * location).to_numpy()
+    design = np.column_stack([gap, location])[fit_rows]
+    target = games[s.target].to_numpy(dtype=float)[fit_rows]
+    (coef, home), *_ = np.linalg.lstsq(design, target, rcond=None)
+    mse = float(np.mean((design @ [coef, home] - target) ** 2))
+    return float(coef), float(home), mse
+
+
+def fit_calibrated_elo(
+    games: Table,
+    sport: str,
+    save_dir: str | None = None,
+    train_seasons: list[int] | None = None,
+    val_seasons: list[int] | None = None,
+    test_seasons: list[int] | None = None,
+    grid: dict | None = None,
+    overwrite: bool = False,
+    print_metrics: bool = True,
+) -> dict:
+    """Elo tuned and calibrated per sport.
+
+    Each combination of ``grid`` (default :data:`ELO_GRID`: K-factor, home
+    edge in Elo points, between-season regression) replays every game; the
+    margin is regressed on the pre-game Elo gap and location over the
+    training seasons (the first is left out while ratings settle), and the
+    combination with the smallest squared error is kept. The win probability
+    spread is then fit on the validation seasons, like every family.
+    """
+    seasons = dict(train=train_seasons, val=val_seasons, test=test_seasons)
+    schema, games, split = _prepare(games, sport, seasons, save_dir, overwrite)
+    season = games[schema.season].to_numpy()
+    train = sorted(split.train)
+    fit_rows = np.isin(season, train[1:] if len(train) > 1 else train)
+
+    best = None
+    grid = grid or ELO_GRID
+    for k in grid["k"]:
+        for home in grid["home"]:
+            for regress in grid["regress"]:
+                params = EloParams(k=k, home=home, regress=regress)
+                model = CalibratedEloModel(schema, params)
+                coef, home_adv, mse = _calibrate_elo(model, games, fit_rows)
+                if best is None or mse < best[0]:
+                    best = mse, params, coef, home_adv
+    _, params, coef, home_adv = best
+    model = CalibratedEloModel(schema, params, coef, home_adv)
+    location = _location(games, schema)
+    raw = coef * (model.replay(games) - params.home * location) + home_adv * location
+    in_split = games[schema.season].isin(split.all)
+    return finish_fit(
+        model, games, games[in_split], raw[in_split], split, sport, save_dir,
+        print_metrics,
+    )  # fmt: skip
+
+
+FITTERS = {
+    "home": fit_home,
+    "point_diff": fit_point_diff,
+    "elo": fit_elo,
+    "calibrated_elo": fit_calibrated_elo,
+}
 
 SPLIT_KWARGS = ("train_seasons", "val_seasons", "test_seasons")
 

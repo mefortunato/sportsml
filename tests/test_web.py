@@ -23,8 +23,9 @@ def games():
 @pytest.fixture(scope="module")
 def webdata(games, tmp_path_factory):
     out = tmp_path_factory.mktemp("webdata")
+    # the transformer predicts the total too, so every market is covered
     build(sports=["toy"], output_dir=str(out), games=games, backtest_seasons=1,
-          max_epochs=2)  # fmt: skip
+          max_epochs=2, family="transformer")  # fmt: skip
     return out
 
 
@@ -620,9 +621,33 @@ def test_build_reuses_unchanged_backtest_seasons(tmp_path, monkeypatch):
     calls, *_ = run(refresh_backtest=True)
     assert calls == [[2022, 2023]]
 
-    # the key follows the training settings and the code
+    # the key follows the model family, training settings and the code
     code = code_hash()
     assert backtest_key("toy", 2022, 1, code) == backtest_key("toy", 2022, 1, code)
-    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 2, code)
     assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2023, 1, code)
     assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 1, "x")
+    assert backtest_key("toy", 2022, 1, code) != backtest_key(
+        "toy", 2022, 1, code, "transformer"
+    )
+    # epochs only shape a neural family
+    assert backtest_key("toy", 2022, 1, code) == backtest_key("toy", 2022, 2, code)
+    transformer = [backtest_key("toy", 2022, e, code, "transformer") for e in (1, 2)]
+    assert transformer[0] != transformer[1]
+
+
+def test_build_serves_calibrated_elo_by_default(tmp_path):
+    from .conftest import make_games
+
+    build(sports=["toy"], output_dir=str(tmp_path),
+          games=make_games(persistence=0.7), backtest_seasons=1)  # fmt: skip
+    meta = json.loads((tmp_path / "toy" / "meta.json").read_text())
+    assert meta["model"]["family"] == "calibrated_elo"
+    snap = Snapshot.load(tmp_path / "toy")
+    model = load_predictor(snap.model_dir).model
+    assert type(model).__name__ == "CalibratedEloModel"
+    info = snap.info()
+    assert info["model"]["family"] == "calibrated_elo"
+    # Elo predicts no total: the site offers the spread and moneyline only
+    assert info["pricing"]["total_sigma"] is None
+    assert "total" not in info["markets"]
+    assert snap.upcoming()["games"]

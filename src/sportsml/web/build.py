@@ -36,25 +36,31 @@ def code_hash() -> str:
     return digest.hexdigest()
 
 
-def backtest_key(sport: str, season: int, max_epochs: int, code: str) -> str:
+def backtest_key(
+    sport: str, season: int, max_epochs: int, code: str, family: str = "calibrated_elo"
+) -> str:
     """Identifies one season's walk-forward backtest: the same key means the
-    same model, training and code, so the stored results can be reused.
+    same model family, settings, training and code, so the stored results
+    can be reused.
 
     Game data is deliberately left out: finished seasons are treated as
     final (pass ``refresh_backtest`` after a source revises old data).
     """
-    from ..models.transformer.fit import transformer_config
-
     spec = {
         "version": BACKTEST_CACHE_VERSION,
         "sport": sport,
         "season": int(season),
-        "family": "transformer",
-        "settings": get_sport(sport).transformer,
-        "model": transformer_config(sport),
-        "max_epochs": max_epochs,
+        "family": family,
         "code": code,
     }
+    if family == "transformer":
+        from ..models.transformer.fit import transformer_config
+
+        spec |= {
+            "settings": get_sport(sport).transformer,
+            "model": transformer_config(sport),
+            "max_epochs": max_epochs,
+        }
     text = json.dumps(spec, sort_keys=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -86,6 +92,28 @@ def cached_backtest(
     )
 
 
+def fit_model(
+    family: str, games: pd.DataFrame, sport: str, save_dir: str, max_epochs: int
+) -> dict:
+    """Fit ``family`` on every played season and save it to ``save_dir``."""
+    if family == "transformer":
+        from ..models.lightning import default_trainer
+        from ..models.transformer import fit_transformer
+
+        trainer = default_trainer(
+            max_epochs=max_epochs, enable_progress_bar=False, enable_model_summary=False
+        )
+        return fit_transformer(
+            games, sport, trainer=trainer, save_dir=save_dir, overwrite=True
+        )
+    from ..models import baselines
+
+    fit = baselines.FITTERS.get(family)
+    if fit is None:
+        raise ValueError(f"the web app cannot serve model family {family!r}")
+    return fit(games, sport, save_dir=save_dir, overwrite=True, print_metrics=False)
+
+
 def build(
     sports: list[str] | None = None,
     output_dir: str = "webdata",
@@ -93,34 +121,35 @@ def build(
     backtest_seasons: int = 5,
     max_epochs: int = 100,
     refresh_backtest: bool = False,
+    family: str = "calibrated_elo",
 ) -> None:
     """Prepare everything the web app shows, one directory per sport.
 
-    Downloads and processes the sport's games, trains the transformer, runs
-    a walk-forward backtest of it over the last ``backtest_seasons``
-    complete seasons (its out-of-sample predictions are the challenge game
-    pool, and its team ratings before each date the power rankings) and
-    saves team metadata.
+    Downloads and processes the sport's games, fits the model (calibrated
+    Elo by default), runs a walk-forward backtest of it over the last
+    ``backtest_seasons`` complete seasons (its out-of-sample predictions
+    are the challenge game pool, and its team ratings before each date the
+    power rankings) and saves team metadata.
 
     Backtest seasons are reused from the previous build in ``output_dir``
     when nothing that shapes them changed (:func:`backtest_key`: the model
-    settings, ``max_epochs`` and the model code), so a routine build only
-    trains the model for upcoming games and backtests newly completed
-    seasons.
+    family and settings, ``max_epochs`` and the model code), so a routine
+    build only fits the model for upcoming games and backtests newly
+    completed seasons.
 
     Args:
         sports: Sports to build (default ``["nfl"]``).
         output_dir: Writes ``<output_dir>/<sport>/``.
         games: Use this processed games table instead of downloading (one
             sport only).
-        max_epochs: Transformer training epochs (per fit).
+        max_epochs: Training epochs (per fit) of a neural family.
         refresh_backtest: Backtest every season again, ignoring the previous
             build (e.g. after a data source revised old seasons).
+        family: The model the site serves: any backtest family, e.g.
+            ``calibrated_elo`` (the default) or ``transformer``.
     """
     from ..backtest import backtest, complete_seasons, summarize
     from ..inference.utils import power_ratings
-    from ..models.lightning import default_trainer
-    from ..models.transformer import fit_transformer
 
     sports = sports or ["nfl"]
     if games is not None and len(sports) != 1:
@@ -139,16 +168,11 @@ def build(
         teams = view.load_teams()
         (path / "teams.json").write_text(teams.to_json(orient="records", indent=1))
 
-        trainer = default_trainer(
-            max_epochs=max_epochs, enable_progress_bar=False, enable_model_summary=False
-        )
-        fitted = fit_transformer(
-            table, sport, trainer=trainer, save_dir=str(path / "model"), overwrite=True
-        )
+        fitted = fit_model(family, table, sport, str(path / "model"), max_epochs)
         schema = get_sport(sport).schema
         seasons = complete_seasons(table, schema)[-backtest_seasons:]
         code = code_hash()
-        keys = {s: backtest_key(sport, s, max_epochs, code) for s in seasons}
+        keys = {s: backtest_key(sport, s, max_epochs, code, family) for s in seasons}
         if refresh_backtest:
             pool, rankings, reused = pd.DataFrame(), pd.DataFrame(), []
         else:
@@ -173,7 +197,7 @@ def build(
             tested = backtest(
                 table,
                 sport,
-                family="transformer",
+                family=family,
                 seasons=missing,
                 max_epochs=max_epochs,
                 on_date=rank,
@@ -191,7 +215,7 @@ def build(
             "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
                 timespec="seconds"
             ),
-            "model": {"family": "transformer", "metrics": fitted["metrics"]},
+            "model": {"family": family, "metrics": fitted["metrics"]},
             "backtest": {
                 "seasons": summary["seasons"],
                 "overall": summary["overall"],

@@ -2,6 +2,7 @@
 	import { links } from '$lib/links';
 	import { pct, seasonsText } from '$lib/format';
 	import { breakEven } from '$lib/markets';
+	import { modelInfo } from '$lib/models';
 	import type { SportInfo } from '$lib/types';
 
 	let { data } = $props();
@@ -25,6 +26,10 @@
 			: `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
 	}
 
+	// every sport is built with the same model family
+	const model = $derived(modelInfo(data.sports[0]?.model?.family));
+	const totals = $derived(data.sports.some((s) => s.pricing?.total_sigma));
+
 	function seasons(info: SportInfo): string | null {
 		const s = info.backtest?.seasons;
 		return s?.length ? seasonsText(s, info.split_season) : null;
@@ -39,12 +44,15 @@
 		</div>
 	{:else}
 		<section class="intro">
-			<h1>Game predictions, scored against Vegas</h1>
+			<h1>{model.name} predictions, scored against Vegas</h1>
 			<p class="lead">
-				SportsML predicts every upcoming {list(data.sports.map((s) => inSentence(s.label)))} game: the
-				margin, each team's chance to win and the combined points. Each prediction sits next to the
-				betting market's spread, moneyline and over/under, so you can see where the model disagrees
-				with Vegas and how often that disagreement has been right.
+				SportsML predicts every upcoming {list(data.sports.map((s) => inSentence(s.label)))} game from
+				{model.source}: the margin{totals ? ',' : ' and'} each team's chance to win{totals
+					? ' and the combined points'
+					: ''}. Each prediction sits next to the betting market's {totals
+					? 'spread, moneyline and over/under'
+					: 'spread and moneyline'}, so you can see where the model disagrees with Vegas and how
+				often that disagreement has been right.
 			</p>
 		</section>
 
@@ -109,12 +117,9 @@
 		<section class="grid-2 explain">
 			<div>
 				<h2>How the predictions are made</h2>
-				<p>
-					A transformer, the kind of neural network behind language models, reads each team's most
-					recent games: its box-score stats, results and home field, and in college football how
-					strong each opponent was. From the two teams' histories it predicts the margin and the total
-					points. The win probability comes from the margin, calibrated on past seasons.
-				</p>
+				{#each model.how as paragraph (paragraph)}
+					<p>{paragraph}</p>
+				{/each}
 				<p>
 					The model never sees the betting lines. Comparing with Vegas is the test, not an input.
 				</p>
@@ -128,7 +133,7 @@
 					predictions run, so the record is what the model would really have done.
 				</p>
 				<p>
-					Results and lines refresh daily. The model is retrained monthly during the season.
+					Results and lines refresh daily. {model.refresh}
 				</p>
 			</div>
 		</section>
@@ -140,8 +145,9 @@
 					<dt>Upcoming games</dt>
 					<dd>
 						This week's games with the Vegas line and the model's margin on one chart, current
-						sportsbook prices, and the model's pick on the spread, moneyline and over/under. Sort by
-						edge to see the biggest disagreements first.
+						sportsbook prices, and the model's pick on the {totals
+							? 'spread, moneyline and over/under'
+							: 'spread and moneyline'}. Sort by edge to see the biggest disagreements first.
 					</dd>
 				</div>
 				<div>
@@ -178,11 +184,17 @@
 		<section class="card verdict">
 			<h2>The honest answer</h2>
 			<p>
-				The betting market is still more accurate than the model in both sports. Beating the spread
-				takes winning more than {pct(breakEven(), 1)} of bets at standard −110 prices, and the model's
+				The betting market is more accurate than the model in every sport. Beating the spread takes
+				winning more than {pct(breakEven(), 1)} of bets at standard −110 prices, and the model's
 				spread picks have not done that reliably. The cards above give each sport's record, and its
 				Performance page breaks it down by market, season and size of edge.
 			</p>
+			{#if model.name === 'Elo'}
+				<p>
+					Elo is the baseline: a simple, transparent rating every other model has to beat. Neural
+					network models are still being tested against it and are not shown here.
+				</p>
+			{/if}
 			<p class="muted small">For entertainment, not betting advice.</p>
 		</section>
 	{/if}

@@ -455,3 +455,68 @@ def test_trust_is_the_brier_optimal_shrink_toward_the_market():
     fake.schema = dataclasses.replace(TOY_SCHEMA, market_spread=None)
     fake.results, fake.total_sigma, fake.sigma = results, None, 13.0
     assert fake._trust()["moneyline"] == pytest.approx(0.5, abs=0.05)
+
+
+def test_build_reuses_unchanged_backtest_seasons(tmp_path, monkeypatch):
+    import sportsml.backtest
+    from sportsml.web.build import backtest_key, code_hash
+
+    from .conftest import make_games
+
+    games = make_games(seasons=(2020, 2021, 2022, 2023, 2024))
+    backtested = []
+    real = sportsml.backtest.backtest
+
+    def spy(*args, seasons=None, **kwargs):
+        backtested.append(list(seasons))
+        return real(*args, seasons=seasons, **kwargs)
+
+    monkeypatch.setattr(sportsml.backtest, "backtest", spy)
+
+    def run(**kwargs):
+        backtested.clear()
+        build(sports=["toy"], output_dir=str(tmp_path), games=games,
+              backtest_seasons=2, max_epochs=1, **kwargs)  # fmt: skip
+        meta = json.loads((tmp_path / "toy" / "meta.json").read_text())
+        pool = pd.read_csv(tmp_path / "toy" / "pool.csv")
+        rankings = pd.read_csv(tmp_path / "toy" / "rankings.csv")
+        return backtested[:], meta, pool, rankings
+
+    calls, meta, pool, rankings = run()
+    assert calls == [[2022, 2023]]
+    assert set(meta["backtest_cache"]) == {"2022", "2023"}
+    assert set(pool["season"]) == set(rankings["season"]) == {2022, 2023}
+
+    # nothing changed: no backtest, the same rows and summary
+    calls, again, pool2, rankings2 = run()
+    assert calls == []
+    pd.testing.assert_frame_equal(pool2, pool)
+    pd.testing.assert_frame_equal(rankings2, rankings)
+
+    # summarized from the stored CSV rather than in memory: equal to ~1e-8
+    def rounded(value):
+        return json.loads(json.dumps(value), parse_float=lambda f: round(float(f), 6))
+
+    assert rounded(again["backtest"]) == rounded(meta["backtest"])
+
+    # one season's key no longer matches: only that season runs again
+    stale = json.loads((tmp_path / "toy" / "meta.json").read_text())
+    stale["backtest_cache"]["2022"] = "older model"
+    (tmp_path / "toy" / "meta.json").write_text(json.dumps(stale))
+    calls, _, pool3, _ = run()
+    assert calls == [[2022]]
+    assert list(pool3["season"].unique()) == [2022, 2023]
+    pd.testing.assert_frame_equal(
+        pool3[pool3["season"] == 2023].reset_index(drop=True),
+        pool[pool["season"] == 2023].reset_index(drop=True),
+    )
+
+    calls, *_ = run(refresh_backtest=True)
+    assert calls == [[2022, 2023]]
+
+    # the key follows the training settings and the code
+    code = code_hash()
+    assert backtest_key("toy", 2022, 1, code) == backtest_key("toy", 2022, 1, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 2, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2023, 1, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 1, "x")

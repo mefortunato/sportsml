@@ -277,6 +277,15 @@ request. Two GitHub Actions workflows keep them current:
   demand) runs `sportsml web build --sports '[nfl, cfb]'`: for each sport,
   download, train the transformer, backtest it and record weekly power
   rankings. It publishes the result as the `webdata` release asset.
+  Backtest seasons are reused from the previous release when nothing that
+  shapes them changed: each season's key in `meta.json` covers the model
+  settings, training epochs and a hash of the model code. A routine run
+  therefore only trains the model for upcoming games (~15 minutes), and
+  once a year backtests the season that just finished. Changing the model
+  reruns the whole backtest (~1 hour). Old seasons' game data is treated as
+  final; after a source revises it, run Train with **refresh_backtest**
+  (`sportsml web build --refresh_backtest true`) to backtest every season
+  again.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
@@ -304,7 +313,7 @@ cache, so a daily Site run makes only a handful of CFBD calls. It starts
 Locally:
 
 ```sh
-make webdata                    # train + backtest (slow) -> webdata/
+make webdata                    # train + backtest -> webdata/ (reuses its backtest seasons)
 make site                       # fresh results -> web/static/data, site -> web/build
 make web-dev                    # hot reload on :5173 with that data
 make artifact                   # one-page build (hash routing) -> web/build-artifact/

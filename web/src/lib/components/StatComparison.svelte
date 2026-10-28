@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { atsRecord, winLoss } from '$lib/format';
+	import { atsRecord, seasonText, winLoss } from '$lib/format';
 	import type { StatDef, TeamSummary } from '$lib/types';
 	import TeamBadge from './TeamBadge.svelte';
 
@@ -7,8 +7,15 @@
 		stats,
 		away,
 		home,
-		dateLabel = 'Week'
-	}: { stats: StatDef[]; away: TeamSummary; home: TeamSummary; dateLabel?: string } = $props();
+		dateLabel = 'Week',
+		splitSeason = false
+	}: {
+		stats: StatDef[];
+		away: TeamSummary;
+		home: TeamSummary;
+		dateLabel?: string;
+		splitSeason?: boolean;
+	} = $props();
 
 	function better(stat: StatDef, a: number | null, h: number | null): 'away' | 'home' | null {
 		if (a === null || h === null || a === h) return null;
@@ -31,9 +38,10 @@
 
 	function basis(summary: TeamSummary) {
 		const games = `${summary.games} game${summary.games === 1 ? '' : 's'}`;
+		const season = seasonText(summary.season, splitSeason);
 		return summary.current_season
-			? `${summary.season} season, ${games}`
-			: `${summary.season} season (last season), ${games}`;
+			? `${season} season, ${games}`
+			: `${season} season (last season), ${games}`;
 	}
 </script>
 

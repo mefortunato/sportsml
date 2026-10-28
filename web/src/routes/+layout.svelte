@@ -2,7 +2,7 @@
 	import { links } from '$lib/links';
 	import '../app.css';
 	import { page } from '$app/state';
-	import { pct } from '$lib/format';
+	import { pct, seasonsText } from '$lib/format';
 
 	let { data, children } = $props();
 
@@ -51,7 +51,7 @@
 		<span>{info.label} predictions by a transformer over each team's recent games.</span>
 		{#if backtest?.overall?.model?.brier && backtest.overall.market?.brier}
 			<span>
-				Walk-forward backtest {backtest.seasons[0]}–{backtest.seasons.at(-1)}: Brier
+				Walk-forward backtest {seasonsText(backtest.seasons, info.split_season)}: Brier
 				{backtest.overall.model.brier.toFixed(3)} vs Vegas {backtest.overall.market.brier.toFixed(3)},
 				picks {pct(backtest.overall.model.accuracy)} of winners (Vegas {pct(
 					backtest.overall.market.accuracy

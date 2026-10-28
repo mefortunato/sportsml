@@ -1,4 +1,5 @@
-# Team names used by sportsbooks / The Odds API -> nba_api abbreviation.
+# Team names used by sportsbooks / The Odds API -> games-table team keys
+# (download.CURRENT).
 odds_map = {
     "Atlanta Hawks": "ATL",
     "Boston Celtics": "BOS",

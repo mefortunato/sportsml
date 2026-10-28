@@ -10,7 +10,10 @@
 # more on game days (times in UTC, before each Eastern kickoff window).
 # College football results and lines come from CollegeFootballData
 # (CFBD_API_KEY secret; ~3-4 calls a run with finished seasons cached, well
-# within its free tier's 1,000 a month).
+# within its free tier's 1,000 a month). NBA results come from
+# sportsdataverse's ESPN files (refreshed ~11:45 UTC, so every day has a run
+# after last night's games are in) and its lines from ESPN, a few dozen
+# requests a run.
 name: Site
 
 on:
@@ -72,6 +75,14 @@ jobs:
           path: data/cfb/cfbd_cache
           key: cfbd-${{ github.run_id }}
           restore-keys: cfbd-
+      - name: Cache ESPN NBA files and lines
+        uses: actions/cache@v4
+        with:
+          # finished seasons' schedules and box scores, finished games' lines
+          # (a download without it makes ~18,000 odds requests)
+          path: data/nba/espn_cache
+          key: espn-nba-${{ github.run_id }}
+          restore-keys: espn-nba-
       - id: pages
         uses: actions/configure-pages@v5
       - name: Export fresh data and lines

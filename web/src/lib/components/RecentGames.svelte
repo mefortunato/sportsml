@@ -55,7 +55,8 @@
 								<span class="muted">—</span>
 							{/if}
 						</td>
-						<td class="right muted">{short}{game.date} ’{String(game.season).slice(2)}</td>
+						<td class="right muted">{#if game.date_name}{game.date_name}{:else}{short}{game.date}
+							’{String(game.season).slice(2)}{/if}</td>
 					</tr>
 				{/each}
 			</tbody>

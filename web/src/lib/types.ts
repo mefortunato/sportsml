@@ -33,6 +33,8 @@ export interface SportInfo {
 	sport: string;
 	label: string;
 	date_label: string;
+	/** Seasons span two years and are keyed by the year they end (NBA). */
+	split_season?: boolean;
 	has_spread: boolean;
 	challenge_games: number;
 	/** Markets the challenge offers (older exports: spread only). */
@@ -86,6 +88,8 @@ export interface GameHeader {
 	game_id: string;
 	season: number;
 	date: number;
+	/** The date's display name, where the sport has one (NBA: "Oct 28"). */
+	date_name?: string | null;
 	kickoff: string | null;
 	home: Team;
 	away: Team;
@@ -108,6 +112,8 @@ export interface Upcoming {
 	season: number | null;
 	date: number | null;
 	dates: number[];
+	/** Display name per date, where the sport has them. */
+	date_names?: Record<string, string | null> | null;
 	games: UpcomingGame[];
 }
 
@@ -127,6 +133,7 @@ export interface RecentGame {
 	game_id: string;
 	season: number;
 	date: number;
+	date_name?: string | null;
 	opp: Team;
 	location: number | null;
 	score: number | null;
@@ -274,6 +281,8 @@ export interface RankingSeason {
 	/** backtest: that season's walk-forward model; current: the served model. */
 	source: 'backtest' | 'current';
 	dates: number[];
+	/** Display name per date (aligned with `dates`), where the sport has them. */
+	date_names?: (string | null)[] | null;
 	teams: RankingSeries[];
 	/** Teams that reached the last playoff rounds (empty until they are played). */
 	playoffs?: Record<string, PlayoffStage>;

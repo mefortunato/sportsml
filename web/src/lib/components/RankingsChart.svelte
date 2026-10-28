@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { signed } from '$lib/format';
+	import { dateText, signed } from '$lib/format';
 	import { rankAt, yExtent, type Pins } from '$lib/rankings';
 	import type { RankingSeason } from '$lib/types';
 
@@ -182,7 +182,7 @@
 	aria-valuemin={first}
 	aria-valuemax={last}
 	aria-valuenow={season.dates[shown]}
-	aria-valuetext="{dateLabel} {season.dates[shown]}"
+	aria-valuetext={dateText(dateLabel, season.dates[shown], season.date_names?.[shown])}
 	onpointermove={locate}
 	onpointerdown={locate}
 	onpointerleave={leave}
@@ -255,7 +255,7 @@
 
 	{#if index !== null && tipTeams.length}
 		<div class="tooltip" style:left="{tipLeft}%" class:flip={tipLeft > 60}>
-			<div class="tip-head">{dateLabel} {season.dates[index]}</div>
+			<div class="tip-head">{dateText(dateLabel, season.dates[index], season.date_names?.[index])}</div>
 			{#each tipTeams as row (row.team.team)}
 				<div class="tip-row">
 					<span

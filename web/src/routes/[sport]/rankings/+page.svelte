@@ -1,7 +1,7 @@
 <script lang="ts">
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
-	import { signed } from '$lib/format';
+	import { dateText, seasonText, signed } from '$lib/format';
 	import {
 		filterOptions,
 		matchesFilter,
@@ -95,7 +95,7 @@
 		<nav class="filters" aria-label="Season">
 			{#each rankings.seasons as s (s.season)}
 				<button class="pill" class:accent={s.season === season.season} onclick={() => (chosen = s.season)}
-					>{s.season}</button
+					>{seasonText(s.season, info.split_season)}</button
 				>
 			{/each}
 		</nav>
@@ -140,10 +140,10 @@
 		{/if}
 		<p class="muted small source">
 			{#if season.source === 'backtest'}
-				{season.season}: from that season's walk-forward model, trained only on seasons before
-				{season.season}, with each {info.date_label.toLowerCase()}'s results added as they happened.
+				{seasonText(season.season, info.split_season)}: from that season's walk-forward model, trained only on seasons before
+				{seasonText(season.season, info.split_season)}, with each {info.date_label.toLowerCase()}'s results added as they happened.
 			{:else}
-				{season.season}: from the current model, with each {info.date_label.toLowerCase()}'s results
+				{seasonText(season.season, info.split_season)}: from the current model, with each {info.date_label.toLowerCase()}'s results
 				added as they happened.
 			{/if}
 		</p>
@@ -167,8 +167,8 @@
 
 		<div class="card section">
 			<h2>
-				Before {info.date_label}
-				{season.dates[shown]}, {season.season}
+				Before {dateText(info.date_label, season.dates[shown], season.date_names?.[shown])},
+				{seasonText(season.season, info.split_season)}
 				{#if filterLabel}<span class="muted"> · {filterLabel}</span>{/if}
 				{#if index !== null}<span class="muted small">(hovered)</span>{/if}
 			</h2>

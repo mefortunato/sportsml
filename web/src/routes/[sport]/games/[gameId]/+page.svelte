@@ -10,7 +10,7 @@
 	import TotalChart from '$lib/components/TotalChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import WinProbBar from '$lib/components/WinProbBar.svelte';
-	import { kickoffLabel, marginLabel, signed, spreadLabel } from '$lib/format';
+	import { dateText, kickoffLabel, seasonText, marginLabel, signed, spreadLabel } from '$lib/format';
 
 	let { data } = $props();
 	const info = $derived(data.info);
@@ -34,8 +34,7 @@
 
 	<div class="card hero section">
 		<div class="meta muted small">
-			{info.date_label}
-			{game.date}, {game.season} · {kickoffLabel(game.kickoff)}{game.neutral ? ' · neutral site' : ''}
+			{dateText(info.date_label, game.date, game.date_name)}, {seasonText(game.season, info.split_season)} · {kickoffLabel(game.kickoff)}{game.neutral ? ' · neutral site' : ''}
 		</div>
 		<div class="matchup">
 			<div class="team">
@@ -111,7 +110,7 @@
 		</div>
 	{/if}
 
-	<MatchupDetails matchup={game} dateLabel={info.date_label} />
+	<MatchupDetails matchup={game} dateLabel={info.date_label} splitSeason={info.split_season} />
 </div>
 
 <style>

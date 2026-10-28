@@ -4,7 +4,11 @@
 	import StatComparison from './StatComparison.svelte';
 
 	/** Pre-game team stats, records and recent form (shared by game and challenge). */
-	let { matchup, dateLabel = 'Week' }: { matchup: Matchup; dateLabel?: string } = $props();
+	let {
+		matchup,
+		dateLabel = 'Week',
+		splitSeason = false
+	}: { matchup: Matchup; dateLabel?: string; splitSeason?: boolean } = $props();
 </script>
 
 <div class="section card">
@@ -14,6 +18,7 @@
 		away={matchup.summaries.away}
 		home={matchup.summaries.home}
 		{dateLabel}
+		{splitSeason}
 	/>
 </div>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import CalibrationChart from '$lib/components/CalibrationChart.svelte';
-	import { num, pct } from '$lib/format';
+	import { num, pct, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import { MARKET_LABELS, unitsLabel } from '$lib/markets';
 	import type { BetRow, Market, Metrics } from '$lib/types';
@@ -11,8 +11,8 @@
 	const market = $derived(perf.overall.market);
 	const model = $derived(perf.overall.model);
 	const ats = $derived(perf.ats?.[0]);
-	const first = $derived(perf.seasons[0]);
-	const last = $derived(perf.seasons[perf.seasons.length - 1]);
+	const first = $derived(seasonText(perf.seasons[0], info.split_season));
+	const last = $derived(seasonText(perf.seasons[perf.seasons.length - 1], info.split_season));
 
 	// win rate needed to break even betting at -110
 	const BREAKEVEN = 110 / 210;
@@ -153,7 +153,7 @@
 					{#each seasons as [season, s] (season)}
 						{@const row = perf.ats_by_season?.[season]}
 						<tr>
-							<td>{season}</td>
+							<td>{seasonText(Number(season), info.split_season)}</td>
 							<td class="num tabular">{s.model.n}</td>
 							<td class="num tabular" class:win={better(s.model.accuracy, s.market?.accuracy)}>{pct(s.model.accuracy, 1)}</td>
 							{#if s.market}<td class="num tabular muted">{pct(s.market.accuracy, 1)}</td>{/if}

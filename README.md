@@ -154,6 +154,70 @@ picks (lines from 2021) lose at a small edge and are noisy above one.
 spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
 +0.8% to +6.7%) against flat betting's +1.4% over 2019-2025.
 
+## NBA
+
+```sh
+uv run sportsml nba download        # ESPN schedules, box scores, lines -> data/nba/raw.csv
+uv run sportsml nba process         #                                    -> data/nba/games.csv
+uv run sportsml nba fit transformer #                                    -> models/nba/transformer
+uv run sportsml nba predict --model_dir models/nba/transformer
+```
+
+No key is needed. stats.nba.com (`nba_api`) refuses cloud and GitHub
+Actions addresses, so `download` uses ESPN's data instead:
+
+- **Games and box scores** from
+  [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data)'s
+  ESPN release files, one per season from 2003-04, refreshed daily around
+  11:45 UTC with the previous night's games. The schedule keeps upcoming
+  games; postponed ones are dropped (the makeup game gets a new id), and so
+  are preseason and All-Star games. Neutral-site games (the NBA Cup in Las
+  Vegas, games abroad) have `location` 0.
+- **Lines** from ESPN's odds API, one request per game from 2012-13 on:
+  each market from the most preferred book that has it (consensus,
+  DraftKings, ESPN BET, Caesars, ...; prediction sites and live odds are
+  skipped), with its spread, over/under and moneyline prices. Upcoming
+  games get lines once ESPN posts them, about a day ahead. A full download
+  makes ~18,000 requests (about 20 minutes); finished seasons and finished
+  games' lines are cached in `data/nba/espn_cache`, so a refresh makes a
+  few dozen.
+- **Teams** are keyed by franchise, as its current abbreviation (`GSW`,
+  `NYK`, ...): the Seattle SuperSonics' games are Oklahoma City's history,
+  the New Jersey Nets' Brooklyn's. The name a team played under stays in
+  `team_name`.
+- **Seasons** are keyed by the year they end (2025-26 is `2026`), and the
+  date is `day`, the days since the season's first game: teams play every
+  2-3 days, so team state is refreshed, and the backtest replayed, one game
+  day at a time. `game_date`, `week`, `game_type` (`regular`, `play_in`,
+  `playoffs`), `postseason` and rest days (1 is a back-to-back) are in the
+  table.
+
+The transformer reads each team's last 40 games and predicts the total.
+On 2023-24 to 2025-26, a 20-game history (+0.0009 +/- 0.0016 Brier) and
+opponent strength (-0.0007 +/- 0.0014) made no difference.
+
+Walk-forward backtest, 2021-22 to 2025-26 (6,535 games every family
+predicted, all with lines; `brier vs market` is the paired per-game
+difference, 95% CI):
+
+| Source | RMSE | Accuracy | Brier | Brier vs market | ATS |
+|---|---|---|---|---|---|
+| market | 13.56 | 68.0% | 0.2050 | | |
+| transformer | 14.10 | 65.5% | 0.2164 | +0.0114 ± 0.0024 | 49.5% |
+| elo | 14.21 | 64.7% | 0.2182 | +0.0132 ± 0.0024 | 49.7% |
+| gnn | 14.25 | 64.8% | 0.2187 | +0.0137 ± 0.0027 | 50.3% |
+| point_diff | 14.40 | 64.6% | 0.2219 | +0.0169 ± 0.0027 | 49.6% |
+| sklearn | 14.55 | 63.6% | 0.2263 | +0.0213 ± 0.0030 | 49.6% |
+| home | 15.47 | 55.6% | 0.2473 | +0.0423 ± 0.0041 | 49.7% |
+
+The model has no injury or lineup news (stars resting, late scratches),
+which moves NBA lines a lot. No market has an edge:
+the transformer's spread picks win 49.5% (-5.4% ROI at -110), its
+over/under picks 49.8% of 6,604 games (-5.0% at the posted prices; its
+total's edge correlates only +0.05 with the result against the line) and
+its moneyline picks lose 5%. A transformer backtest season takes about 20
+minutes on 4 CPU cores (training, then ~235 daily state refreshes).
+
 ## Backtesting against the market
 
 ```sh
@@ -234,7 +298,7 @@ Any model can be backtested from Python with
 ## Web app
 
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
-the NFL and college football:
+the NFL, college football and the NBA:
 
 - **Home**: what the site is, each sport's backtest record against Vegas
   (winners picked, against the spread, over/under) and how the
@@ -252,8 +316,8 @@ the NFL and college football:
   has been right in the walk-forward backtest (`pricing.trust` in
   `sports.json`, fit per market).
 - **Power rankings**: each team's average predicted margin against every
-  other team, week by week, with conference, division and final-four
-  filters.
+  other team, week by week (game day by game day in the NBA), with
+  conference, division and final-four filters.
 - **Model performance**: the walk-forward backtest against Vegas
   (accuracy, Brier score, calibration, and betting the model's edge on the
   spread, the moneyline and the over/under).
@@ -274,15 +338,18 @@ Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
-  demand) runs `sportsml web build --sports '[nfl, cfb]'`: for each sport,
-  download, train the transformer, backtest it and record weekly power
-  rankings. It publishes the result as the `webdata` release asset.
-  Backtest seasons are reused from the previous release when nothing that
-  shapes them changed: each season's key in `meta.json` covers the model
-  settings, training epochs and a hash of the model code. A routine run
-  therefore only trains the model for upcoming games (~15 minutes), and
-  once a year backtests the season that just finished. Changing the model
-  reruns the whole backtest (~1 hour). Old seasons' game data is treated as
+  demand) runs `sportsml web build --sports '[<sport>]'` in one job per
+  sport, in parallel: download, train the transformer, backtest it and
+  record power rankings before every date. It publishes the merged result
+  as the `webdata` release asset; a sport whose job fails keeps its
+  previous build there. Backtest seasons are reused from the
+  previous release when nothing that shapes them changed: each season's
+  key in `meta.json` covers the model settings, training epochs and a hash
+  of the model code. A routine run therefore only trains the model for
+  upcoming games (~15 minutes for the NFL or college football, ~20 for the
+  NBA), and once a year backtests the season that just finished. Changing
+  the model reruns the whole backtest (~1 hour for the NFL and college
+  football, 2-3 hours for the NBA). Old seasons' game data is treated as
   final; after a source revises it, run Train with **refresh_backtest**
   (`sportsml web build --refresh_backtest true`) to backtest every season
   again.
@@ -301,13 +368,17 @@ NFL; no request is made when no game is within 8 days, and a failed fetch
 keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
 repository's **Settings → Secrets and variables → Actions**; without them
 the site builds as before, without current lines. `odds.json` reports the
-provider's remaining requests.
+provider's remaining requests. NBA games carry ESPN's lines in the games
+table (refreshed with every Site run), so they need no `--odds` provider
+and no key; `--odds '{nba: oddsapi}'` adds every book from The Odds API,
+at about 30 more requests a month per daily refresh.
 
 To set it up: in the repository settings, set **Pages → Source** to
 **GitHub Actions**, add a `CFBD_API_KEY` repository secret (both workflows
 download college football), then run **Train** once from the Actions tab.
-Both workflows keep CFBD's responses of finished seasons in the Actions
-cache, so a daily Site run makes only a handful of CFBD calls. It starts
+Both workflows keep CFBD's responses of finished seasons, and ESPN's NBA
+files and lines of finished games, in the Actions cache, so a daily Site
+run makes only a handful of CFBD calls and a few dozen ESPN requests. It starts
 **Site** when it finishes.
 
 Locally:
@@ -321,8 +392,8 @@ make artifact                   # one-page build (hash routing) -> web/build-art
 
 Limits of a static site:
 
-- Only precomputed views exist: upcoming weeks, their game views, past
-  seasons' rankings, the challenge pool.
+- Only precomputed views exist: upcoming weeks (the next 7 game days in the
+  NBA), their game views, past seasons' rankings, the challenge pool.
 - The challenge answers ship with the site, so it runs on the honor
   system.
 - The data is as fresh as the last Site run; line moves during the day are
@@ -331,7 +402,9 @@ Limits of a static site:
 To add a sport, give it a `SportView` (`src/sportsml/web/sports/<sport>.py`)
 with its stats, team metadata and score columns, add it to `BUILTIN_VIEWS`,
 and build it with `sportsml web build --sports '[nfl, <sport>]'`. The
-frontend needs no changes.
+frontend needs no changes. A sport whose dates are game days rather than
+weeks (the NBA) names each date (`date_name`, e.g. "Oct 28") and caps how
+many upcoming dates are exported (`upcoming_dates`).
 
 ## Sports and data sources
 
@@ -339,7 +412,7 @@ frontend needs no changes.
 |---|---|---|---|
 | NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
 | College football | `cfb` | [CollegeFootballData](https://collegefootballdata.com) | `CFBD_API_KEY` |
-| NBA | `nba` | stats.nba.com via `nba_api` | none |
+| NBA | `nba` | ESPN via [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) and ESPN's odds API | none |
 | Men's college basketball | `cbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
 | Women's college basketball | `wcbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
 

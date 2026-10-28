@@ -154,6 +154,70 @@ picks (lines from 2021) lose at a small edge and are noisy above one.
 spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
 +0.8% to +6.7%) against flat betting's +1.4% over 2019-2025.
 
+## NBA
+
+```sh
+uv run sportsml nba download        # ESPN schedules, box scores, lines -> data/nba/raw.csv
+uv run sportsml nba process         #                                    -> data/nba/games.csv
+uv run sportsml nba fit transformer #                                    -> models/nba/transformer
+uv run sportsml nba predict --model_dir models/nba/transformer
+```
+
+No key is needed. stats.nba.com (`nba_api`) refuses cloud and GitHub
+Actions addresses, so `download` uses ESPN's data instead:
+
+- **Games and box scores** from
+  [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data)'s
+  ESPN release files, one per season from 2003-04, refreshed daily around
+  11:45 UTC with the previous night's games. The schedule keeps upcoming
+  games; postponed ones are dropped (the makeup game gets a new id), and so
+  are preseason and All-Star games. Neutral-site games (the NBA Cup in Las
+  Vegas, games abroad) have `location` 0.
+- **Lines** from ESPN's odds API, one request per game from 2012-13 on:
+  each market from the most preferred book that has it (consensus,
+  DraftKings, ESPN BET, Caesars, ...; prediction sites and live odds are
+  skipped), with its spread, over/under and moneyline prices. Upcoming
+  games get lines once ESPN posts them, about a day ahead. A full download
+  makes ~18,000 requests (about 20 minutes); finished seasons and finished
+  games' lines are cached in `data/nba/espn_cache`, so a refresh makes a
+  few dozen.
+- **Teams** are keyed by franchise, as its current abbreviation (`GSW`,
+  `NYK`, ...): the Seattle SuperSonics' games are Oklahoma City's history,
+  the New Jersey Nets' Brooklyn's. The name a team played under stays in
+  `team_name`.
+- **Seasons** are keyed by the year they end (2025-26 is `2026`), and the
+  date is `day`, the days since the season's first game: teams play every
+  2-3 days, so team state is refreshed, and the backtest replayed, one game
+  day at a time. `game_date`, `week`, `game_type` (`regular`, `play_in`,
+  `playoffs`), `postseason` and rest days (1 is a back-to-back) are in the
+  table.
+
+The transformer reads each team's last 40 games and predicts the total.
+On 2023-24 to 2025-26, a 20-game history (+0.0009 +/- 0.0016 Brier) and
+opponent strength (-0.0007 +/- 0.0014) made no difference.
+
+Walk-forward backtest, 2021-22 to 2025-26 (6,535 games every family
+predicted, all with lines; `brier vs market` is the paired per-game
+difference, 95% CI):
+
+| Source | RMSE | Accuracy | Brier | Brier vs market | ATS |
+|---|---|---|---|---|---|
+| market | 13.56 | 68.0% | 0.2050 | | |
+| transformer | 14.10 | 65.5% | 0.2164 | +0.0114 ± 0.0024 | 49.5% |
+| elo | 14.21 | 64.7% | 0.2182 | +0.0132 ± 0.0024 | 49.7% |
+| gnn | 14.25 | 64.8% | 0.2187 | +0.0137 ± 0.0027 | 50.3% |
+| point_diff | 14.40 | 64.6% | 0.2219 | +0.0169 ± 0.0027 | 49.6% |
+| sklearn | 14.55 | 63.6% | 0.2263 | +0.0213 ± 0.0030 | 49.6% |
+| home | 15.47 | 55.6% | 0.2473 | +0.0423 ± 0.0041 | 49.7% |
+
+The model has no injury or lineup news (stars resting, late scratches),
+which moves NBA lines a lot. No market has an edge:
+the transformer's spread picks win 49.5% (-5.4% ROI at -110), its
+over/under picks 49.8% of 6,604 games (-5.0% at the posted prices; its
+total's edge correlates only +0.05 with the result against the line) and
+its moneyline picks lose 5%. A transformer backtest season takes about 20
+minutes on 4 CPU cores (training, then ~235 daily state refreshes).
+
 ## Backtesting against the market
 
 ```sh

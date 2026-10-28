@@ -325,6 +325,8 @@ come from ESPN's odds API from 2013, matched like the NHL's
 - Postponed games are played later under the same id; cancelled ones are
   dropped. Teams are MLB's current abbreviations by team id (the Indians'
   games are `CLE`'s, Oakland's `ATH`'s).
+- The Elo baseline uses `k` 4, a 24-point home edge and 90 Elo points a
+  run (tuned on 2010-2018).
 
 ## Backtesting against the market
 

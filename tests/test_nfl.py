@@ -68,7 +68,13 @@ def test_missing_stats_are_missing_not_self_paired():
 
 
 def test_schema_columns_exist_in_built_games():
-    games = build_games(*nflverse_frames())
+    from sportsml.nfl.data.pbp import PBP_COLUMNS
+
+    schedule, team_stats = nflverse_frames()
+    pbp = pd.DataFrame(
+        [{"season": 2010, "week": 1, "team": "KC", **dict.fromkeys(PBP_COLUMNS, 0.0)}]
+    )
+    games = build_games(schedule, team_stats, pbp=pbp)
     needed = set(SCHEMA.stats) | {SCHEMA.target, SCHEMA.location, *SCHEMA.key_columns}
     assert needed <= set(games.columns)
 
@@ -155,3 +161,119 @@ def test_build_games_adds_both_sides_injury_features():
     assert (games.loc["KC", "inj_qb"], games.loc["KC", "opp_inj_ol"]) == (1.0, 2.0)
     assert (games.loc["LV", "opp_inj_qb"], games.loc["LV", "inj_ol"]) == (1.0, 2.0)
     assert games.loc["LA", OPP_INJURY_COLUMNS].isna().all()
+
+
+def pbp_frame():
+    """KC's two drives against LV; LV's one drive ends in a kneel."""
+
+    def play(play_id, team, drive, play_type, **kw):
+        row = {
+            "game_id": "g", "season": 2023, "week": 1, "play_id": play_id,
+            "posteam": team, "play_type": play_type,
+            "pass": float(play_type == "pass"), "rush": float(play_type == "run"),
+            "qb_kneel": 0.0, "qb_spike": 0.0, "down": 1.0, "epa": 0.0,
+            "success": 0.0, "wp": 0.5, "pass_oe": 0.0, "yards_gained": 0.0,
+            "half_seconds_remaining": 900.0, "game_seconds_remaining": 3000.0,
+            "fixed_drive": drive, "yardline_100": 75.0,
+        }  # fmt: skip
+        return {**row, **kw}
+
+    return pd.DataFrame(
+        [
+            play(1, None, np.nan, "kickoff", yardline_100=np.nan),
+            play(2, "KC", 1, "pass", epa=1.0, success=1.0, yards_gained=25,
+                 pass_oe=40.0, game_seconds_remaining=3000.0),
+            play(3, "KC", 1, "run", epa=-0.5, down=2.0, yards_gained=4,
+                 game_seconds_remaining=2970.0),
+            play(4, "KC", 1, "run", epa=0.5, down=3.0, success=1.0,
+                 yards_gained=12, wp=0.95, game_seconds_remaining=2940.0),
+            play(5, "KC", 2, "pass", epa=-1.0, down=1.0, yardline_100=60.0,
+                 pass_oe=-20.0, game_seconds_remaining=2000.0),
+            play(6, "OAK", 3, "run", qb_kneel=1.0, epa=-0.1),
+        ]
+    )  # fmt: skip
+
+
+def test_pbp_features_rate_each_offense_per_play():
+    from sportsml.nfl.data.pbp import pbp_features
+
+    features = pbp_features(pbp_frame()).set_index("team")
+    kc = features.loc["KC"]
+    assert kc.plays == 4
+    assert kc.epa_per_play == pytest.approx(0.0)
+    assert kc.success_rate == pytest.approx(0.5)
+    assert kc.dropback_epa == pytest.approx(0.0)
+    assert kc.rush_epa_per_play == pytest.approx(0.0)
+    assert kc.early_down_epa == pytest.approx(-1 / 6)
+    # the wp 0.95 play is not neutral
+    assert kc.neutral_epa == pytest.approx(-1 / 6)
+    assert kc.neutral_pass_oe == pytest.approx(20 / 3)
+    # snaps 30 s apart in drive 1; a drive's last snap has no next one
+    assert kc.neutral_sec_per_play == pytest.approx(30.0)
+    # a 25-yard pass and a 12-yard run
+    assert kc.explosive_rate == pytest.approx(0.5)
+    assert (kc.drives, kc.start_yardline) == (2, pytest.approx(67.5))
+    # Oakland -> LV; a kneel is no play, but its drive counts
+    lv = features.loc["LV"]
+    assert (lv.plays, lv.drives) == (0, 1)
+    assert np.isnan(lv.epa_per_play)
+
+
+def weather_schedule():
+    games = [
+        # (stadium, roof, gameday, temp, wind)
+        ("KAN00", "outdoors", "2023-09-10", 80.0, 5.0),  # reported
+        ("KAN00", "outdoors", "2023-09-17", None, None),  # archive
+        ("DET00", "dome", "2023-09-17", None, None),  # indoor
+        ("DAL00", "closed", "2023-09-17", None, None),
+        ("DAL00", None, "2023-10-22", None, None),  # usually closed
+        ("CHI98", "outdoors", "2023-10-22", None, None),  # forecast
+        ("CHI98", "outdoors", "2023-12-24", None, None),  # too far ahead
+    ]
+    return pd.DataFrame(
+        [
+            {"season": 2023, "stadium_id": stadium, "roof": roof,
+             "gameday": day, "gametime": "13:00", "temp": temp, "wind": wind}
+            for stadium, roof, day, temp, wind in games
+        ]
+    )  # fmt: skip
+
+
+def test_weather_fills_gaps_from_archive_and_forecast():
+    import datetime
+
+    from sportsml.nfl.data.weather import ARCHIVE_URL, FORECAST_URL, weather_features
+
+    calls = []
+
+    def fetch(url, lat, lon, start, end):
+        calls.append((url, round(lat), start, end))
+        hours = pd.date_range(start, pd.Timestamp(end) + pd.Timedelta("23h"), freq="h")
+        wind = 10.0 if url == ARCHIVE_URL else 20.0
+        return pd.DataFrame({"temp": 50.0, "wind": wind}, index=hours)
+
+    out = weather_features(
+        weather_schedule(), today=datetime.date(2023, 10, 20), fetch=fetch
+    )
+    assert sorted(calls) == [
+        (FORECAST_URL, 42, "2023-10-22", "2023-10-22"),
+        (ARCHIVE_URL, 39, "2023-09-17", "2023-09-17"),
+    ]
+    assert out["roof"].tolist()[4] == "closed"
+    assert out["temp"].tolist()[:6] == [80.0, 50.0, 70.0, 70.0, 70.0, 50.0]
+    assert out["wind"].tolist()[:6] == [5.0, 10.0, 0.0, 0.0, 0.0, 20.0]
+    assert out[["temp", "wind"]].iloc[6].isna().all()
+
+
+def test_weather_keeps_gaps_when_the_api_fails():
+    import datetime
+
+    from sportsml.nfl.data.weather import weather_features
+
+    def fetch(*args):
+        raise RuntimeError("offline")
+
+    out = weather_features(
+        weather_schedule(), today=datetime.date(2023, 10, 20), fetch=fetch
+    )
+    assert np.isnan(out["temp"].iloc[1]) and out["temp"].iloc[2] == 70.0

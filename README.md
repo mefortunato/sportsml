@@ -39,6 +39,24 @@ features; on NFL 2021-2025 they improved the transformer's backtest Brier by
 0.0028 +/- 0.0025 (about a fifth of its gap to the market), most of it in a
 team's first game with a new quarterback.
 
+NFL box scores sum EPA and yards over every snap, garbage time included, so
+the NFL also gets per-game efficiency stats from nflverse play-by-play
+(1999+). For each offense: plays, EPA per play, success rate, EPA per
+dropback and per rush, early-down EPA, and, in neutral game states (win
+probability 0.1-0.9, outside each half's last two minutes), EPA per play,
+pass rate over expected and seconds per snap (pace), plus explosive-play
+rate (20+ yard passes, 10+ yard runs), drives and average drive start. The
+same columns as `opp_*` describe the defense. Like the box score, the models
+see these from each team's earlier games only.
+
+Kickoff weather (`temp` in F, `wind` in mph) is a context feature too. The
+nflverse schedule has it for most played outdoor games; gaps, including
+every upcoming game, are filled from [Open-Meteo](https://open-meteo.com)
+(no key) at the stadium for the kickoff hour: its historical reanalysis for
+past games, its forecast for the next two weeks. Indoor games get no wind
+and 70 F, and upcoming games without a roof decision take the stadium's
+usual one.
+
 Naive baselines (`home` field only, season-to-date `point_diff`, and
 FiveThirtyEight-style `elo`) and the betting market are the yardsticks in
 backtests.
@@ -58,7 +76,7 @@ when one is available, on a GPU (Lightning picks it automatically).
 ## Quickstart (NFL)
 
 ```sh
-uv run sportsml nfl download      # nflverse schedules + weekly team stats -> data/nfl/raw.csv
+uv run sportsml nfl download      # nflverse schedules, stats, pbp, weather -> data/nfl/raw.csv
 uv run sportsml nfl process       # validate / clean                       -> data/nfl/games.csv
 uv run sportsml nfl fit sklearn   # train, print metrics, save             -> models/nfl/sklearn
 uv run sportsml nfl fit gnn       #                                        -> models/nfl/gnn
@@ -328,7 +346,7 @@ frontend needs no changes.
 
 | Sport | Command | Source | Credentials |
 |---|---|---|---|
-| NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
+| NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy`; weather gaps from [Open-Meteo](https://open-meteo.com) | none |
 | College football | `cfb` | [CollegeFootballData](https://collegefootballdata.com) | `CFBD_API_KEY` |
 | NBA | `nba` | stats.nba.com via `nba_api` | none |
 | Men's college basketball | `cbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |

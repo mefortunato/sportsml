@@ -309,9 +309,9 @@ class CalibratedEloModel(EloModel):
 
 # Searched on the training seasons; FiveThirtyEight's NFL settings are in it.
 ELO_GRID = {
-    "k": (10.0, 15.0, 20.0, 25.0, 30.0, 40.0),
+    "k": (5.0, 7.5, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0),
     "home": (0.0, 35.0, 65.0, 100.0),
-    "regress": (1 / 4, 1 / 3, 1 / 2),
+    "regress": (1 / 4, 1 / 3, 1 / 2, 2 / 3),
 }
 
 

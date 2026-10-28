@@ -44,7 +44,10 @@ FiveThirtyEight-style `elo`) and the betting market are the yardsticks in
 backtests. `calibrated_elo` is the same Elo tuned per sport: its K-factor,
 home edge and between-season regression are picked by grid search on the
 training seasons, and the rating gap is converted to points by least squares
-(instead of a fixed 25 Elo per point). It is what the web app serves.
+(instead of a fixed 25 Elo per point). It is what the web app serves. In
+walk-forward backtests it edges out plain Elo (Brier 0.2247 vs 0.2253 on
+NFL 2021-2025, 0.2178 vs 0.2182 on NBA 2021-22 to 2025-26), within noise of
+it and still well behind the market (0.2115 and 0.2050).
 
 ## Installation
 

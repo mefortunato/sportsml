@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from sportsml.models.baselines import (
+    ELO_GRID,
     CalibratedEloModel,
     EloModel,
     EloParams,
@@ -110,7 +111,7 @@ def test_calibrated_elo_tunes_and_fits_the_point_scale(toy_games):
     res = fit_calibrated_elo(toy_games, "toy", print_metrics=False)
     model = res["predictor"].model
     p = model.params
-    assert p.k in (10, 15, 20, 25, 30, 40) and p.regress in (1 / 4, 1 / 3, 1 / 2)
+    assert p.k in ELO_GRID["k"] and p.regress in ELO_GRID["regress"]
     # toy home teams win by 3 points on average
     assert model.home_advantage == pytest.approx(3, abs=1.5)
     assert model.coef > 0

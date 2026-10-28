@@ -339,9 +339,20 @@ request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
   demand) runs `sportsml web build --sports '[<sport>]'` in one job per
-  sport, in parallel (the NBA's takes 2-3 hours): download, train the
-  transformer, backtest it and record power rankings before every date. It
-  publishes the merged result as the `webdata` release asset.
+  sport, in parallel: download, train the transformer, backtest it and
+  record power rankings before every date. It publishes the merged result
+  as the `webdata` release asset; a sport whose job fails keeps its
+  previous build there. Backtest seasons are reused from the
+  previous release when nothing that shapes them changed: each season's
+  key in `meta.json` covers the model settings, training epochs and a hash
+  of the model code. A routine run therefore only trains the model for
+  upcoming games (~15 minutes for the NFL or college football, ~20 for the
+  NBA), and once a year backtests the season that just finished. Changing
+  the model reruns the whole backtest (~1 hour for the NFL and college
+  football, 2-3 hours for the NBA). Old seasons' game data is treated as
+  final; after a source revises it, run Train with **refresh_backtest**
+  (`sportsml web build --refresh_backtest true`) to backtest every season
+  again.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
@@ -373,7 +384,7 @@ run makes only a handful of CFBD calls and a few dozen ESPN requests. It starts
 Locally:
 
 ```sh
-make webdata                    # train + backtest (slow) -> webdata/
+make webdata                    # train + backtest -> webdata/ (reuses its backtest seasons)
 make site                       # fresh results -> web/static/data, site -> web/build
 make web-dev                    # hot reload on :5173 with that data
 make artifact                   # one-page build (hash routing) -> web/build-artifact/

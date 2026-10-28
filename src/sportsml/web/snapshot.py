@@ -457,6 +457,14 @@ class Snapshot:
     def _predict_upcoming(self, predictor: Predictor) -> pd.DataFrame:
         predictor.update_state(self.games)
         rows = one_row_per_game(upcoming(self.games, self.schema), self.schema)
+        # a game whose kickoff day has passed is not upcoming, even while its
+        # result is missing (still in progress at download, or a late refresh)
+        today = _today_eastern()
+        past = [
+            (kickoff := self.view.kickoff(row)) is not None and kickoff[:10] < today
+            for _, row in rows.iterrows()
+        ]
+        rows = rows[~np.array(past, dtype=bool)]
         known = set(predictor.model.teams)
         rows = rows[
             rows[self.schema.team].isin(known) & rows[self.schema.opp].isin(known)
@@ -787,6 +795,11 @@ def _calibration(prob: pd.Series, happened: pd.Series) -> list[dict]:
         for b, n in grouped.size().items()
         if n
     ]
+
+
+def _today_eastern() -> str:
+    """Today's date in US Eastern (kickoffs are listed in it), ``YYYY-MM-DD``."""
+    return pd.Timestamp.now(tz="America/New_York").strftime("%Y-%m-%d")
 
 
 def _now() -> str:

@@ -1,13 +1,22 @@
 # Train the transformer, run the walk-forward backtest (challenge games,
 # performance page, past power rankings) and publish the result as the
 # `webdata` release asset that the daily Site workflow builds from.
-# Each sport builds in its own job (the NBA, the slowest, takes about 2-3
-# hours on a GitHub runner), so it runs monthly during the seasons and on
-# demand, e.g. after changing the model.
+# Runs monthly during the seasons and on demand, e.g. after changing the
+# model. Each sport builds in its own job, in parallel. Backtest seasons are
+# reused from the previous `webdata` release while the model and its code
+# are unchanged, so a routine run only trains the model for upcoming games
+# (~15 min for the NFL or college football, ~20 for the NBA); a full
+# backtest (after a model change, or with refresh_backtest) takes ~1 hour
+# for the NFL and college football and 2-3 hours for the NBA.
 name: Train
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh_backtest:
+        description: Backtest every season again instead of reusing the last release's
+        type: boolean
+        default: false
   schedule:
     - cron: "41 7 1 1-6,9-12 *" # the 1st of each month, September-June
 
@@ -24,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
+      # a sport that fails keeps its previous build (see publish)
+      fail-fast: false
       matrix:
         sport: [nfl, cfb, nba]
     env:
@@ -52,18 +63,35 @@ jobs:
           path: data/nba/espn_cache
           key: espn-nba-${{ github.run_id }}
           restore-keys: espn-nba-
+      - name: Fetch the previous build (its backtest seasons can be reused)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir webdata
+          if gh release download webdata --pattern webdata.tar.gz; then
+            tar -xzf webdata.tar.gz -C webdata && rm webdata.tar.gz
+          else
+            echo "no previous webdata release: backtesting every season"
+          fi
       - name: Download, train, backtest
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
-        run: uv run sportsml web build --sports '[${{ matrix.sport }}]' --output_dir webdata
+        run: >
+          uv run sportsml web build --sports '[${{ matrix.sport }}]'
+          --output_dir webdata
+          --refresh_backtest ${{ inputs.refresh_backtest || false }}
+      - name: Pack this sport's build
+        run: tar -czf webdata-${{ matrix.sport }}.tar.gz -C webdata ${{ matrix.sport }}
       - uses: actions/upload-artifact@v4
         with:
           name: webdata-${{ matrix.sport }}
-          path: webdata
+          path: webdata-${{ matrix.sport }}.tar.gz
           retention-days: 3
 
   publish:
     needs: build
+    # publish whatever built: a failed sport keeps the previous release's
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -71,10 +99,26 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          # each sport's webdata/<sport>/, merged into one webdata/
           pattern: webdata-*
           merge-multiple: true
-          path: webdata
+          path: built
+      - name: Merge with the previous build
+        run: |
+          shopt -s nullglob
+          built=(built/webdata-*.tar.gz)
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "::error::no sport built"; exit 1
+          fi
+          mkdir webdata
+          if gh release download webdata --pattern webdata.tar.gz; then
+            tar -xzf webdata.tar.gz -C webdata && rm webdata.tar.gz
+          fi
+          for file in "${built[@]}"; do
+            sport="$(basename "$file" .tar.gz)"; sport="${sport#webdata-}"
+            rm -rf "webdata/$sport"
+            tar -xzf "$file" -C webdata
+            echo "published a new build of $sport"
+          done
       - name: Publish webdata release asset
         run: |
           tar -czf webdata.tar.gz -C webdata .

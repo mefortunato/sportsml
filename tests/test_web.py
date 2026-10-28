@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import random
 
@@ -57,6 +58,30 @@ def test_upcoming_games_have_spread_and_prediction(snapshot):
         assert pred["edge"] == pytest.approx(pred["margin"] - game["spread"])
         assert pred["ats_pick"] == ("home" if pred["edge"] > 0 else "away")
         assert 0 < pred["win_prob"] < 1
+
+
+def test_games_whose_kickoff_day_has_passed_are_not_upcoming(snapshot, monkeypatch):
+    """A game still missing its result (in progress at download, or a late
+    refresh) leaves the upcoming page once its day is over."""
+    from sportsml.web import snapshot as snapshot_module
+
+    ids = [g["game_id"] for g in snapshot.upcoming()["games"]]
+    yesterday = set(ids[:2])
+
+    def kickoff(row):
+        played = str(row["game_id"]) in yesterday
+        return "2026-10-27 19:30" if played else "2026-10-31"
+
+    monkeypatch.setattr(snapshot_module, "_today_eastern", lambda: "2026-10-28")
+    view = dataclasses.replace(snapshot.view, kickoff=kickoff)
+    teams = pd.DataFrame(list(snapshot.teams.values()))
+    predictor = load_predictor(snapshot.model_dir)
+    later = Snapshot(
+        view, snapshot.games, predictor, snapshot.results, teams, snapshot.meta
+    )
+    week = later.upcoming()
+    assert [g["game_id"] for g in week["games"]] == ids[2:]
+    assert later.game(ids[0])["prediction"] is None
 
 
 def test_game_view(snapshot):
@@ -516,3 +541,68 @@ def test_nba_view_stats_and_dates_on_nba_games():
     first = games[games.game_id == "2"].iloc[0]
     assert date_name(first) == "Oct 25"
     assert kickoff(first) == "2024-10-25 22:00"
+
+
+def test_build_reuses_unchanged_backtest_seasons(tmp_path, monkeypatch):
+    import sportsml.backtest
+    from sportsml.web.build import backtest_key, code_hash
+
+    from .conftest import make_games
+
+    games = make_games(seasons=(2020, 2021, 2022, 2023, 2024))
+    backtested = []
+    real = sportsml.backtest.backtest
+
+    def spy(*args, seasons=None, **kwargs):
+        backtested.append(list(seasons))
+        return real(*args, seasons=seasons, **kwargs)
+
+    monkeypatch.setattr(sportsml.backtest, "backtest", spy)
+
+    def run(**kwargs):
+        backtested.clear()
+        build(sports=["toy"], output_dir=str(tmp_path), games=games,
+              backtest_seasons=2, max_epochs=1, **kwargs)  # fmt: skip
+        meta = json.loads((tmp_path / "toy" / "meta.json").read_text())
+        pool = pd.read_csv(tmp_path / "toy" / "pool.csv")
+        rankings = pd.read_csv(tmp_path / "toy" / "rankings.csv")
+        return backtested[:], meta, pool, rankings
+
+    calls, meta, pool, rankings = run()
+    assert calls == [[2022, 2023]]
+    assert set(meta["backtest_cache"]) == {"2022", "2023"}
+    assert set(pool["season"]) == set(rankings["season"]) == {2022, 2023}
+
+    # nothing changed: no backtest, the same rows and summary
+    calls, again, pool2, rankings2 = run()
+    assert calls == []
+    pd.testing.assert_frame_equal(pool2, pool)
+    pd.testing.assert_frame_equal(rankings2, rankings)
+
+    # summarized from the stored CSV rather than in memory: equal to ~1e-8
+    def rounded(value):
+        return json.loads(json.dumps(value), parse_float=lambda f: round(float(f), 6))
+
+    assert rounded(again["backtest"]) == rounded(meta["backtest"])
+
+    # one season's key no longer matches: only that season runs again
+    stale = json.loads((tmp_path / "toy" / "meta.json").read_text())
+    stale["backtest_cache"]["2022"] = "older model"
+    (tmp_path / "toy" / "meta.json").write_text(json.dumps(stale))
+    calls, _, pool3, _ = run()
+    assert calls == [[2022]]
+    assert list(pool3["season"].unique()) == [2022, 2023]
+    pd.testing.assert_frame_equal(
+        pool3[pool3["season"] == 2023].reset_index(drop=True),
+        pool[pool["season"] == 2023].reset_index(drop=True),
+    )
+
+    calls, *_ = run(refresh_backtest=True)
+    assert calls == [[2022, 2023]]
+
+    # the key follows the training settings and the code
+    code = code_hash()
+    assert backtest_key("toy", 2022, 1, code) == backtest_key("toy", 2022, 1, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 2, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2023, 1, code)
+    assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 1, "x")

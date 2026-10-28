@@ -296,7 +296,8 @@ seasons are cached in `data/nhl/nhl_cache`.
 - `result` is the final score's margin, the shootout's deciding goal
   included (`periods` is 4 after overtime, 5 after a shootout).
 - The Elo baseline uses `k` 6 and a 30-point home edge (tuned on 2009-10 to
-  2020-21): hockey results are noisy, so ratings move slowly.
+  2020-21), with a goal worth 120 Elo points: hockey results are noisy, so
+  ratings move slowly.
 
 ## MLB
 

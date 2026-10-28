@@ -24,6 +24,10 @@ class Sport:
         gnn: Default GNN settings (``hidden_dim``, ``out_dim``, ``lr``, ...).
         transformer: Default transformer settings (``history``, ``d_model``,
             ``lr``, ...).
+        pbp: Default play-by-play model settings (``history``,
+            ``game_d_model``, ``form_games``, ...).
+        plays: Fetches play-by-play features (for the ``pbp`` family);
+            None where the sport has no play-by-play source.
     """
 
     name: str
@@ -31,6 +35,8 @@ class Sport:
     download: Callable[..., pd.DataFrame]
     gnn: dict = field(default_factory=dict)
     transformer: dict = field(default_factory=dict)
+    pbp: dict = field(default_factory=dict)
+    plays: Callable[..., pd.DataFrame] | None = None
 
 
 def register_sport(sport: Sport) -> Sport:

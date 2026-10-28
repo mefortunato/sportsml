@@ -2,7 +2,7 @@
 
 Game predictions for the NFL, college football, NBA and men's / women's college
 basketball. For any matchup it predicts the point margin and a calibrated win
-probability, with three interchangeable model families:
+probability, with four interchangeable model families:
 
 - **sklearn**: any regressor (random forest by default) on each team's
   season-to-date box-score averages.
@@ -13,6 +13,12 @@ probability, with three interchangeable model families:
   true` (with `--model.encoder.init_args.token_dim` raised by 3) also gives
   each game the pre-game Elo of both teams and the opponent's season-to-date
   margin; on NFL 2021-2025 that did not change the backtest Brier.
+- **pbp** (NFL): a hierarchy of transformers over play-by-play data. One
+  transformer reads every play of a game and returns an embedding of how
+  each team played it; a second reads a team's last games as a sequence of
+  those embeddings and returns the team's embedding; both teams'
+  embeddings predict the margin and the total. See
+  [Play-by-play model](#play-by-play-model).
 
 The neural families can also regress the total (combined points) and every
 box-score stat next to the margin, as extra outputs with their own loss
@@ -63,6 +69,8 @@ uv run sportsml nfl process       # validate / clean                       -> da
 uv run sportsml nfl fit sklearn   # train, print metrics, save             -> models/nfl/sklearn
 uv run sportsml nfl fit gnn       #                                        -> models/nfl/gnn
 uv run sportsml nfl fit transformer #                                      -> models/nfl/transformer
+uv run sportsml nfl plays         # nflverse play-by-play features         -> data/nfl/plays.parquet
+uv run sportsml nfl fit pbp       #                                        -> models/nfl/pbp
 uv run sportsml nfl predict       # next unplayed games                    -> predictions/nfl.csv
 ```
 
@@ -154,6 +162,52 @@ picks (lines from 2021) lose at a small edge and are noisy above one.
 spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
 +0.8% to +6.7%) against flat betting's +1.4% over 2019-2025.
 
+## Play-by-play model
+
+```sh
+uv run sportsml nfl plays            # nflverse play-by-play 1999- -> data/nfl/plays.parquet (~20 MB)
+uv run sportsml nfl fit pbp          #                              -> models/nfl/pbp
+uv run sportsml nfl backtest --family pbp
+```
+
+`pbp` learns from every play instead of box-score totals, in three stages
+trained end to end:
+
+1. **Game embeddings.** `plays` writes each scrimmage play, kick and
+   penalty (~169 a game) as 39 numbers from the home team's side: who has
+   the ball, play type, down, distance, field position, clock, score, and
+   what the offense did (yards, EPA, success, first down, sack, air yards,
+   turnover, ...) signed by the side that did it. A transformer
+   (`PlayEncoder`) reads a game's plays in order, with two learned [CLS]
+   tokens whose outputs are the home and the away team's embedding of that
+   game.
+2. **Team embeddings.** A second transformer (the transformer family's
+   `SequenceEncoder`) reads a team's last `history` games (20, across
+   seasons), most recent first. Each token is the team's embedding of that
+   game plus **who it was against**: the opponent's form (the mean
+   embedding of the opponent's previous `form_games` games, default 4), the
+   pre-game Elo of both teams and the opponent's season-to-date margin, plus
+   the game's result, total and location. So a dominant game against a
+   strong opponent and one against a weak opponent are different tokens.
+   Its [CLS] output is the team's embedding.
+3. **Matchup.** `PairHead` maps both teams' embeddings and the game's
+   context (location, rest, injuries) to the margin and the total. The
+   `Predictor` turns these into win (moneyline), cover and over
+   probabilities as for the other families.
+
+An auxiliary loss (`aux_weight`, 0.5) also has each game embedding regress
+that game's own margin and total, so the play encoder gets a direct signal
+from every game it reads. Training batches hold every game of 9 consecutive
+weeks of one season, so most of their histories share games and each game
+is encoded once per batch. One fit on 1999-2024 takes ~15 minutes on 4 CPU
+cores (dropout inside the play encoder is off: dropout on every play's
+attention made it ~10x slower). Sizes live in `Sport.pbp` (`game_d_model`,
+`game_layers`, `history`, `d_model`, `form_games`, ...). A saved model
+caches each game's embedding and reloads `data/nfl/plays.parquet` when a
+refresh brings new games, so re-run `plays` with `download` each week.
+nflverse has play-by-play for all but 3 games since 1999. A game without
+plays gets a zero embedding.
+
 ## Backtesting against the market
 
 ```sh
@@ -163,7 +217,8 @@ uv run sportsml nfl benchmark                # every family + baselines + market
 ```
 
 `--family` takes any model family or baseline: `home`, `point_diff`, `elo`,
-`sklearn`, `gnn`, `transformer`.
+`sklearn`, `gnn`, `transformer`, `pbp` (which reads `--plays`, default
+`data/<sport>/plays.parquet`).
 
 For each test season the model is fit on earlier seasons only, then the season
 is replayed week by week: team state is refreshed from the games played so far
@@ -198,9 +253,14 @@ prediction, and `<family>_summary.json` the summary.
 and compares them on the games all of them predicted. Its table is sorted by
 Brier score, includes early-season Brier, and gives each family's paired
 per-game Brier difference to the market with a 95% CI. A family is only
-meaningfully better than another when those intervals separate. It writes
-`benchmark.csv`, `benchmark.json` and `benchmark_games.csv` (every source's
-prediction per game) to `backtests/<sport>/`.
+meaningfully better than another when those intervals separate. Each market
+is scored for the families that predict it: `cover_brier` (P(cover) against
+the spread, pushes left out; 0.25 is a coin flip), `ats_win_pct`, `ml_roi`
+(betting every moneyline edge at the posted odds), and the total's
+`total_rmse`, over/under Brier `ou_brier` and pick rate `ou_win_pct`. It
+writes `benchmark.csv`, `benchmark.json` and `benchmark_games.csv` (every
+source's prediction per game) to `backtests/<sport>/`. The default family
+list includes `pbp` only for sports with play-by-play data.
 
 ### Confidence-weighted staking
 
@@ -387,6 +447,7 @@ sportsml/
     sklearn/        season-to-date features -> any sklearn regressor
     gnn/            season graph snapshots -> GraphModel (Lightning + PyG)
     transformer/    per-team game sequences -> TransformerModel (Lightning)
+    pbp/            plays -> game embeddings -> team embeddings -> PbpModel (Lightning)
     lightning.py    shared base (MarginModule), trainer, seeding for neural families
   nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
   inference/      predict command, matchup helpers

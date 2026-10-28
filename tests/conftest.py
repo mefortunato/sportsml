@@ -141,6 +141,17 @@ def toy_sport():
                 "num_layers": 1,
                 "total_weight": 1.0,
             },
+            pbp={
+                "history": 8,
+                "d_model": 16,
+                "nhead": 2,
+                "num_layers": 1,
+                "game_d_model": 16,
+                "game_nhead": 2,
+                "game_layers": 1,
+                "max_plays": 32,
+                "total_weight": 1.0,
+            },
         )
     )
 

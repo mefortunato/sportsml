@@ -73,3 +73,27 @@ def test_fit_gnn_from_cli(workdir):
     )  # fmt: skip
     assert preds.win_prob.between(0, 1).all()
     assert (workdir / "mlflow.db").exists()  # trainer default logs to MLflow
+
+
+def test_fit_pbp_from_cli_and_predict(workdir):
+    from .test_pbp import make_plays
+
+    run(["toy", "process", "--games", "raw.csv", "--output_file", "games.csv"])
+    make_plays(pd.read_csv("games.csv")).to_parquet("plays.parquet", index=False)
+    run(
+        [
+            "toy", "fit", "pbp",
+            "--games", "games.csv",
+            "--plays", "plays.parquet",
+            "--save_dir", "models/pbp",
+            "--trainer.max_epochs", "1",
+            "--trainer.accelerator", "cpu",
+            "--trainer.enable_progress_bar", "false",
+            "--print_metrics", "false",
+        ]
+    )  # fmt: skip
+    preds = run(
+        ["toy", "predict", "--model_dir", "models/pbp", "--games", "games.csv"]
+    )  # fmt: skip
+    assert len(preds) and preds.win_prob.between(0, 1).all()
+    assert "pred_total" in preds

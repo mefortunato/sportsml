@@ -1,6 +1,7 @@
 from ..core.sport import Sport
 from .data.download import download
 from .data.features import SCHEMA
+from .data.plays import download_plays
 
 SPORT = Sport(
     name="nfl",
@@ -20,4 +21,6 @@ SPORT = Sport(
     # backtest Brier unchanged (+0.0001 +/- 0.0026 on 2021-2025), while adding
     # every box-score stat made it worse (+0.0018 +/- 0.0030)
     transformer={"history": 20, "total_weight": 1.0},
+    pbp={"history": 20, "total_weight": 1.0},
+    plays=download_plays,
 )

@@ -125,6 +125,57 @@ def transformer_fitter(
     return fit
 
 
+def pbp_fitter(
+    sport: str,
+    max_epochs: int = 100,
+    plays: str | None = None,
+    model: dict | None = None,
+    **kwargs,
+) -> Fitter:
+    """``plays``: play features path (default ``data/<sport>/plays.parquet``),
+    loaded once for every season's fit; ``model``: settings overrides for
+    :func:`~sportsml.models.pbp.default_model`, e.g. ``{"history": 24}``;
+    ``kwargs`` go to :func:`~sportsml.models.pbp.fit_pbp`."""
+    from .models.lightning import default_trainer
+    from .models.pbp import PlayTable, default_model, fit_pbp
+    from .models.pbp.fit import default_plays, pbp_settings
+
+    path = plays or default_plays(sport)
+    max_plays = pbp_settings(sport, **(model or {}))["max_plays"]
+    table = None
+
+    def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
+        nonlocal table
+        table = table or PlayTable.load(path, max_plays)
+        trainer = default_trainer(
+            max_epochs=max_epochs,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        predictor = fit_pbp(
+            games,
+            sport,
+            plays=table,
+            model=default_model(
+                sport,
+                table.play_dim,
+                kwargs.get("context"),
+                kwargs.get("opponent_strength", True),
+                **(model or {}),
+            ),
+            trainer=trainer,
+            train_seasons=split.train,
+            val_seasons=split.val,
+            test_seasons=split.test,
+            print_metrics=False,
+            **kwargs,
+        )["predictor"]
+        predictor.model.plays_path = path
+        return predictor
+
+    return fit
+
+
 def baseline_fitter(sport: str, name: str) -> Fitter:
     from .models import baselines
 
@@ -142,7 +193,7 @@ def baseline_fitter(sport: str, name: str) -> Fitter:
     return fit
 
 
-Family = Literal["home", "point_diff", "elo", "sklearn", "gnn", "transformer"]
+Family = Literal["home", "point_diff", "elo", "sklearn", "gnn", "transformer", "pbp"]
 FAMILIES: tuple[str, ...] = typing.get_args(Family)
 
 
@@ -151,12 +202,14 @@ def family_fitter(
     sport: str,
     model: sklearn.base.BaseEstimator | None = None,
     max_epochs: int = 100,
+    plays: str | None = None,
 ) -> Fitter:
     """The :data:`Fitter` of a built-in model family.
 
     ``model`` is the sklearn regressor for ``sklearn``; ``max_epochs`` caps
     training of the neural families, which get a fresh default model and
-    trainer for every fit.
+    trainer for every fit; ``plays`` is the play features file of ``pbp``
+    (default ``data/<sport>/plays.parquet``).
     """
     if family in ("home", "point_diff", "elo"):
         return baseline_fitter(sport, family)
@@ -166,6 +219,8 @@ def family_fitter(
         return gnn_fitter(sport, max_epochs=max_epochs)
     if family == "transformer":
         return transformer_fitter(sport, max_epochs=max_epochs)
+    if family == "pbp":
+        return pbp_fitter(sport, max_epochs=max_epochs, plays=plays)
     raise ValueError(f"unknown model family {family!r}; choose from {FAMILIES}")
 
 
@@ -525,6 +580,7 @@ def backtest(
     output_dir: str | None = None,
     print_summary: bool = True,
     on_date: OnDate | None = None,
+    plays: str | None = None,
 ) -> dict:
     """Walk-forward backtest of a model family against the market.
 
@@ -532,13 +588,15 @@ def backtest(
         games: Processed games table.
         sport: Sport name, e.g. ``"nfl"``.
         family: Model family: a naive baseline (``home``, ``point_diff``,
-            ``elo``) or ``sklearn`` / ``gnn`` / ``transformer``.
+            ``elo``) or ``sklearn`` / ``gnn`` / ``transformer`` / ``pbp``.
         seasons: Test seasons; default the last ``n_seasons`` complete ones.
         model: sklearn regressor (``family="sklearn"``); default random forest.
         max_epochs: Training epochs per season for ``gnn`` / ``transformer``.
         output_dir: Write ``<family>_games.csv`` (one row per game) and
             ``<family>_summary.json`` here.
         on_date: Passed to :func:`walk_forward`.
+        plays: Play features file for ``pbp`` (default
+            ``data/<sport>/plays.parquet``).
 
     Returns:
         ``{"results": per-game DataFrame, "summary": dict}``
@@ -547,7 +605,9 @@ def backtest(
     schema = get_sport(sport).schema
     if seasons is None:
         seasons = complete_seasons(games, schema)[-n_seasons:]
-    fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
+    fitter = family_fitter(
+        family, sport, model=model, max_epochs=max_epochs, plays=plays
+    )
 
     results = walk_forward(
         games, sport, fitter, seasons, verbose=print_summary, on_date=on_date
@@ -579,13 +639,20 @@ def compare(
         ``(table, games)``: one row per source (each family, plus the market
         when there is one) with RMSE, accuracy, Brier, log loss, early-season
         Brier and, against the market, the paired Brier difference with its
-        95% CI, ATS win rate and edge correlation; and the per-game table
-        with every source's ``<source>_margin`` / ``<source>_prob``.
+        95% CI, ATS win rate and edge correlation; per market, where the
+        family predicts it: the cover Brier (``cover_prob`` against the
+        spread, pushes left out), the moneyline ROI of betting every edge at
+        the posted odds, and the total's RMSE, over/under Brier and pick
+        win rate; and the per-game table with every source's
+        ``<source>_margin`` / ``<source>_prob`` (and ``_cover`` /
+        ``_total`` / ``_over``).
     """
     common = set.intersection(*(set(r[schema.game_id]) for r in results.values()))
     first = next(iter(results.values()))
-    base_cols = [*schema.key_columns, schema.location, schema.target]
-    base_cols += ["market_margin", "market_prob"]
+    base_cols = [*schema.key_columns, schema.location, schema.target, schema.total]
+    base_cols += ["market_margin", "market_prob", "market_over_prob"]
+    base_cols += [schema.market_total, *(schema.market_moneyline or ())]
+    base_cols += [*(schema.market_total_odds or ())]
     games = first[first[schema.game_id].isin(common)]
     games = games[[c for c in dict.fromkeys(base_cols) if c and c in games]]
     games = games.dropna(subset=[c for c in ("market_margin",) if c in games])
@@ -596,6 +663,11 @@ def compare(
         frame = frame.set_index(schema.game_id).reindex(games.index)
         games[f"{name}_margin"] = frame["pred_margin"]
         games[f"{name}_prob"] = frame["win_prob"]
+        for col, suffix in [("cover_prob", "cover"), ("pred_total", "total")]:
+            if col in frame:
+                games[f"{name}_{suffix}"] = frame[col]
+        if "over_prob" in frame:
+            games[f"{name}_over"] = frame["over_prob"]
         sources[name] = (f"{name}_margin", f"{name}_prob")
     has_market = "market_margin" in games
     if has_market:
@@ -628,10 +700,51 @@ def compare(
             ats = ats_record(one, schema, thresholds=(0,)).iloc[0]
             row["ats_win_pct"] = float(ats["win_pct"])
             row["edge_corr"] = edge_correlation(one, schema)["r"]
+            row |= _market_scores(games, schema, name)
+        elif name == "market":
+            row |= _market_scores(games, schema, name)
         rows.append(row)
     table = pd.DataFrame(rows).set_index("source").sort_values("brier")
     table["n"] = table["n"].astype(int)
     return table, games
+
+
+def _market_scores(games: pd.DataFrame, schema: GameSchema, name: str) -> dict:
+    """``name``'s cover Brier, moneyline ROI and over/under scores on
+    ``games`` (:func:`compare`'s per-game table), where it predicts them."""
+    out = {}
+    y = games[schema.target].to_numpy(dtype=float)
+    if f"{name}_cover" in games:
+        cover = y - games["market_margin"].to_numpy(dtype=float)
+        prob = games[f"{name}_cover"].to_numpy(dtype=float)
+        ok = (cover != 0) & np.isfinite(prob)
+        if ok.any():
+            out["cover_brier"] = float(np.mean((prob[ok] - (cover[ok] > 0)) ** 2))
+    moneyline = schema.market_moneyline
+    if name != "market" and moneyline and set(moneyline) <= set(games):
+        one = games.assign(win_prob=games[f"{name}_prob"])
+        ml = moneyline_record(one, schema, thresholds=(0,)).iloc[0]
+        out["ml_roi"] = float(ml["roi"])
+    if name == "market" and schema.market_total in games:
+        one = games.assign(pred_total=games[schema.market_total])
+        if "market_over_prob" in games:
+            one["over_prob"] = games["market_over_prob"]
+    elif f"{name}_total" in games and schema.market_total in games:
+        one = games.assign(pred_total=games[f"{name}_total"])
+        if f"{name}_over" in games:
+            one["over_prob"] = games[f"{name}_over"]
+    else:
+        return out
+    totals = totals_summary(
+        one.drop(columns=["market_over_prob"], errors="ignore"), schema
+    )
+    if totals:
+        out["total_rmse"] = totals["rmse"]["model"]
+        if "model" in totals["brier"]:
+            out["ou_brier"] = totals["brier"]["model"]
+        if name != "market":
+            out["ou_win_pct"] = float(totals["record"][0]["win_pct"])
+    return out
 
 
 def benchmark(
@@ -644,12 +757,15 @@ def benchmark(
     max_epochs: int = 100,
     output_dir: str | None = None,
     print_summary: bool = True,
+    plays: str | None = None,
 ) -> dict:
     """Walk-forward backtest of several families, compared on common games.
 
     Args:
-        families: Families to run; default all (naive baselines included).
-        seasons / n_seasons / model / max_epochs: As in :func:`backtest`.
+        families: Families to run; default all (naive baselines included),
+            leaving out ``pbp`` where the sport has no play-by-play source.
+        seasons / n_seasons / model / max_epochs / plays: As in
+            :func:`backtest`.
         output_dir: Write ``benchmark.csv`` (the comparison table),
             ``benchmark.json`` and ``benchmark_games.csv`` (every source's
             prediction for every game).
@@ -660,7 +776,8 @@ def benchmark(
     """
     games = read_table(games)
     schema = get_sport(sport).schema
-    families = list(families or FAMILIES)
+    if families is None:
+        families = [f for f in FAMILIES if f != "pbp" or get_sport(sport).plays]
     if seasons is None:
         seasons = complete_seasons(games, schema)[-n_seasons:]
 
@@ -668,7 +785,9 @@ def benchmark(
     for family in families:
         if print_summary:
             print(f"== {family}", flush=True)
-        fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
+        fitter = family_fitter(
+            family, sport, model=model, max_epochs=max_epochs, plays=plays
+        )
         results[family] = walk_forward(
             games, sport, fitter, seasons, verbose=print_summary
         )
@@ -694,9 +813,12 @@ def benchmark(
         columns = ["n", "rmse", "accuracy", "brier", "log_loss", "early_brier"]
         columns += [
             c
-            for c in ("brier_vs_market", "brier_vs_market_ci95", "ats_win_pct")
+            for c in (
+                "brier_vs_market", "brier_vs_market_ci95", "ats_win_pct",
+                "cover_brier", "ml_roi", "total_rmse", "ou_brier", "ou_win_pct",
+            )
             if c in table
-        ]
+        ]  # fmt: skip
         print(
             f"\nSeasons {seasons}, {len(per_game)} common games, sorted by Brier\n"
             + table[columns].to_string(float_format=lambda v: f"{v:.4f}")

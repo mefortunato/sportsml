@@ -1,4 +1,4 @@
-"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark,staking}``.
+"""``sportsml <sport> {download,plays,process,fit,predict,backtest,benchmark,staking}``.
 
 Every registered sport gets the same subcommands; per-sport defaults (paths,
 GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
@@ -14,6 +14,7 @@ from .core.process import process
 from .core.sport import Sport, all_sports
 from .inference.utils import predict
 from .models.gnn.fit import fit_gnn, gnn_config
+from .models.pbp.fit import fit_pbp
 from .models.sklearn.fit import fit_sklearn
 from .models.transformer.fit import fit_transformer, transformer_config
 from .staking import staking
@@ -103,6 +104,11 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.fit.transformer.model": transformer_config(n),
         f"{n}.fit.transformer.trainer": trainer_config(sport),
         f"{n}.fit.transformer.save_dir": f"models/{n}/transformer",
+        f"{n}.fit.pbp.sport": n,
+        f"{n}.fit.pbp.games": games,
+        f"{n}.fit.pbp.plays": f"data/{n}/plays.parquet",
+        f"{n}.fit.pbp.trainer": trainer_config(sport),
+        f"{n}.fit.pbp.save_dir": f"models/{n}/pbp",
         f"{n}.predict.model_dir": f"models/{n}/sklearn",
         f"{n}.predict.games": games,
         f"{n}.predict.output_file": f"predictions/{n}.csv",
@@ -115,7 +121,7 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.staking.sport": n,
         f"{n}.staking.results": f"backtests/{n}/transformer_games.csv",
         f"{n}.staking.output_dir": f"backtests/{n}",
-    }
+    } | ({f"{n}.plays.output_file": f"data/{n}/plays.parquet"} if sport.plays else {})
 
 
 def cli(args=None) -> None:
@@ -129,11 +135,13 @@ def run(args=None):
     components = {
         name: {
             "download": sport.download,
+            **({"plays": sport.plays} if sport.plays else {}),
             "process": process,
             "fit": {
                 "sklearn": fit_sklearn,
                 "gnn": fit_gnn,
                 "transformer": fit_transformer,
+                "pbp": fit_pbp,
             },
             "predict": predict,
             "backtest": backtest,

@@ -199,3 +199,12 @@ def test_benchmark_compares_families_on_common_games(toy_games, tmp_path):
     for name in ("benchmark.csv", "benchmark.json", "benchmark_games.csv"):
         assert (tmp_path / name).exists()
     assert {"elo_margin", "transformer_prob"} <= set(out["games"])
+    # every market the family predicts is scored: cover, moneyline, over/under
+    transformer, market = table.loc["transformer"], table.loc["market"]
+    for col in ("cover_brier", "ml_roi", "total_rmse", "ou_brier", "ou_win_pct"):
+        assert np.isfinite(transformer[col])
+    assert np.isnan(table.loc["elo", "total_rmse"])  # no total
+    assert np.isfinite(market[["total_rmse", "ou_brier"]].astype(float)).all()
+    assert {"transformer_cover", "transformer_total", "transformer_over"} <= set(
+        out["games"]
+    )

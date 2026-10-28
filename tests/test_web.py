@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import random
 
@@ -57,6 +58,30 @@ def test_upcoming_games_have_spread_and_prediction(snapshot):
         assert pred["edge"] == pytest.approx(pred["margin"] - game["spread"])
         assert pred["ats_pick"] == ("home" if pred["edge"] > 0 else "away")
         assert 0 < pred["win_prob"] < 1
+
+
+def test_games_whose_kickoff_day_has_passed_are_not_upcoming(snapshot, monkeypatch):
+    """A game still missing its result (in progress at download, or a late
+    refresh) leaves the upcoming page once its day is over."""
+    from sportsml.web import snapshot as snapshot_module
+
+    ids = [g["game_id"] for g in snapshot.upcoming()["games"]]
+    yesterday = set(ids[:2])
+
+    def kickoff(row):
+        played = str(row["game_id"]) in yesterday
+        return "2026-10-27 19:30" if played else "2026-10-31"
+
+    monkeypatch.setattr(snapshot_module, "_today_eastern", lambda: "2026-10-28")
+    view = dataclasses.replace(snapshot.view, kickoff=kickoff)
+    teams = pd.DataFrame(list(snapshot.teams.values()))
+    predictor = load_predictor(snapshot.model_dir)
+    later = Snapshot(
+        view, snapshot.games, predictor, snapshot.results, teams, snapshot.meta
+    )
+    week = later.upcoming()
+    assert [g["game_id"] for g in week["games"]] == ids[2:]
+    assert later.game(ids[0])["prediction"] is None
 
 
 def test_game_view(snapshot):

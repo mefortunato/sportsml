@@ -71,3 +71,13 @@ def test_seasons_are_calendar_years():
 def test_odds_names_map_onto_current_abbreviations():
     assert len(set(odds_map.values())) == len(odds_map) == 15
     assert odds_map["Las Vegas Aces"] == "LV"
+
+
+def test_stats_espn_only_has_since_2023_are_not_model_inputs():
+    from sportsml.cbb.data.features import RECENT_STATS
+    from sportsml.core.sport import get_sport
+
+    for sport in ("wnba", "cbb", "wcbb"):
+        stats = set(get_sport(sport).schema.stats)
+        assert not stats & {*RECENT_STATS, *(f"opp_{c}" for c in RECENT_STATS)}
+    assert "paint_points" in get_sport("nba").schema.stats

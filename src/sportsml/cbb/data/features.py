@@ -1,7 +1,15 @@
 from ...core.schema import GameSchema
-from ...nba.data.features import STATS_COLUMNS
+from ...nba.data.features import STATS_COLUMNS as NBA_STATS_COLUMNS
 
-# Men's and women's college basketball share the NBA's ESPN box score.
+# ESPN's box-score stats that start in 2023 outside the NBA (college
+# basketball and the WNBA): a model trained on earlier seasons would see
+# them for the first time in the season it predicts.
+RECENT_STATS = ("paint_points", "fast_break_points", "turnover_points")
+
+# Men's and women's college basketball share the NBA's ESPN box score,
+# without the recent stats.
+STATS_COLUMNS = [c for c in NBA_STATS_COLUMNS if c not in RECENT_STATS]
+
 OPP_STATS_COLUMNS = [f"opp_{col}" for col in STATS_COLUMNS]
 
 # The betting market from ESPN's odds API. Upcoming games carry lines once

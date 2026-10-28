@@ -208,6 +208,31 @@ refresh brings new games, so re-run `plays` with `download` each week.
 nflverse has play-by-play for all but 3 games since 1999. A game without
 plays gets a zero embedding.
 
+Walk-forward NFL backtest, 2021-2025 (1,424 games every family predicted;
+`vs market` is the paired per-game moneyline Brier difference, 95% CI;
+cover and over/under Brier leave pushes out, and 0.25 is a coin flip):
+
+| Source | RMSE | Accuracy | Brier | vs market | Cover Brier | ATS | ML ROI | Total RMSE | O/U Brier | O/U picks |
+|---|---|---|---|---|---|---|---|---|---|---|
+| market | 12.66 | 66.5% | 0.2115 | | | | | 13.08 | 0.2497 | |
+| transformer | 13.06 | 64.3% | 0.2213 | +0.0098 ± 0.0050 | 0.2558 | 52.5% | -4.1% | 13.46 | 0.2584 | 48.8% |
+| pbp | 13.09 | 64.9% | 0.2223 | +0.0108 ± 0.0051 | 0.2592 | 50.9% | -6.4% | 13.44 | 0.2586 | 50.3% |
+| elo | 13.14 | 63.0% | 0.2253 | +0.0138 ± 0.0048 | 0.2608 | 48.3% | -8.5% | | | |
+| gnn | 13.39 | 62.5% | 0.2270 | +0.0155 ± 0.0057 | 0.2659 | 49.5% | -4.2% | | | |
+| sklearn | 13.24 | 61.8% | 0.2271 | +0.0156 ± 0.0053 | 0.2611 | 48.6% | -7.2% | | | |
+| point_diff | 13.46 | 60.4% | 0.2355 | +0.0240 ± 0.0061 | 0.2675 | 48.4% | -11.0% | | | |
+| home | 14.17 | 54.2% | 0.2485 | +0.0370 ± 0.0082 | 0.2738 | 50.5% | -7.5% | | | |
+
+From plays alone, `pbp` matches the box-score transformer: paired per-game
+differences (pbp minus transformer) are +0.0010 ± 0.0042 on moneyline
+Brier, +0.0034 ± 0.0046 on cover Brier and +0.0002 ± 0.0036 on over/under
+Brier, all within noise. It beats every other family. It was better in
+2021 and 2024 and worse in 2022 and 2023. Averaging the two models' win
+probabilities gives 0.2200 (+0.0086 ± 0.0046 vs the market), the closest any
+source gets. As with every family, neither model beats the market in any
+of the three markets. One `pbp` fit takes ~15-20 minutes on 4 CPU cores
+(the transformer: ~2.5).
+
 ## Backtesting against the market
 
 ```sh

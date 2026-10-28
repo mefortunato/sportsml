@@ -44,7 +44,7 @@
 		</div>
 	{:else}
 		<section class="intro">
-			<h1>{model.name} predictions, scored against Vegas</h1>
+			<h1>{model.headline} predictions, scored against Vegas</h1>
 			<p class="lead">
 				SportsML predicts every upcoming {list(data.sports.map((s) => inSentence(s.label)))} game from
 				{model.source}: the margin{totals ? ',' : ' and'} each team's chance to win{totals

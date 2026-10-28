@@ -9,7 +9,7 @@ import pytest
 from sportsml.core.predictor import load_predictor
 from sportsml.web import export as export_module
 from sportsml.web.build import build
-from sportsml.web.export import export, load_snapshots
+from sportsml.web.export import export, load_snapshots, refresh_snapshots
 from sportsml.web.snapshot import Snapshot, cover_side
 
 from .conftest import TOY_SCHEMA, make_games
@@ -244,6 +244,26 @@ def test_export_refresh_uses_new_results_and_fails_loudly(
     with pytest.raises(ConnectionError):
         export(data_dir=str(webdata), output_dir=str(tmp_path / "x"), refresh=True)
     assert not (tmp_path / "x").exists()
+
+
+def test_a_failed_refresh_keeps_that_sports_built_data(monkeypatch):
+    class Snap:
+        def refreshed(self, games):
+            return games
+
+    def download(sport):
+        if sport == "cfb":
+            raise ConnectionError("429 Too Many Requests")
+        return f"{sport} fresh"
+
+    monkeypatch.setattr(export_module, "download_games", download)
+    cfb, nba = Snap(), Snap()
+    assert refresh_snapshots({"cfb": cfb, "nba": nba}) == {
+        "cfb": cfb,
+        "nba": "nba fresh",
+    }
+    with pytest.raises(ConnectionError):
+        refresh_snapshots({"cfb": cfb})
 
 
 def _revive(path):

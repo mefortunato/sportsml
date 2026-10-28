@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { dateText, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
 	import { gameOdds } from '$lib/odds';
@@ -37,9 +38,9 @@
 	<div class="heading">
 		<div>
 			<h1>
-				{info.label} · {info.date_label}
-				{upcoming.date ?? '—'}
-				{#if upcoming.season}<span class="muted">{upcoming.season}</span>{/if}
+				{info.label} ·
+				{dateText(info.date_label, upcoming.date, upcoming.date_names?.[String(upcoming.date)])}
+				{#if upcoming.season}<span class="muted">{seasonText(upcoming.season, info.split_season)}</span>{/if}
 			</h1>
 			<p class="muted small legend">
 				<span class="key vegas"></span> Vegas line
@@ -53,7 +54,7 @@
 					<a
 						class="pill"
 						class:accent={date === upcoming.date}
-						href={links.upcoming(info.sport, upcoming.season, date)}>{info.date_label} {date}</a
+						href={links.upcoming(info.sport, upcoming.season, date)}>{dateText(info.date_label, date, upcoming.date_names?.[String(date)])}</a
 					>
 				{/each}
 			</nav>

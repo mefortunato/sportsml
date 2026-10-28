@@ -128,6 +128,7 @@ class Snapshot:
             index=self.played.index,
         )
         self.playoffs = view.playoffs(self.played) if view.playoffs else {}
+        self.date_names = self._date_names()
         self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
         self.rankings_table = self._with_current_rankings(predictor)
         self.upcoming_games = self._predict_upcoming(predictor)
@@ -202,6 +203,20 @@ class Snapshot:
             rows = rows[rows[self.schema.team] == team]
         return one_row_per_game(rows, self.schema).iloc[0] if len(rows) else None
 
+    def _date_names(self) -> dict:
+        """``{(season, date): name}`` from the view's ``date_name``."""
+        if self.view.date_name is None:
+            return {}
+        s = self.schema
+        firsts = self.games.drop_duplicates([s.season, s.date])
+        return {
+            (py(row[s.season]), py(row[s.date])): self.view.date_name(row)
+            for _, row in firsts.iterrows()
+        }
+
+    def date_name(self, season, date) -> str | None:
+        return self.date_names.get((py(season), py(date)))
+
     def _spread(self, row: pd.Series):
         s = self.schema
         return py(row.get(s.market_spread)) if s.market_spread else None
@@ -232,6 +247,7 @@ class Snapshot:
             "game_id": py(row[s.game_id]),
             "season": py(row[s.season]),
             "date": py(row[s.date]),
+            "date_name": self.date_name(row[s.season], row[s.date]),
             "kickoff": self.view.kickoff(row),
             "home": self.team(row[s.team]),
             "away": self.team(row[s.opp]),
@@ -491,6 +507,7 @@ class Snapshot:
                     "game_id": row[s.game_id],
                     "season": row[s.season],
                     "date": row[s.date],
+                    "date_name": self.date_name(row[s.season], row[s.date]),
                     "opp": self.team(row[s.opp]),
                     "location": row[s.location] if s.location else None,
                     "score": row.get(score),
@@ -530,7 +547,7 @@ class Snapshot:
             return {"season": None, "date": None, "dates": [], "games": []}
         season = games[s.season].max() if season is None else season
         games = games[games[s.season] == season]
-        dates = sorted(games[s.date].unique())
+        dates = sorted(games[s.date].unique())[: self.view.upcoming_dates]
         date = dates[0] if date is None else date
         week = games[games[s.date] == date]
         cards = []
@@ -539,7 +556,16 @@ class Snapshot:
             header["prediction"] = self._prediction(row, header)
             cards.append(header)
         cards.sort(key=lambda g: (g["kickoff"] or "", str(g["game_id"])))
-        return py({"season": season, "date": date, "dates": dates, "games": cards})
+        names = {py(d): self.date_name(season, d) for d in dates}
+        return py(
+            {
+                "season": season,
+                "date": date,
+                "dates": dates,
+                "date_names": names if any(names.values()) else None,
+                "games": cards,
+            }
+        )
 
     def game(self, game_id) -> dict | None:
         """Header, prediction, result (if played) and both teams' summaries."""
@@ -711,6 +737,9 @@ class Snapshot:
                     "season": season,
                     "source": "backtest" if season in baked else "current",
                     "dates": dates,
+                    "date_names": [self.date_name(season, d) for d in dates]
+                    if self.date_names
+                    else None,
                     "teams": teams,
                     "playoffs": self.playoffs.get(int(season), {}),
                 }
@@ -729,6 +758,7 @@ class Snapshot:
                 "sport": self.view.sport,
                 "label": self.view.label,
                 "date_label": self.view.date_label,
+                "split_season": self.view.split_season,
                 "has_spread": bool(self.schema.market_spread),
                 # what the browser needs to price any line: the model's
                 # residual spreads and how much to trust its disagreements

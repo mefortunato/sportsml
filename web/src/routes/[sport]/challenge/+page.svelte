@@ -8,7 +8,7 @@
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import TotalChart from '$lib/components/TotalChart.svelte';
-	import { handicap, marginLabel, pct, spreadLabel } from '$lib/format';
+	import { dateText, handicap, seasonText, marginLabel, pct, spreadLabel } from '$lib/format';
 	import {
 		americanOdds,
 		MARKET_LABELS,
@@ -218,8 +218,7 @@
 		{@const g = game}
 		<div class="card section pick">
 			<div class="muted small">
-				{info.date_label}
-				{g.date}, {g.season}{g.neutral ? ' · neutral site' : ''} · {lineText}
+				{dateText(info.date_label, g.date, g.date_name)}, {seasonText(g.season, info.split_season)}{g.neutral ? ' · neutral site' : ''} · {lineText}
 			</div>
 			<div class="small">{prompt[market]}</div>
 
@@ -272,8 +271,8 @@
 						</span>
 					</div>
 					<p class="muted small trained">
-						The model's pick for this {g.season} game comes from a model trained only on seasons
-						before {g.season}.
+						The model's pick for this {seasonText(g.season, info.split_season)} game comes from a
+						model trained only on seasons before {seasonText(g.season, info.split_season)}.
 					</p>
 					<div class="chart">
 						{#if answer.market === 'moneyline'}
@@ -304,7 +303,7 @@
 			{/if}
 		</div>
 
-		<MatchupDetails matchup={g} dateLabel={info.date_label} />
+		<MatchupDetails matchup={g} dateLabel={info.date_label} splitSeason={info.split_season} />
 	{:else if busy}
 		<p class="muted section">Loading a game…</p>
 	{/if}

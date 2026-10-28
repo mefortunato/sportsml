@@ -2,7 +2,10 @@ import { get } from 'svelte/store';
 import { describe, expect, it } from 'vitest';
 import { applyAnswer, challengeStore, emptyRecord, loadRecord } from './challenge';
 import {
+	dateText,
 	handicap,
+	seasonsText,
+	seasonText,
 	kickoffLabel,
 	marginLabel,
 	signed,
@@ -17,6 +20,22 @@ const KC: Team = { team: 'KC', name: 'Kansas City Chiefs' };
 const BUF: Team = { team: 'BUF', name: 'Buffalo Bills' };
 
 describe('format', () => {
+	it('names a date by its own name, else the sport label and number', () => {
+		expect(dateText('Day', 7, 'Oct 28')).toBe('Oct 28');
+		expect(dateText('Week', 9)).toBe('Week 9');
+		expect(dateText('Week', 9, null)).toBe('Week 9');
+		expect(dateText('Week', null)).toBe('—');
+	});
+
+	it('shows a two-year season by the years it spans', () => {
+		expect(seasonText(2026)).toBe('2026');
+		expect(seasonText(2026, true)).toBe('2025–26');
+		expect(seasonsText([2021, 2025])).toBe('2021–2025');
+		expect(seasonsText([2022, 2026], true)).toBe('2021–22 to 2025–26');
+		expect(seasonsText([2026, 2026], true)).toBe('2025–26');
+		expect(seasonsText([])).toBe('');
+	});
+
 	it('labels spreads sportsbook-style from the home margin', () => {
 		expect(spreadLabel(KC, BUF, 3.5)).toBe('KC −3.5');
 		expect(spreadLabel(KC, BUF, -6)).toBe('BUF −6');

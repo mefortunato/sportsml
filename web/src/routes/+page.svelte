@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { links } from '$lib/links';
-	import { pct } from '$lib/format';
+	import { pct, seasonsText } from '$lib/format';
 	import { breakEven } from '$lib/markets';
 	import type { SportInfo } from '$lib/types';
 
@@ -9,7 +9,8 @@
 	// where each sport's results, box scores and lines come from
 	const SOURCES: Record<string, string> = {
 		nfl: 'nflverse',
-		cfb: 'CollegeFootballData'
+		cfb: 'CollegeFootballData',
+		nba: 'ESPN (schedules and box scores via sportsdataverse)'
 	};
 
 	// "College football" mid-sentence; acronyms such as NFL stay as they are
@@ -17,9 +18,16 @@
 		return label === label.toUpperCase() ? label : label[0].toLowerCase() + label.slice(1);
 	}
 
+	// "A", "A and B", "A, B and C"
+	function list(items: string[]): string {
+		return items.length < 3
+			? items.join(' and ')
+			: `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+	}
+
 	function seasons(info: SportInfo): string | null {
 		const s = info.backtest?.seasons;
-		return s?.length ? `${s[0]}–${s.at(-1)}` : null;
+		return s?.length ? seasonsText(s, info.split_season) : null;
 	}
 </script>
 
@@ -31,9 +39,9 @@
 		</div>
 	{:else}
 		<section class="intro">
-			<h1>Football predictions, scored against Vegas</h1>
+			<h1>Game predictions, scored against Vegas</h1>
 			<p class="lead">
-				SportsML predicts every upcoming {data.sports.map((s) => inSentence(s.label)).join(' and ')} game: the
+				SportsML predicts every upcoming {list(data.sports.map((s) => inSentence(s.label)))} game: the
 				margin, each team's chance to win and the combined points. Each prediction sits next to the
 				betting market's spread, moneyline and over/under, so you can see where the model disagrees
 				with Vegas and how often that disagreement has been right.
@@ -115,8 +123,8 @@
 				<h2>How it is tested</h2>
 				<p>
 					Every number on this site comes from a walk-forward backtest. For each past season the model
-					is trained only on earlier seasons, then that season is replayed week by week with each
-					team's state updated from the games played so far. That is the same loop the live
+					is trained only on earlier seasons, then that season is replayed week by week (game day
+					by game day in the NBA) with each team's state updated from the games played so far. That is the same loop the live
 					predictions run, so the record is what the model would really have done.
 				</p>
 				<p>

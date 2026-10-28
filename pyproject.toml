@@ -15,7 +15,6 @@ dependencies = [
     "kaggle",
     "lightning",
     "mlflow",
-    "nba_api",
     "networkx",
     "nflreadpy",
     "numpy",

@@ -22,7 +22,7 @@ cli:
 # --- Static site ----------------------------------------------------------------
 # train, backtest and rank (slow; the Train workflow does this on GitHub)
 webdata:
-	uv run sportsml web build --sports '[nfl, cfb]' --output_dir webdata
+	uv run sportsml web build --sports '[nfl, cfb, nba]' --output_dir webdata
 
 # re-download results and export every page's data to web/static/data (fast;
 # the daily Site workflow does this)

@@ -234,7 +234,7 @@ Any model can be backtested from Python with
 ## Web app
 
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
-the NFL and college football:
+the NFL, college football and the NBA:
 
 - **Home**: what the site is, each sport's backtest record against Vegas
   (winners picked, against the spread, over/under) and how the
@@ -252,8 +252,8 @@ the NFL and college football:
   has been right in the walk-forward backtest (`pricing.trust` in
   `sports.json`, fit per market).
 - **Power rankings**: each team's average predicted margin against every
-  other team, week by week, with conference, division and final-four
-  filters.
+  other team, week by week (game day by game day in the NBA), with
+  conference, division and final-four filters.
 - **Model performance**: the walk-forward backtest against Vegas
   (accuracy, Brier score, calibration, and betting the model's edge on the
   spread, the moneyline and the over/under).
@@ -274,9 +274,9 @@ Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
 - **Train** (`.github/workflows/train.yml`, monthly in season and on
-  demand) runs `sportsml web build --sports '[nfl, cfb]'`: for each sport,
-  download, train the transformer, backtest it and record weekly power
-  rankings. It publishes the result as the `webdata` release asset.
+  demand) runs `sportsml web build --sports '[nfl, cfb, nba]'`: for each
+  sport, download, train the transformer, backtest it and record power
+  rankings before every date. It publishes the result as the `webdata` release asset.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the
@@ -292,13 +292,17 @@ NFL; no request is made when no game is within 8 days, and a failed fetch
 keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
 repository's **Settings → Secrets and variables → Actions**; without them
 the site builds as before, without current lines. `odds.json` reports the
-provider's remaining requests.
+provider's remaining requests. NBA games carry ESPN's lines in the games
+table (refreshed with every Site run), so they need no `--odds` provider
+and no key; `--odds '{nba: oddsapi}'` adds every book from The Odds API,
+at about 30 more requests a month per daily refresh.
 
 To set it up: in the repository settings, set **Pages → Source** to
 **GitHub Actions**, add a `CFBD_API_KEY` repository secret (both workflows
 download college football), then run **Train** once from the Actions tab.
-Both workflows keep CFBD's responses of finished seasons in the Actions
-cache, so a daily Site run makes only a handful of CFBD calls. It starts
+Both workflows keep CFBD's responses of finished seasons, and ESPN's NBA
+files and lines of finished games, in the Actions cache, so a daily Site
+run makes only a handful of CFBD calls and a few dozen ESPN requests. It starts
 **Site** when it finishes.
 
 Locally:
@@ -312,8 +316,8 @@ make artifact                   # one-page build (hash routing) -> web/build-art
 
 Limits of a static site:
 
-- Only precomputed views exist: upcoming weeks, their game views, past
-  seasons' rankings, the challenge pool.
+- Only precomputed views exist: upcoming weeks (the next 7 game days in the
+  NBA), their game views, past seasons' rankings, the challenge pool.
 - The challenge answers ship with the site, so it runs on the honor
   system.
 - The data is as fresh as the last Site run; line moves during the day are
@@ -322,7 +326,9 @@ Limits of a static site:
 To add a sport, give it a `SportView` (`src/sportsml/web/sports/<sport>.py`)
 with its stats, team metadata and score columns, add it to `BUILTIN_VIEWS`,
 and build it with `sportsml web build --sports '[nfl, <sport>]'`. The
-frontend needs no changes.
+frontend needs no changes. A sport whose dates are game days rather than
+weeks (the NBA) names each date (`date_name`, e.g. "Oct 28") and caps how
+many upcoming dates are exported (`upcoming_dates`).
 
 ## Sports and data sources
 
@@ -330,7 +336,7 @@ frontend needs no changes.
 |---|---|---|---|
 | NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
 | College football | `cfb` | [CollegeFootballData](https://collegefootballdata.com) | `CFBD_API_KEY` |
-| NBA | `nba` | stats.nba.com via `nba_api` | none |
+| NBA | `nba` | ESPN via [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) and ESPN's odds API | none |
 | Men's college basketball | `cbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
 | Women's college basketball | `wcbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
 

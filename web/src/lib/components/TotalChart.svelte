@@ -26,8 +26,11 @@
 		}[]
 	);
 	const values = $derived(rows.map((r) => r.value));
-	const low = $derived(Math.floor((Math.min(...values, 40) - 6) / 5) * 5);
-	const high = $derived(Math.ceil((Math.max(...values, 40) + 6) / 5) * 5);
+	// at least ~30 points of axis around the values (football and basketball
+	// totals alike), and 6 beyond the outermost
+	const pad = $derived(Math.max(6, (30 - (Math.max(...values) - Math.min(...values))) / 2));
+	const low = $derived(Math.floor((Math.min(...values) - pad) / 5) * 5);
+	const high = $derived(Math.ceil((Math.max(...values) + pad) / 5) * 5);
 	const height = $derived(TOP + rows.length * ROW + 18);
 	const x = (value: number) =>
 		GUTTER + PAD + ((value - low) / (high - low)) * (WIDTH - GUTTER - 2 * PAD);

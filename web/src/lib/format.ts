@@ -16,6 +16,27 @@ export function signed(value: number, digits = 1): string {
 	return text;
 }
 
+/** A date as the sport names it: its own name where the export gives one
+ * (NBA game days: "Oct 28"), else "Week 9". */
+export function dateText(label: string, date: number | null, name?: string | null): string {
+	if (name) return name;
+	return date === null ? '—' : `${label} ${date}`;
+}
+
+/** A season as the sport names it: 2026, or 2025–26 for a season that spans
+ * two years (keyed by the year it ends). */
+export function seasonText(season: number, split = false): string {
+	return split ? `${season - 1}–${String(season).slice(2)}` : String(season);
+}
+
+/** A run of seasons: "2021–2025", "2020–21 to 2024–25", or just one. */
+export function seasonsText(seasons: number[], split = false): string {
+	if (!seasons.length) return '';
+	const [first, last] = [seasons[0], seasons[seasons.length - 1]];
+	if (first === last) return seasonText(first, split);
+	return split ? `${seasonText(first, true)} to ${seasonText(last, true)}` : `${first}–${last}`;
+}
+
 /** Sportsbook-style line: "KC −3.5", "Pick'em" or "No line".
  * `spread` is the market's expected home margin (positive = home favored). */
 export function spreadLabel(home: Team, away: Team, spread: number | null | undefined): string {

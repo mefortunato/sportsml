@@ -68,6 +68,13 @@ class SportView:
             that reached the last rounds (stages from
             :data:`PLAYOFF_STAGES`); ``None`` if the sport has no playoffs.
         playoff_labels: Display label per stage.
+        date_name: Display name of a games-table row's date (e.g. its
+            calendar day, where dates are game days); ``None``: the site
+            shows ``"<date_label> <date>"``.
+        upcoming_dates: How many upcoming dates to export (``None``: every
+            date left in the schedule).
+        split_season: Seasons span two calendar years and are keyed by the
+            year they end (the site shows 2026 as "2025–26").
     """
 
     sport: str
@@ -80,9 +87,12 @@ class SportView:
     recent_games: int = 5
     playoffs: Callable[[pd.DataFrame], dict[int, dict[str, str]]] | None = None
     playoff_labels: dict[str, str] = field(default_factory=dict)
+    date_name: Callable[[pd.Series], str | None] | None = None
+    upcoming_dates: int | None = None
+    split_season: bool = False
 
 
-BUILTIN_VIEWS = ("nfl", "cfb")
+BUILTIN_VIEWS = ("nfl", "cfb", "nba")
 _views: dict[str, SportView] = {}
 
 

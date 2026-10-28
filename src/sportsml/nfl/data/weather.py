@@ -69,6 +69,8 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_LAG_DAYS = 7
 FORECAST_DAYS = 15
 RETRIES = 3
+# consecutive failed requests after which the rest are skipped
+MAX_FAILURES = 3
 
 
 def open_meteo(url: str, lat: float, lon: float, start: str, end: str) -> pd.Series:
@@ -93,7 +95,7 @@ def open_meteo(url: str, lat: float, lon: float, start: str, end: str) -> pd.Ser
     }
     for attempt in range(RETRIES + 1):
         try:
-            resp = httpx.get(url, params=params, timeout=60)
+            resp = httpx.get(url, params=params, timeout=20)
         except httpx.TransportError:
             if attempt == RETRIES:
                 raise
@@ -151,19 +153,25 @@ def weather_features(
         & (days <= FORECAST_DAYS)
     )
     archive = days < -ARCHIVE_LAG_DAYS
-    # Open-Meteo counts a request spanning more than two weeks as several,
-    # so ask for one game day at a time
-    day = kickoff.dt.date.map(datetime.date.isoformat)
-    for (stadium, date), rows in schedule[missing].groupby(
-        [schedule["stadium_id"][missing], day[missing]]
+    # one request per stadium and season
+    groups = [schedule["stadium_id"], schedule["season"], archive]
+    failures = 0
+    for (stadium, _, use_archive), rows in schedule[missing].groupby(
+        [g[missing] for g in groups]
     ):
+        if failures >= MAX_FAILURES:
+            logger.warning("Open-Meteo unreachable; leaving weather gaps")
+            break
         hours = kickoff[rows.index]
-        url = ARCHIVE_URL if archive[rows.index].all() else FORECAST_URL
+        url = ARCHIVE_URL if use_archive else FORECAST_URL
+        start, end = (h.date().isoformat() for h in (hours.min(), hours.max()))
         try:
-            hourly = fetch(url, *STADIUMS[stadium], date, date)
+            hourly = fetch(url, *STADIUMS[stadium], start, end)
         except Exception as error:  # weather is optional; keep the rest
-            logger.warning("no weather for %s on %s: %s", stadium, date, error)
+            logger.warning("no weather for %s %s-%s: %s", stadium, start, end, error)
+            failures += 1
             continue
+        failures = 0
         values = hourly.reindex(hours.to_numpy())
         for col in WEATHER_COLUMNS:
             filled = rows[col].fillna(pd.Series(values[col].to_numpy(), rows.index))

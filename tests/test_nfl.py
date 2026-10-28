@@ -270,10 +270,15 @@ def test_weather_keeps_gaps_when_the_api_fails():
 
     from sportsml.nfl.data.weather import weather_features
 
+    calls = []
+
     def fetch(*args):
+        calls.append(args)
         raise RuntimeError("offline")
 
     out = weather_features(
         weather_schedule(), today=datetime.date(2023, 10, 20), fetch=fetch
     )
     assert np.isnan(out["temp"].iloc[1]) and out["temp"].iloc[2] == 70.0
+    # stops asking after MAX_FAILURES in a row
+    assert len(calls) == 2

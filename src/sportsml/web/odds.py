@@ -64,15 +64,22 @@ def match_games(lines: pd.DataFrame, cards: list[dict]) -> pd.DataFrame:
 
     A line matches the upcoming game between the same two teams (either way
     round: providers sometimes list a neutral-site game's teams the other
-    way) kicking off nearest its ``commence`` time, within 3 days. Lines
-    from the other side are flipped: spread negated, prices swapped.
+    way) kicking off nearest its ``commence`` time, within 3 days. Teams
+    match on their keys or, for sports without a sportsbook name map
+    (college basketball's 360 schools), on their display names. Lines from
+    the other side are flipped: spread negated, prices swapped.
     """
+
+    def side(team: dict) -> set:
+        return {team["team"], team.get("name")} - {None}
+
     rows = []
     for _, line in lines.iterrows():
-        teams = {line["home"], line["away"]}
         best, gap = None, pd.Timedelta(days=3)
         for card in cards:
-            if {card["home"]["team"], card["away"]["team"]} != teams:
+            home, away = side(card["home"]), side(card["away"])
+            straight = line["home"] in home and line["away"] in away
+            if not (straight or (line["home"] in away and line["away"] in home)):
                 continue
             kickoff = _kickoff(card)
             delta = (
@@ -85,7 +92,7 @@ def match_games(lines: pd.DataFrame, cards: list[dict]) -> pd.DataFrame:
         if best is None:
             continue
         row = line.to_dict()
-        if best["home"]["team"] != line["home"]:
+        if line["home"] not in side(best["home"]):
             row |= {
                 "spread": -line["spread"] if not pd.isna(line["spread"]) else np.nan,
                 "spread_open": -line["spread_open"]

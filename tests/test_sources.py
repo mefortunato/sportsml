@@ -2,8 +2,7 @@
 
 import pandas as pd
 
-from sportsml.cbb.data.features import SCHEMA as CBB_SCHEMA
-from sportsml.cbb.data.kaggle import format_games
+from sportsml.cbb.data.kaggle import TEAM_STATS_COLUMNS, format_games
 from sportsml.odds.utils import process_odds
 
 
@@ -29,7 +28,7 @@ def test_kaggle_rows_become_two_perspectives_with_names():
         5,
     )
     assert (acu.Team_OPP, acu.Loc, acu.PlusMinus, acu.Win) == ("Alabama", 1, -10, 0)
-    assert set(CBB_SCHEMA.stats) <= set(games.columns)
+    assert set(TEAM_STATS_COLUMNS) <= set(games.columns)
 
 
 def test_odds_api_payload_to_consensus_lines():

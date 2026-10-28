@@ -1,8 +1,8 @@
 # SportsML
 
-Game predictions for the NFL, college football, NBA and men's / women's college
-basketball. For any matchup it predicts the point margin and a calibrated win
-probability, with three interchangeable model families:
+Game predictions for the NFL, college football, the NBA, WNBA, NHL, MLB and
+men's / women's college basketball. For any matchup it predicts the point margin
+and a calibrated win probability, with three interchangeable model families:
 
 - **sklearn**: any regressor (random forest by default) on each team's
   season-to-date box-score averages.
@@ -218,6 +218,113 @@ total's edge correlates only +0.05 with the result against the line) and
 its moneyline picks lose 5%. A transformer backtest season takes about 20
 minutes on 4 CPU cores (training, then ~235 daily state refreshes).
 
+## College basketball
+
+```sh
+uv run sportsml cbb download        # ESPN schedules, box scores, lines -> data/cbb/raw.csv
+uv run sportsml cbb process         #                                    -> data/cbb/games.csv
+uv run sportsml cbb fit transformer #                                    -> models/cbb/transformer
+uv run sportsml cbb predict --model_dir models/cbb/transformer
+```
+
+`wcbb` is the same for the women's game. No key is needed: like the NBA's,
+games and team box scores come from sportsdataverse's ESPN files (men's
+from 2002-03, women's from 2005-06, upcoming games included) and lines from
+ESPN's odds API, one request per game between two Division I teams (men's
+from 2012-13, women's from 2021-22). A season is ~6,000 games, so a full
+men's download makes ~85,000 odds requests (1-2 hours); finished seasons
+and games are cached in `data/<sport>/espn_cache`, and a refresh makes a
+few hundred.
+
+- **Division I and the rest.** A Division I team is one ESPN files under a
+  conference. Division II, III and NAIA opponents play one or two of these
+  games a year, too few for a team state of their own, so they are pooled
+  into one team, `Non-D1` (as college football pools FCS teams); it loses
+  99% of them, by 39 points on average. The school's own name stays in
+  `team_name`.
+- **Teams** are keyed by school (`Duke`, `Miami (OH)`), the name ESPN uses
+  in the team's latest season, so a school that was renamed keeps one
+  history.
+- **Neutral sites** (tournaments, the NCAA tournament) have `location` 0.
+  `game_type` is `regular`, `postseason` (NIT, CBI, ...) or `ncaa`, and
+  `conference` / `opp_conference` (ESPN's conference ids) and
+  `conference_game` are features.
+
+The transformer reads each team's last 32 games (about a season) with each
+of those games' pre-game Elo of both teams (`opponent_strength`, as in
+college football): strength of schedule varies far more across 360
+schools than across 30 NBA teams.
+
+## WNBA
+
+```sh
+uv run sportsml wnba download && uv run sportsml wnba process
+uv run sportsml wnba fit transformer
+```
+
+The NBA's pipeline (sportsdataverse's ESPN files from 2003, ESPN's lines
+from 2018, `data/wnba/espn_cache`) with calendar-year seasons. Franchises
+are keyed by their latest ESPN abbreviation, so Detroit -> Tulsa -> Dallas
+and San Antonio -> Las Vegas are one history each; All-Star and exhibition
+teams are dropped. The Elo baseline uses `k` 14 and regresses ratings
+halfway to the mean between seasons (tuned on 2008-2020).
+
+## NHL
+
+```sh
+uv run sportsml nhl download && uv run sportsml nhl process
+uv run sportsml nhl fit transformer
+```
+
+Games and team box scores come from the NHL's own stats API, four requests
+a season: the schedule (`/game`, upcoming games included) and the
+per-game `summary`, `realtime` and `powerplay` team reports (shots, missed
+and blocked shots, hits, giveaways, takeaways, faceoffs, power plays, ...)
+from 2005-06 on. Lines come from ESPN's odds API from 2019-20 on, its game
+ids from its monthly scoreboards (matched on date and teams); finished
+seasons are cached in `data/nhl/nhl_cache`.
+
+- **Teams** are the NHL's codes; a relocated franchise has its current one
+  for its whole history (Atlanta -> `WPG`, Phoenix / Arizona -> `UTA`,
+  which took over Arizona's roster).
+- **No point spread.** The puck line is a fixed 1.5-goal handicap priced
+  like a moneyline, so hockey's market is its moneylines (and totals): the
+  backtest scores the model against the no-vig moneyline probability and
+  the margin it implies, there is no against-the-spread record, and the
+  site shows moneyline and over/under picks. The puck line and its prices
+  are kept as `puck_line` (display only).
+- `result` is the final score's margin, the shootout's deciding goal
+  included (`periods` is 4 after overtime, 5 after a shootout).
+- The Elo baseline uses `k` 6 and a 30-point home edge (tuned on 2009-10 to
+  2020-21): hockey results are noisy, so ratings move slowly.
+
+## MLB
+
+```sh
+uv run sportsml mlb download && uv run sportsml mlb process
+uv run sportsml mlb fit transformer
+```
+
+Games, team box scores and starting pitchers come from MLB's Stats API:
+per season the schedule with each side's announced starter (one request),
+every team's per-game hitting, pitching and fielding logs (two requests a
+team) and the starters' pitching logs (batches of 50), from 2008 on. Lines
+come from ESPN's odds API from 2013, matched like the NHL's
+(doubleheaders in order); finished seasons are cached in
+`data/mlb/mlb_cache`.
+
+- **Starting pitchers** are pre-game features: `sp_era`, `sp_k_bb`
+  (strikeouts minus walks per batter), `sp_ip` (innings per start) and
+  `sp_starts` for each side's announced starter (`opp_sp_*` for the
+  opponent's), from his starts before the game this season and all of last
+  season, shrunk toward a league-average starter. Upcoming games have them
+  once the starters are announced.
+- **No point spread**, as in the NHL: the run line is kept as `run_line`
+  and the market is the moneylines and the total.
+- Postponed games are played later under the same id; cancelled ones are
+  dropped. Teams are MLB's current abbreviations by team id (the Indians'
+  games are `CLE`'s, Oakland's `ATH`'s).
+
 ## Backtesting against the market
 
 ```sh
@@ -235,8 +342,12 @@ and that week's games are predicted. This is the same loop as production
 (retrain occasionally, refresh weekly), so there is no lookahead.
 
 The baseline is the Vegas line from the nflverse schedule. Its margin is the
-spread and its win probability comes from the no-vig moneylines. The summary
-prints:
+spread and its win probability comes from the no-vig moneylines. Hockey and
+baseball have no point spread (their puck and run lines are fixed 1.5
+handicaps priced like moneylines), so there the market's margin is the one
+its no-vig win probability implies, `sigma * Phi^-1(p)` with `sigma` the
+residual spread that makes those margins consistent on earlier seasons, and
+the against-the-spread record is left out. The summary prints:
 
 - RMSE, accuracy, Brier score and log loss for the model and the market on
   the same games, overall, by season, and for the first four weeks vs the
@@ -298,7 +409,7 @@ Any model can be backtested from Python with
 ## Web app
 
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with
-the NFL, college football and the NBA:
+every sport above:
 
 - **Home**: what the site is, each sport's backtest record against Vegas
   (winners picked, against the spread, over/under) and how the
@@ -393,7 +504,8 @@ make artifact                   # one-page build (hash routing) -> web/build-art
 Limits of a static site:
 
 - Only precomputed views exist: upcoming weeks (the next 7 game days in the
-  NBA), their game views, past seasons' rankings, the challenge pool.
+  sports that play most days), their game views, past seasons' rankings,
+  the challenge pool.
 - The challenge answers ship with the site, so it runs on the honor
   system.
 - The data is as fresh as the last Site run; line moves during the day are
@@ -413,8 +525,17 @@ many upcoming dates are exported (`upcoming_dates`).
 | NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
 | College football | `cfb` | [CollegeFootballData](https://collegefootballdata.com) | `CFBD_API_KEY` |
 | NBA | `nba` | ESPN via [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) and ESPN's odds API | none |
-| Men's college basketball | `cbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
-| Women's college basketball | `wcbb` | Kaggle March Machine Learning Mania | `~/.kaggle/kaggle.json` |
+| Men's college basketball | `cbb` | ESPN via sportsdataverse and ESPN's odds API | none |
+| Women's college basketball | `wcbb` | ESPN via sportsdataverse and ESPN's odds API | none |
+| WNBA | `wnba` | ESPN via sportsdataverse and ESPN's odds API | none |
+| NHL | `nhl` | The NHL's stats API (`api.nhle.com`), ESPN's odds API | none |
+| MLB | `mlb` | MLB's Stats API (`statsapi.mlb.com`), ESPN's odds API | none |
+
+ESPN's requests are shared in `sportsml.espn`: its odds API (one request
+per game, cached once the game is final), its monthly scoreboards (the ESPN
+ids of NHL and MLB games) and sportsdataverse's season files. Kaggle's March
+Machine Learning Mania files (`sportsml.cbb.data.kaggle`) are still there
+for its tournament seeds and slots (`sportsml.cbb.data.bracket`).
 
 `sportsml.odds` fetches betting lines from [The Odds API](https://the-odds-api.com)
 (`ODDS_API_KEY`); `odds_map` in each sport's `data/names.py` maps sportsbook
@@ -461,7 +582,9 @@ sportsml/
     gnn/            season graph snapshots -> GraphModel (Lightning + PyG)
     transformer/    per-team game sequences -> TransformerModel (Lightning)
     lightning.py    shared base (MarginModule), trainer, seeding for neural families
-  nfl/ cfb/ nba/ cbb/ wcbb/   per-sport download + schema (data/features.py)
+  nfl/ cfb/ nba/ cbb/ wcbb/ wnba/ nhl/ mlb/
+                  per-sport download + schema (data/features.py)
+  espn.py         ESPN odds, scoreboards, teams; sportsdataverse basketball files
   inference/      predict command, matchup helpers
   backtest.py     walk-forward backtests, family registry, benchmark
   web/            per-sport views, snapshots, static-site export

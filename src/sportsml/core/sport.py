@@ -8,7 +8,7 @@ import pandas as pd
 
 from .schema import GameSchema
 
-BUILTIN_SPORTS = ("nfl", "cfb", "nba", "cbb", "wcbb")
+BUILTIN_SPORTS = ("nfl", "cfb", "nba", "cbb", "wcbb", "wnba", "nhl", "mlb")
 
 _registry: dict[str, Sport] = {}
 
@@ -24,6 +24,9 @@ class Sport:
         gnn: Default GNN settings (``hidden_dim``, ``out_dim``, ``lr``, ...).
         transformer: Default transformer settings (``history``, ``d_model``,
             ``lr``, ...).
+        elo: The Elo baseline's settings (``k``, ``home``, ``regress``; see
+            :class:`~sportsml.models.baselines.EloParams`) where the NFL's do
+            not suit the sport.
     """
 
     name: str
@@ -31,6 +34,7 @@ class Sport:
     download: Callable[..., pd.DataFrame]
     gnn: dict = field(default_factory=dict)
     transformer: dict = field(default_factory=dict)
+    elo: dict = field(default_factory=dict)
 
 
 def register_sport(sport: Sport) -> Sport:

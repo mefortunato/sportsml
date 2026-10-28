@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from sportsml import espn as shared
 from sportsml.core.process import process
 from sportsml.core.schema import mirror, validate
 from sportsml.nba.data import download as espn
@@ -228,7 +229,7 @@ def test_download_caches_finished_seasons_files(monkeypatch, tmp_path):
         frame.to_parquet(buffer)
         return Response(buffer.getvalue())
 
-    monkeypatch.setattr(espn, "_get", get)
+    monkeypatch.setattr(shared, "_get", get)
     monkeypatch.setattr(espn, "FIRST_LINES_SEASON", 3000)
     cache = espn.Cache(str(tmp_path))
     for _ in range(2):

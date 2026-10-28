@@ -265,10 +265,11 @@ def fit_elo(
     overwrite: bool = False,
     print_metrics: bool = True,
 ) -> dict:
-    """Elo with fixed FiveThirtyEight settings (nothing is fit but sigma)."""
+    """Elo with fixed FiveThirtyEight settings, or the sport's own
+    (``Sport.elo``); nothing is fit but sigma."""
     seasons = dict(train=train_seasons, val=val_seasons, test=test_seasons)
     schema, games, split = _prepare(games, sport, seasons, save_dir, overwrite)
-    model = EloModel(schema)
+    model = EloModel(schema, EloParams(**get_sport(sport).elo))
     raw = model.replay(games) * model.params.points_per_elo
     in_split = games[schema.season].isin(split.all)
     return finish_fit(

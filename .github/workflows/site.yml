@@ -13,7 +13,9 @@
 # within its free tier's 1,000 a month). NBA results come from
 # sportsdataverse's ESPN files (refreshed ~11:45 UTC, so every day has a run
 # after last night's games are in) and its lines from ESPN, a few dozen
-# requests a run.
+# requests a run; so do men's and women's college basketball and the WNBA.
+# NHL and MLB results come from the leagues' own stats APIs and their lines
+# from ESPN.
 name: Site
 
 on:
@@ -83,6 +85,19 @@ jobs:
           path: data/nba/espn_cache
           key: espn-nba-${{ github.run_id }}
           restore-keys: espn-nba-
+      - name: Cache the other sports' files and lines
+        uses: actions/cache@v4
+        with:
+          # college basketball, WNBA (ESPN), NHL and MLB (league APIs, ESPN
+          # lines): finished seasons and finished games' lines
+          path: |
+            data/cbb/espn_cache
+            data/wcbb/espn_cache
+            data/wnba/espn_cache
+            data/nhl/nhl_cache
+            data/mlb/mlb_cache
+          key: data-site-${{ github.run_id }}
+          restore-keys: data-site-
       - id: pages
         uses: actions/configure-pages@v5
       - name: Export fresh data and lines

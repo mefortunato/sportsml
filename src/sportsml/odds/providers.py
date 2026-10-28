@@ -60,12 +60,20 @@ ODDS_API_SPORTS = {
     "nba": "basketball_nba",
     "cbb": "basketball_ncaab",
     "wcbb": "basketball_wncaab",
+    "wnba": "basketball_wnba",
+    "nhl": "icehockey_nhl",
+    "mlb": "baseball_mlb",
 }
+
+# Sports without a point spread: their "spreads" are the puck / run line, a
+# fixed 1.5 handicap, so only moneylines and totals are requested.
+NO_SPREAD = {"nhl", "mlb", "icehockey_nhl", "baseball_mlb"}
 
 
 class OddsAPI(Provider):
     """Every US book's spread, moneyline and total for a sport's upcoming
-    games, in one request (about 3 credits: one per market).
+    games, in one request (about 3 credits: one per market; no spreads for
+    :data:`NO_SPREAD` sports).
 
     Args:
         sport: Sport name (``ODDS_API_SPORTS``) or an Odds API sport key.
@@ -87,6 +95,7 @@ class OddsAPI(Provider):
         get: Callable | None = None,
     ):
         self.sport = ODDS_API_SPORTS.get(sport, sport)
+        self.markets = "h2h,totals" if self.sport in NO_SPREAD else "h2h,spreads,totals"
         self.names = names or {}
         self.api_key = api_key or os.getenv("ODDS_API_KEY")
         self.regions = regions
@@ -100,7 +109,7 @@ class OddsAPI(Provider):
             {
                 "apiKey": self.api_key,
                 "regions": self.regions,
-                "markets": "h2h,spreads,totals",
+                "markets": self.markets,
                 "oddsFormat": "american",
                 "dateFormat": "iso",
             },

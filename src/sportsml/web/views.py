@@ -51,6 +51,71 @@ def total(*names: str) -> Callable[[pd.DataFrame], pd.Series]:
     return lambda rows: rows[list(names)].sum(axis=1, min_count=1)
 
 
+def ratio(numerator: str, denominator: str, scale: float = 100.0):
+    """``scale * numerator / denominator`` per row (NaN where it is 0)."""
+
+    def value(rows: pd.DataFrame) -> pd.Series:
+        den = rows[denominator]
+        return scale * rows[numerator] / den.where(den > 0)
+
+    return value
+
+
+def calendar_date(row: pd.Series) -> str | None:
+    """``Oct 28``: for sports whose dates are game days (``game_date``)."""
+    day = pd.to_datetime(row.get("game_date"), errors="coerce")
+    return None if pd.isna(day) else f"{day:%b} {day.day}"
+
+
+def eastern_kickoff(row: pd.Series) -> str | None:
+    """``YYYY-MM-DD HH:MM`` US Eastern, from ``start_date`` (UTC)."""
+    start = pd.to_datetime(row.get("start_date"), utc=True, errors="coerce")
+    if pd.isna(start):
+        return None
+    return start.tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M")
+
+
+def bracket_playoffs(
+    games: pd.DataFrame,
+    playoff: pd.Series,
+    wins_needed: Callable[[int], int],
+    season: str = "season",
+    date: str = "day",
+) -> dict[int, dict[str, str]]:
+    """Champion, runner-up and semifinal losers from a bracket's results.
+
+    The final is the series (or game) of the season's last ``playoff``
+    game, and each finalist's last earlier playoff opponent lost the
+    semifinal. A season is marked once a finalist has won
+    ``wins_needed(season)`` final games (1 for a one-game final).
+    """
+    out: dict[int, dict[str, str]] = {}
+    rows = games[playoff].sort_values([season, date], kind="stable")
+    for year, season_rows in rows.groupby(season):
+        last = season_rows.iloc[-1]
+        finalists = {last["team"], last["opp_team"]}
+        finals = season_rows[
+            season_rows["team"].isin(finalists)
+            & season_rows["opp_team"].isin(finalists)
+        ]
+        wins = finals[finals["result"] > 0]["team"].value_counts()
+        if wins.empty or wins.max() < wins_needed(int(year)):
+            continue  # the playoffs are still on
+        champion = wins.idxmax()
+        stages = {
+            str(team): "champion" if team == champion else "runner_up"
+            for team in finalists
+        }
+        for team in finalists:
+            earlier = season_rows[
+                season_rows["team"].eq(team) & ~season_rows["opp_team"].isin(finalists)
+            ]
+            if len(earlier):
+                stages.setdefault(str(earlier.iloc[-1]["opp_team"]), "semifinal")
+        out[int(year)] = stages
+    return out
+
+
 @dataclass(frozen=True)
 class SportView:
     """Presentation of one sport.
@@ -92,7 +157,7 @@ class SportView:
     split_season: bool = False
 
 
-BUILTIN_VIEWS = ("nfl", "cfb", "nba")
+BUILTIN_VIEWS = ("nfl", "cfb", "nba", "cbb", "wcbb", "wnba", "nhl", "mlb")
 _views: dict[str, SportView] = {}
 
 

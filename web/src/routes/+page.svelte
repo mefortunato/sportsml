@@ -10,7 +10,12 @@
 	const SOURCES: Record<string, string> = {
 		nfl: 'nflverse',
 		cfb: 'CollegeFootballData',
-		nba: 'ESPN (schedules and box scores via sportsdataverse)'
+		nba: 'ESPN (schedules and box scores via sportsdataverse)',
+		cbb: 'ESPN (schedules and box scores via sportsdataverse)',
+		wcbb: 'ESPN (schedules and box scores via sportsdataverse)',
+		wnba: 'ESPN (schedules and box scores via sportsdataverse)',
+		nhl: "the NHL's stats API (lines from ESPN)",
+		mlb: "MLB's Stats API (lines from ESPN)"
 	};
 
 	// "College football" mid-sentence; acronyms such as NFL stay as they are
@@ -95,7 +100,7 @@
 						{#if info.challenge_games}
 							<a class="pill" href={links.performance(info.sport)}>Performance</a>
 						{/if}
-						{#if info.has_spread && info.challenge_games}
+						{#if info.challenge_games && (info.has_spread || info.markets?.length)}
 							<a class="pill" href={links.challenge(info.sport)}>Beat the model</a>
 						{/if}
 					</nav>
@@ -111,9 +116,10 @@
 				<h2>How the predictions are made</h2>
 				<p>
 					A transformer, the kind of neural network behind language models, reads each team's most
-					recent games: its box-score stats, results and home field, and in college football how
+					recent games: its box-score stats, results and home field, and in college sports how
 					strong each opponent was. From the two teams' histories it predicts the margin and the total
-					points. The win probability comes from the margin, calibrated on past seasons.
+					points (in baseball also knowing both announced starting pitchers' records). The win
+					probability comes from the margin, calibrated on past seasons.
 				</p>
 				<p>
 					The model never sees the betting lines. Comparing with Vegas is the test, not an input.
@@ -178,7 +184,7 @@
 		<section class="card verdict">
 			<h2>The honest answer</h2>
 			<p>
-				The betting market is still more accurate than the model in both sports. Beating the spread
+				The betting market is still more accurate than the model in every sport. Beating the spread
 				takes winning more than {pct(breakEven(), 1)} of bets at standard −110 prices, and the model's
 				spread picks have not done that reliably. The cards above give each sport's record, and its
 				Performance page breaks it down by market, season and size of edge.

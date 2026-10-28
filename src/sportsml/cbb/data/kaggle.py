@@ -1,11 +1,35 @@
-"""March Machine Learning Mania (Kaggle) data, shared by men's and women's."""
+"""March Machine Learning Mania (Kaggle) data, shared by men's and women's.
+
+Not the ``cbb`` / ``wcbb`` download any more (that is ESPN's, with upcoming
+games and betting lines); kept for Kaggle's tournament seeds and slots,
+which :mod:`.bracket` simulates, keyed by Kaggle's team ids.
+"""
 
 import pathlib
 import tempfile
 
 import pandas as pd
 
-from .features import OPP_TEAM_STATS_COLUMNS, TEAM_STATS_COLUMNS
+TEAM_STATS_COLUMNS = [
+    "Win",
+    "Score",
+    "PlusMinus",
+    "FGM",
+    "FGA",
+    "FGM3",
+    "FGA3",
+    "FTM",
+    "FTA",
+    "OR",
+    "DR",
+    "Ast",
+    "TO",
+    "Stl",
+    "Blk",
+    "PF",
+]
+
+OPP_TEAM_STATS_COLUMNS = [f"{col}_OPP" for col in TEAM_STATS_COLUMNS]
 
 
 def _read(directory: str, name: str) -> pd.DataFrame:

@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "41 7 1 1-6,9-12 *" # the 1st of each month, September-June
+    - cron: "41 7 1 * *" # the 1st of each month (MLB and the WNBA play all summer)
 
 permissions:
   contents: write # the webdata release
@@ -36,7 +36,7 @@ jobs:
       # a sport that fails keeps its previous build (see publish)
       fail-fast: false
       matrix:
-        sport: [nfl, cfb, nba]
+        sport: [nfl, cfb, nba, cbb, wcbb, wnba, nhl, mlb]
     env:
       MLFLOW_TRACKING_URI: sqlite:///${{ github.workspace }}/mlflow.db
     steps:
@@ -63,6 +63,19 @@ jobs:
           path: data/nba/espn_cache
           key: espn-nba-${{ github.run_id }}
           restore-keys: espn-nba-
+      - name: Cache downloaded files and lines
+        if: contains(fromJSON('["cbb", "wcbb", "wnba", "nhl", "mlb"]'), matrix.sport)
+        uses: actions/cache@v4
+        with:
+          # finished seasons' files and finished games' lines (a download
+          # without it makes thousands of odds requests: ~85,000 for men's
+          # college basketball, ~35,000 for MLB)
+          path: |
+            data/${{ matrix.sport }}/espn_cache
+            data/${{ matrix.sport }}/nhl_cache
+            data/${{ matrix.sport }}/mlb_cache
+          key: data-${{ matrix.sport }}-${{ github.run_id }}
+          restore-keys: data-${{ matrix.sport }}-
       - name: Fetch the previous build (its backtest seasons can be reused)
         env:
           GH_TOKEN: ${{ github.token }}

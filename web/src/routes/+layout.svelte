@@ -32,7 +32,7 @@
 						>Performance</a
 					>
 				{/if}
-				{#if info.has_spread && info.challenge_games}
+				{#if info.challenge_games && (info.has_spread || info.markets?.length)}
 					<a href={links.challenge(info.sport)} class:active={route === '/[sport]/challenge'}
 						>Beat the model</a
 					>

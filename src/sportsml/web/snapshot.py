@@ -138,7 +138,7 @@ class Snapshot:
         self.results = pool  # every backtest game, pushes included
         self.performance_summary = self._performance() if len(pool) else None
         self.trust = self._trust() if len(pool) else {}
-        if len(pool) and schema.market_spread:
+        if len(pool) and "market_margin" in pool:
             # lined games; a push on one market can still be played on another
             pool = pool.dropna(subset=["market_margin"])
         self.pool = pool.set_index(schema.game_id) if len(pool) else pool
@@ -358,13 +358,14 @@ class Snapshot:
         s = self.schema
         results = self.results
         summary = summarize(results, s)
-        if s.market_spread:
+        if "market_prob" in results:
             lined = results.dropna(subset=["market_margin", "market_prob"])
             by_season = lined.groupby(s.season)
-            summary["ats_by_season"] = {
-                int(season): ats_record(frame, s, thresholds=(0,)).iloc[0].to_dict()
-                for season, frame in by_season
-            }
+            if s.market_spread:
+                summary["ats_by_season"] = {
+                    int(season): ats_record(frame, s, thresholds=(0,)).iloc[0].to_dict()
+                    for season, frame in by_season
+                }
             if "moneyline" in summary:
                 summary["moneyline_by_season"] = {
                     int(season): moneyline_record(frame, s, thresholds=(0,))

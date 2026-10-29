@@ -107,6 +107,7 @@ def build(
     refresh_backtest: bool = False,
     cache: str | None = None,
     reuse_model_days: float = 0,
+    max_new_seasons: int | None = None,
 ) -> None:
     """Prepare everything the web app shows, one directory per sport.
 
@@ -140,6 +141,10 @@ def build(
             of training one, if it was trained with the same settings and
             code at most this many days ago (0: always train). Its team
             state is refreshed with the newest games either way.
+        max_new_seasons: Backtest at most this many of the seasons neither
+            the previous build nor the cache has (the latest ones); the
+            rest are left out until a build elsewhere caches them
+            (``None``: backtest them all).
     """
     from ..backtest import backtest, complete_seasons, summarize
     from ..inference.utils import power_ratings
@@ -220,6 +225,12 @@ def build(
             pool = pd.concat(parts[0], ignore_index=True)
             rankings = pd.concat(parts[1], ignore_index=True)
         missing = [s for s in seasons if s not in reused and s not in fetched]
+        if max_new_seasons is not None and len(missing) > max_new_seasons:
+            skipped = missing[: len(missing) - max_new_seasons]
+            missing = missing[len(skipped) :]
+            seasons = [s for s in seasons if s not in skipped]
+            keys = {s: keys[s] for s in seasons}
+            print(f"{sport} backtest: leaving out {skipped} (max_new_seasons)")
         print(
             f"{sport} backtest: reusing {reused or 'none'}, from the cache "
             f"{fetched or 'none'}, backtesting {missing or 'none'}",

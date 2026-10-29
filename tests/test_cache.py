@@ -146,3 +146,11 @@ def test_open_store_specs(tmp_path):
     store = open_store("release:me/sportsml@backtest-cache")
     assert (store.tag, store.repo) == ("backtest-cache", "me/sportsml")
     assert open_store("release:backtest-cache").repo is None
+
+
+def test_max_new_seasons_fills_in_over_several_builds(tmp_path, spies):
+    pool = run(tmp_path / "workflow", max_new_seasons=1)
+    assert spies["backtest"] == [[2023]] and set(pool["season"]) == {2023}
+    pool = run(tmp_path / "workflow", max_new_seasons=1)
+    assert spies["backtest"] == [[2023], [2022]]
+    assert set(pool["season"]) == {2022, 2023}

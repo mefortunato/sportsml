@@ -40,7 +40,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # GitHub's maximum; a college basketball model trains for 1-2 hours
+    timeout-minutes: 360
     strategy:
       # a sport that fails keeps its previous build (see publish)
       fail-fast: false
@@ -103,6 +104,7 @@ jobs:
         run: >
           uv run sportsml web build --sports '[${{ matrix.sport }}]'
           --output_dir webdata --cache release:backtest-cache
+          ${{ contains(fromJSON('["cbb", "wcbb"]'), matrix.sport) && '--max_new_seasons 1' || '' }}
           --refresh_backtest ${{ inputs.refresh_backtest || false }}
           --reuse_model_days ${{ inputs.reuse_model_days || 0 }}
       - name: Pack this sport's build

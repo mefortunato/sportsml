@@ -479,7 +479,12 @@ request. Two GitHub Actions workflows keep them current:
   uv run sportsml web build --sports '[cbb]' --cache release:backtest-cache
   ```
 
-  The next Train run downloads those seasons instead of backtesting them;
+  In men's and women's college basketball the Train workflow backtests at
+  most one season a run (`--max_new_seasons 1`: their ~6,000-game seasons
+  take 1-2 hours of training each on the runner's 4 CPU cores, and a job
+  has 6 hours), so their five seasons fill in over five runs, or at once
+  from a build elsewhere with the cache. The next Train run downloads
+  cached seasons instead of backtesting them;
   run it with **reuse_model_days** (e.g. 7) to also use that machine's
   model for upcoming games instead of training one. The key covers the
   model settings, epochs and code of the shared layer and that sport's own

@@ -3,8 +3,11 @@
 # `webdata` release asset that the daily Site workflow builds from.
 # Runs monthly during the seasons and on demand, e.g. after changing the
 # model. Each sport builds in its own job, in parallel. Backtest seasons are
-# reused from the previous `webdata` release while the model and its code
-# are unchanged, so a routine run only trains the model for upcoming games
+# reused from the previous `webdata` release, or from the `backtest-cache`
+# release that every build (here or on any machine, e.g. one with a GPU:
+# `sportsml web build --cache release:backtest-cache`) adds its seasons and
+# models to, while the model and that sport's code are unchanged, so a
+# routine run only trains the model for upcoming games
 # (~15 min for the NFL or college football, ~20 for the NBA); a full
 # backtest (after a model change, or with refresh_backtest) takes ~1 hour
 # for the NFL and college football and 2-3 hours for the NBA.
@@ -17,6 +20,12 @@ on:
         description: Backtest every season again instead of reusing the last release's
         type: boolean
         default: false
+      reuse_model_days:
+        description: >-
+          Use the backtest-cache release's model if trained (e.g. on a GPU
+          machine) at most this many days ago, instead of training (0: train)
+        type: number
+        default: 0
   schedule:
     - cron: "41 7 1 * *" # the 1st of each month (MLB and the WNBA play all summer)
 
@@ -89,10 +98,13 @@ jobs:
       - name: Download, train, backtest
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+          # the backtest-cache release: seasons (and models) any machine built
+          GH_TOKEN: ${{ github.token }}
         run: >
           uv run sportsml web build --sports '[${{ matrix.sport }}]'
-          --output_dir webdata
+          --output_dir webdata --cache release:backtest-cache
           --refresh_backtest ${{ inputs.refresh_backtest || false }}
+          --reuse_model_days ${{ inputs.reuse_model_days || 0 }}
       - name: Pack this sport's build
         run: tar -czf webdata-${{ matrix.sport }}.tar.gz -C webdata ${{ matrix.sport }}
       - uses: actions/upload-artifact@v4

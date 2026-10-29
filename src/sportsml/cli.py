@@ -18,6 +18,7 @@ from .models.sklearn.fit import fit_sklearn
 from .models.transformer.fit import fit_transformer, transformer_config
 from .staking import staking
 from .web.build import build as web_build
+from .web.build import push_cache
 from .web.export import export as web_export
 
 # Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
@@ -142,7 +143,11 @@ def run(args=None):
         }
         for name, sport in sports.items()
     }
-    components["web"] = {"build": web_build, "export": web_export}
+    components["web"] = {
+        "build": web_build,
+        "export": web_export,
+        "push_cache": push_cache,
+    }
     components["version"] = version
     defaults = {}
     for sport in sports.values():

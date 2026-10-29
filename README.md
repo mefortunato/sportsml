@@ -451,7 +451,7 @@ every sport above:
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
-- **Train** (`.github/workflows/train.yml`, monthly in season and on
+- **Train** (`.github/workflows/train.yml`, monthly and on
   demand) runs `sportsml web build --sports '[<sport>]'` in one job per
   sport, in parallel: download, train the transformer, backtest it and
   record power rankings before every date. It publishes the merged result
@@ -467,6 +467,28 @@ request. Two GitHub Actions workflows keep them current:
   final; after a source revises it, run Train with **refresh_backtest**
   (`sportsml web build --refresh_backtest true`) to backtest every season
   again.
+- **Shared cache.** Every Train job also reads and writes the
+  `backtest-cache` release (`--cache release:backtest-cache`): one asset
+  per backtest season (its predictions and power rankings) and per trained
+  model, named by its key. A build on any other machine with access to the
+  repository adds to the same cache, so work done on a GPU machine is not
+  done again by the workflow:
+
+  ```sh
+  gh auth login                       # once
+  uv run sportsml web build --sports '[cbb]' --cache release:backtest-cache
+  ```
+
+  The next Train run downloads those seasons instead of backtesting them;
+  run it with **reuse_model_days** (e.g. 7) to also use that machine's
+  model for upcoming games instead of training one. The key covers the
+  model settings, epochs and code of the shared layer and that sport's own
+  package, so changing one sport leaves the others' seasons valid. GPU and
+  CPU training do not give bit-identical models; a cached season counts as
+  the same experiment. `sportsml web push_cache --cache
+  release:backtest-cache --data_dir webdata` seeds the cache from an
+  existing build. The daily Site run never trains or backtests, so it does
+  not use the cache.
 - **Site** (`.github/workflows/site.yml`, daily and after Monday night's
   game) downloads that asset, runs `sportsml web export --refresh true`
   (re-download results and refresh team state, no retraining), builds the

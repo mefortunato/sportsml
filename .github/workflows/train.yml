@@ -46,14 +46,15 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked --no-default-groups
-      - name: Cache CollegeFootballData responses
+      - name: Cache CFB files and lines
         if: matrix.sport == 'cfb'
         uses: actions/cache@v4
         with:
-          # finished seasons and weeks; CFBD's free tier is 1,000 calls a month
-          path: data/cfb/cfbd_cache
-          key: cfbd-${{ github.run_id }}
-          restore-keys: cfbd-
+          # finished seasons' schedules and box scores, finished games' lines
+          # (a download without it makes ~12,000 odds requests)
+          path: data/cfb/espn_cache
+          key: espn-cfb-${{ github.run_id }}
+          restore-keys: espn-cfb-
       - name: Cache ESPN NBA files and lines
         if: matrix.sport == 'nba'
         uses: actions/cache@v4
@@ -74,8 +75,6 @@ jobs:
             echo "no previous webdata release: backtesting every season"
           fi
       - name: Download, train, backtest
-        env:
-          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: >
           uv run sportsml web build --sports '[${{ matrix.sport }}]'
           --output_dir webdata

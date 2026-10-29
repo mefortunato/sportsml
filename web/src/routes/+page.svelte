@@ -9,7 +9,7 @@
 	// where each sport's results, box scores and lines come from
 	const SOURCES: Record<string, string> = {
 		nfl: 'nflverse',
-		cfb: 'CollegeFootballData',
+		cfb: 'sportsdataverse (ESPN)',
 		nba: 'ESPN (schedules and box scores via sportsdataverse)'
 	};
 

@@ -1,19 +1,21 @@
 import datetime
+import io
 import json
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from sportsml.cfb.data import download as cfbd
-from sportsml.cfb.data.download import FCS, build_games, market
+from sportsml.cfb.data import download as cfb
+from sportsml.cfb.data.download import FCS, build_games, parse_odds
 from sportsml.cfb.data.features import SCHEMA
 from sportsml.core.process import process
 from sportsml.core.schema import mirror, validate
 
-from .cfbd_fixtures import BOX, LINES, SCHEDULE
+from .cfb_fixtures import BOX, ODDS, SCHEDULE, item
 
 TODAY = datetime.datetime(2025, 3, 1, tzinfo=datetime.timezone.utc)
+LINES = {gid: parse_odds({"items": items}) for gid, items in ODDS.items()}
 
 
 @pytest.fixture
@@ -71,14 +73,38 @@ def test_bowl_weeks_follow_the_regular_season_in_order(games):
     )
 
 
-def test_lines_prefer_books_and_skip_placeholder_moneylines():
-    lines = market(LINES).set_index("game_id")
-    # Bovada's spread, but its moneyline is a placeholder: none from it
-    assert lines.loc["1", "spread_line"] == 38.5
-    assert np.isnan(lines.loc["1", "moneyline"])
-    # DraftKings outranks numberfire for every market
-    assert (lines.loc["2", "spread_line"], lines.loc["2", "total_line"]) == (13.5, 48.5)
-    assert (lines.loc["2", "moneyline"], lines.loc["2", "opp_moneyline"]) == (-500, 375)
+def test_lines_are_the_books_median_and_skip_predictions_and_placeholders():
+    # BOVADA's moneylines are placeholders, teamrankings is a prediction site
+    assert (LINES["1"]["spread_line"], LINES["1"]["total_line"]) == (38.5, 55.5)
+    assert "moneyline" not in LINES["1"]
+    assert (LINES["2"]["spread_line"], LINES["2"]["total_line"]) == (13.5, 48.5)
+    assert (LINES["2"]["moneyline"], LINES["2"]["opp_moneyline"]) == (-500, 375)
+    lines = parse_odds(
+        {
+            "items": [
+                item("Opening", -1.0, 40.0),
+                item("consensus", -1.0),  # ESPN's consensus: the opening line
+                item("ESPN Bet - Live Odds", 9.0, 90.5, 500, -900),
+                item("BOVADA.lv", -7.0, 52.0, -280, 230, home_price=-115),
+                item("DraftKings", -6.5, 37.5, -250, 205, home_price=-110,
+                     away_price=-110, over=-105, under=-115),  # a broken total
+                item("5Dimes.eu", -6.5, 51.5, -260, 220, home_price=-105,
+                     over=-110, under=-110),
+            ]
+        }
+    )  # fmt: skip
+    # ESPN's spread is the home handicap: -6.5 means the home team by 6.5
+    assert (lines["spread_line"], lines["spread_odds"]) == (6.5, -110)
+    assert (lines["total_line"], lines["over_odds"]) == (51.5, -110)
+    assert (lines["moneyline"], lines["opp_moneyline"]) == (-250, 205)
+    assert lines["moneyline_provider"] == "DraftKings"
+    # an even count's median between two quotes: no book's prices
+    between = parse_odds({"items": [item("DraftKings", -3.0), item("Westgate", -4.0)]})
+    assert between == {"spread_line": 3.5, "spread_odds": None, "opp_spread_odds": None}
+    # 2013: ESPN's consensus spread is the only line
+    early = parse_odds({"items": [item("consensus", 5.5), item("numberfire", 3, 50)]})
+    assert early == {"spread_line": -5.5, "spread_odds": None, "opp_spread_odds": None}
+    assert parse_odds({"items": []}) == {}
 
 
 def test_market_columns_from_both_perspectives(games):
@@ -86,6 +112,8 @@ def test_market_columns_from_both_perspectives(games):
     assert (home.spread_line, away.spread_line) == (-1.5, 1.5)
     assert (home.moneyline, home.opp_moneyline) == (105, -125)
     assert (away.moneyline, away.opp_moneyline) == (-125, 105)
+    assert (home.spread_odds, away.spread_odds) == (-108, -112)
+    assert home.over_odds == away.over_odds == -110
     assert home.total_line == away.total_line == 50.5
     assert home.total == away.total == 75
     mirrored = mirror(games[games.game_id == "4"], SCHEMA)
@@ -108,84 +136,72 @@ def test_box_scores_join_both_sides(games):
 
 def test_rest_days(games):
     bama = games[games.team_name == "Alabama"].set_index("game_id")
-    assert bama.loc["1", "rest"] == cfbd.MAX_REST  # opener
+    assert bama.loc["1", "rest"] == cfb.MAX_REST  # opener
     assert bama.loc["4", "rest"] == 7
     assert bama.loc["4", "opp_rest"] == 7
-    assert bama.loc["7", "rest"] == cfbd.MAX_REST  # long layoff, capped
+    assert bama.loc["7", "rest"] == cfb.MAX_REST  # long layoff, capped
 
 
-def test_v1_snake_case_responses_parse_the_same():
-    snake = [
-        {cfbd.snake(k): v for k, v in g.items()} | {"home_division": "fbs"}
-        for g in SCHEDULE
-    ]
-    for g in snake:
-        g["home_division"] = g.pop("home_classification")
-        g["away_division"] = g.pop("away_classification")
-    games = build_games(snake, BOX, LINES, today=TODAY)
-    expected = build_games(SCHEDULE, BOX, LINES, today=TODAY)
-    pd.testing.assert_frame_equal(games, expected)
+def test_finished_games_lines_are_cached_and_upcoming_refetched(monkeypatch, tmp_path):
+    calls = []
 
+    def fetch(game_id):
+        calls.append(game_id)
+        return {"spread_line": float(game_id)}
 
-class FakeResponse:
-    def __init__(self, data, status=200):
-        self.data, self.status_code = data, status
-
-    def json(self):
-        return self.data
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(self.status_code)
-
-
-def fake_api(calls):
-    def get(url, params, headers, timeout):
-        calls.append((url, dict(params)))
-        path = url.removeprefix(cfbd.API)
-        season_type = params.get("seasonType")
-        if path in ("/games", "/lines"):
-            assert season_type == "both"
-            return FakeResponse(SCHEDULE if path == "/games" else LINES)
-        if path == "/games/teams":
-            return FakeResponse(BOX if params["week"] == 1 else [])
-        raise AssertionError(path)
-
-    return get
+    monkeypatch.setattr(cfb, "fetch_odds", fetch)
+    cache = cfb.Cache(str(tmp_path))
+    first = cfb.season_lines(2024, ["1", "2"], ["11"], cache)
+    assert first == {g: {"spread_line": float(g)} for g in ("1", "2", "11")}
+    assert json.loads((tmp_path / "odds_2024.json").read_text()).keys() == {"1", "2"}
+    calls.clear()
+    cfb.season_lines(2024, ["1", "2", "4"], ["11"], cache)
+    assert sorted(calls) == ["11", "4"]
 
 
 def test_download_caches_finished_seasons(monkeypatch, tmp_path):
-    monkeypatch.setenv("CFBD_API_KEY", "test")
-    calls = []
-    monkeypatch.setattr(cfbd.httpx, "get", fake_api(calls))
+    requested, odds = [], []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, data):
+            self.content = data
+
+        def raise_for_status(self):
+            pass
+
+    def get(url):
+        requested.append(url)
+        buffer = io.BytesIO()
+        (SCHEDULE if "schedules" in url else BOX).to_parquet(buffer)
+        return Response(buffer.getvalue())
+
+    def fetch(game_id):
+        odds.append(game_id)
+        return parse_odds({"items": ODDS.get(game_id, [])})
+
+    monkeypatch.setattr(cfb, "_get", get)
+    monkeypatch.setattr(cfb, "fetch_odds", fetch)
     out = tmp_path / "raw.csv"
-    games = cfbd.download(str(out), 2024, 2024, cache_dir=str(tmp_path / "cache"))
+    cache = str(tmp_path / "cache")
+    games = cfb.download(str(out), 2024, 2024, cache_dir=cache)
     assert out.exists() and len(games) == len(pd.read_csv(out))
-    assert {c[0].removeprefix(cfbd.API) for c in calls} == {
-        "/games",
-        "/lines",
-        "/games/teams",
-    }
-    first = len(calls)
-    # 2024 is finished: the second download makes no calls
-    cfbd.download(None, 2024, 2024, cache_dir=str(tmp_path / "cache"))
-    assert len(calls) == first
-    cached = list((tmp_path / "cache").glob("*.json"))
-    assert cached and all(json.loads(p.read_text()) is not None for p in cached)
+    assert len(requested) == 2
+    # every finished FBS game's lines (game 3 is FCS only)
+    assert sorted(odds, key=int) == ["1", "2", "4", "6", "7", "8", "9", "10"]
+    assert row(games, 2, "Georgia").spread_line == 13.5
+    # 2024 is finished: the second download makes no requests
+    again = cfb.download(None, 2024, 2024, cache_dir=cache)
+    assert len(requested) == 2 and len(odds) == 8
+    pd.testing.assert_frame_equal(again, games)
 
 
-def test_client_retries_rate_limits(monkeypatch):
-    monkeypatch.setenv("CFBD_API_KEY", "test")
-    monkeypatch.setattr(cfbd.time, "sleep", lambda s: None)
-    responses = [FakeResponse(None, 429), FakeResponse([1])]
-    monkeypatch.setattr(cfbd.httpx, "get", lambda *a, **k: responses.pop(0))
-    assert cfbd.Client().get("/games", year=2024) == [1]
-
-
-def test_missing_key_is_an_error(monkeypatch):
-    monkeypatch.delenv("CFBD_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="CFBD_API_KEY"):
-        cfbd.Client()
+def test_season_of_and_completion():
+    assert cfb.season_of(datetime.date(2025, 1, 10)) == 2024
+    assert cfb.season_of(datetime.date(2025, 9, 1)) == 2025
+    assert cfb.season_complete(2024, datetime.datetime(2025, 3, 1))
+    assert not cfb.season_complete(2024, datetime.datetime(2025, 1, 20))
 
 
 def test_playoff_marks(games):
@@ -222,17 +238,23 @@ def test_team_metadata():
     from sportsml.cfb.data.teams import teams_frame
     from sportsml.web.views import TEAM_COLUMNS
 
-    teams = teams_frame(
+    info = pd.DataFrame(
         [
             {"school": "Air Force", "mascot": "Falcons", "abbreviation": "AF",
              "conference": "Mountain West", "division": None,
-             "color": "#003594", "alternateColor": "ffffff",
-             "logos": ["https://cdn.collegefootballdata.com/logos/500/2005.png"]},
-            {"school": "Army", "mascot": "Black Knights", "conference": "American",
-             "division": "West", "color": None, "alternateColor": None, "logos": []},
+             "classification": "fbs", "color": "#003594", "alt_color": "ffffff",
+             "logo": "https://cdn.collegefootballdata.com/logos/500/2005.png"},
+            {"school": "Army", "mascot": "Black Knights", "abbreviation": None,
+             "conference": "American", "division": "West", "classification": "fbs",
+             "color": None, "alt_color": None, "logo": None},
+            {"school": "Montana", "mascot": "Grizzlies", "abbreviation": "MONT",
+             "conference": "Big Sky", "division": None, "classification": "fcs",
+             "color": None, "alt_color": None, "logo": None},
         ]
-    ).set_index("team")  # fmt: skip
+    )  # fmt: skip
+    teams = teams_frame(info).set_index("team")
     assert set(TEAM_COLUMNS) <= {"team", *teams.columns}
+    assert "Montana" not in teams.index  # FCS schools are the pooled team
     assert teams.loc["Air Force", "color2"] == "#ffffff"
     assert (teams.loc["Air Force", "abbr"], teams.loc["Army", "abbr"]) == ("AF", "ARMY")
     assert teams.loc["Army", "division"] == "American West"

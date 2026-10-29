@@ -89,22 +89,26 @@ GNN and transformer runs log to MLflow (`sqlite:///mlflow.db`); view them with
 ## College football
 
 ```sh
-export CFBD_API_KEY=...             # free key: collegefootballdata.com
-uv run sportsml cfb download        # CFBD games, box scores, lines -> data/cfb/raw.csv
+uv run sportsml cfb download        # games, box scores, lines -> data/cfb/raw.csv
 uv run sportsml cfb process         #                                -> data/cfb/games.csv
 uv run sportsml cfb fit transformer #                                -> models/cfb/transformer
 uv run sportsml cfb predict --model_dir models/cfb/transformer
 ```
 
-`download` builds the games table from CollegeFootballData's v2 API: the
-schedule (`/games`, so upcoming games are kept and cancelled ones dropped),
-team box scores (`/games/teams`) and betting lines (`/lines`). Each market
-comes from the most preferred book that has it (consensus, DraftKings, ESPN
-Bet, Bovada, ...): `spread_line` (the team's expected margin), `total_line`
-and both moneylines from the same book. CFBD has no spread or over/under
-prices, so those bets are scored at -110. Box scores start in 2004, spreads
-in 2013, totals in 2013 (~88% of games until 2017, all of them since 2019)
-and moneylines in 2021.
+`download` builds the games table from
+[sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data)'s
+release files and ESPN, none of which needs a key or has a request quota:
+the schedule (`cfb_schedules`, a mirror of CollegeFootballData's, so team
+keys are CFBD's school names; upcoming games are kept and cancelled ones
+dropped), ESPN's team box scores (`espn_cfb_team_box`) and betting lines
+from ESPN's odds API (one request per game, every book ESPN lists).
+`spread_line` (the team's expected margin) and `total_line` are the median
+over the books, with the spread and over/under prices of the most preferred
+book quoting that line (DraftKings, ESPN BET, Caesars, ...); both
+moneylines come from the same book. ESPN's own "consensus" is skipped (in
+2014-2016 it is the opening line), as are prediction sites, opening and
+live lines. Box scores start in 2004; lines in 2013 (spreads only), with
+totals, prices and moneylines from 2014.
 
 - **FBS vs FCS.** Only games with an FBS team are kept. FCS and
   lower-division opponents are pooled into one team, `FCS`: a school that
@@ -120,10 +124,11 @@ and moneylines in 2021.
   `regular`, `bowl`, `playoff` or `final`, and `postseason`,
   `conference_game` and rest days (`rest`, `opp_rest`) are context
   features.
-- **API budget.** CFBD's free tier allows 1,000 calls a month and a full
-  download from 2004 takes ~450. Responses of finished seasons and weeks
-  are cached in `data/cfb/cfbd_cache`, so later downloads only fetch the
-  current season's schedule, lines and newest box scores (~6 calls).
+- **Caching.** A full download makes about 12,000 odds requests (~12
+  minutes). Finished seasons' files and finished games' lines are cached
+  in `data/cfb/espn_cache`, so later downloads only fetch the current
+  season's two files and the lines of new and upcoming games (ESPN posts
+  them about a week ahead).
 
 The transformer's CFB defaults differ from the NFL's: a 28-game history
 (about two seasons) and each history game's pre-game Elo of both teams
@@ -131,7 +136,11 @@ The transformer's CFB defaults differ from the NFL's: a 28-game history
 FBS teams than across 32 NFL teams.
 
 Walk-forward backtest, 2021-2025 (4,441 games every family predicted with a
-spread; `brier vs market` is the paired per-game difference, 95% CI):
+spread; `brier vs market` is the paired per-game difference, 95% CI). These
+numbers were measured on CollegeFootballData's data, before the switch to
+sportsdataverse: CFBD's box score had a few more stats (touchdowns by type,
+sacks, tackles for loss, return yards), and its lines had no spread or
+over/under prices.
 
 | Source | RMSE | Accuracy | Brier | Brier vs market | ATS |
 |---|---|---|---|---|---|
@@ -147,8 +156,8 @@ As in the NFL, no model beats the spread (the transformer's picks win
 50.8%, -3.0% ROI at -110). Its total is the one market with a persistent
 edge: over/under picks won 53.2% of 4,516 games (+1.5% ROI at an assumed
 -110; 54.3% and +3.6% on the 2,782 with an edge over 2 points), and over
-2016-2025 the same picks won 52.8% of 8,357. CFBD records no over/under
-prices, so the true juice (and so the real ROI) is unknown. Moneyline
+2016-2025 the same picks won 52.8% of 8,357. CFBD recorded no over/under
+prices, so these were scored at -110; ESPN's lines carry the real prices. Moneyline
 picks (lines from 2021) lose at a small edge and are noisy above one.
 `staking` on the 2016-2025 backtest finds no stake sizing that rescues the
 spread; on the totals, betting edges over 2 points returned +3.7% (95% CI
@@ -500,13 +509,14 @@ request. Two GitHub Actions workflows keep them current:
   frontend and deploys it. A failed run leaves the last deployed site up.
 
 Sportsbook lines come from `sportsml web export --odds '{nfl: oddsapi,
-cfb: cfbd}'`: [The Odds API](https://the-odds-api.com) (`ODDS_API_KEY`;
-every US book, one request per sport and refresh) and CollegeFootballData's
-`/lines` (`CFBD_API_KEY`; several books with opening lines). The Site
+cfb: espn}'`: [The Odds API](https://the-odds-api.com) (`ODDS_API_KEY`;
+every US book, one request per sport and refresh) and ESPN's odds API for
+college football (no key; every book ESPN lists, with opening lines, one
+request per game within 8 days). The Site
 workflow refreshes them about 23 times a week in season, more often on game
 days, which fits The Odds API's free tier (150 requests a month) for the
 NFL; no request is made when no game is within 8 days, and a failed fetch
-keeps the last lines. Add `ODDS_API_KEY` (and `CFBD_API_KEY`) under the
+keeps the last lines. Add `ODDS_API_KEY` under the
 repository's **Settings → Secrets and variables → Actions**; without them
 the site builds as before, without current lines. `odds.json` reports the
 provider's remaining requests. NBA games carry ESPN's lines in the games
@@ -515,11 +525,11 @@ and no key; `--odds '{nba: oddsapi}'` adds every book from The Odds API,
 at about 30 more requests a month per daily refresh.
 
 To set it up: in the repository settings, set **Pages → Source** to
-**GitHub Actions**, add a `CFBD_API_KEY` repository secret (both workflows
-download college football), then run **Train** once from the Actions tab.
-Both workflows keep CFBD's responses of finished seasons, and ESPN's NBA
-files and lines of finished games, in the Actions cache, so a daily Site
-run makes only a handful of CFBD calls and a few dozen ESPN requests. It starts
+**GitHub Actions**, then run **Train** once from the Actions tab (no key is
+needed beyond the optional `ODDS_API_KEY`). Both workflows keep the CFB and
+NBA files of finished seasons and the lines of finished games in the
+Actions cache, so a daily Site run makes a few dozen to a hundred ESPN
+requests. It starts
 **Site** when it finishes.
 
 Locally:
@@ -553,7 +563,7 @@ many upcoming dates are exported (`upcoming_dates`).
 | Sport | Command | Source | Credentials |
 |---|---|---|---|
 | NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
-| College football | `cfb` | [CollegeFootballData](https://collegefootballdata.com) | `CFBD_API_KEY` |
+| College football | `cfb` | [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) (CFBD's schedule, ESPN's box scores) and ESPN's odds API | none |
 | NBA | `nba` | ESPN via [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) and ESPN's odds API | none |
 | Men's college basketball | `cbb` | ESPN via sportsdataverse and ESPN's odds API | none |
 | Women's college basketball | `wcbb` | ESPN via sportsdataverse and ESPN's odds API | none |

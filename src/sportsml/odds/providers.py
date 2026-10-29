@@ -11,22 +11,22 @@ are NaN.
 
 * :class:`OddsAPI`: https://the-odds-api.com (``ODDS_API_KEY``), every book
   in a region, one request per sport and refresh.
-* :class:`CFBD`: https://collegefootballdata.com (``CFBD_API_KEY``), college
-  football lines from several books, opening lines included.
+* :class:`ESPN`: ESPN's odds API (no key), college football lines from
+  every book ESPN lists, opening lines included.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime
 import logging
 import os
-import re
 from collections.abc import Callable
 
 import httpx
-import numpy as np
 import pandas as pd
 
+from ..cfb.data import download as cfb
 from ..cfb.data.download import FCS
 
 logger = logging.getLogger(__name__)
@@ -144,115 +144,92 @@ class OddsAPI(Provider):
         return _frame(rows)
 
 
-class CFBD(Provider):
-    """College football lines from CollegeFootballData's ``/lines``: one
-    request per season week, several books per game, with opening lines.
-    CFBD has no prices on spreads and totals (they are left NaN; the site
-    assumes -110). Team keys are CFBD's team names, as in the CFB games
-    table, and :data:`~sportsml.cfb.data.download.FCS` for an FCS side.
+class ESPN(Provider):
+    """College football lines from ESPN's odds API: every book's line on the
+    FBS games kicking off within ``days``, one request per game (no key, no
+    quota). The games come from sportsdataverse's schedule, so team keys are
+    the CFB games table's school names, and
+    :data:`~sportsml.cfb.data.download.FCS` for an FCS side. Opening lines
+    are each book's own.
 
     Args:
-        year / week / season_type: The week to fetch (default: the season
-            and week containing today, from ``/calendar``).
-        api_key: Default ``CFBD_API_KEY``.
-        get: ``get(url, params, headers) -> (json, headers)``; tests pass a
-            fake.
+        days: Lookahead from now.
+        schedule: The season's sportsdataverse schedule (default:
+            downloaded); tests pass a frame.
+        odds: ``odds(game_id) -> ESPN odds items`` (default: the API).
     """
 
-    name = "cfbd"
-    host = "https://api.collegefootballdata.com"
+    name = "espn"
 
     def __init__(
         self,
-        year: int | None = None,
-        week: int | None = None,
-        season_type: str | None = None,
-        api_key: str | None = None,
-        get: Callable | None = None,
-        today: datetime.date | None = None,
+        days: int = 8,
+        schedule: pd.DataFrame | None = None,
+        odds: Callable | None = None,
+        today: datetime.datetime | None = None,
     ):
-        self.year, self.week, self.season_type = year, week, season_type
-        self.api_key = api_key or os.getenv("CFBD_API_KEY")
-        self._get = get or _http_get
+        self.days = days
+        self.schedule = schedule
+        self._odds = odds or cfb.odds_items
         self.today = today
 
-    def _call(self, path: str, params: dict):
-        data, headers = self._get(
-            f"{self.host}/{path}",
-            params,
-            {"Authorization": f"Bearer {self.api_key}"},
+    def games(self) -> pd.DataFrame:
+        """The FBS games kicking off within ``days`` (or started in the last
+        few hours)."""
+        now = pd.Timestamp(self.today or datetime.datetime.now(datetime.timezone.utc))
+        schedule = self.schedule
+        if schedule is None:
+            season = cfb.season_of(now.date())
+            url = cfb.SCHEDULE_URL.format(season=season)
+            schedule = cfb.season_file(url, "", final=False, cache=cfb.Cache(None))
+        games = cfb.schedule_frame(schedule)
+        if games.empty:
+            return games
+        soon = games["start"].between(
+            now - pd.Timedelta(hours=4), now + pd.Timedelta(days=self.days)
         )
-        remaining = headers.get("x-calllimit-remaining")
-        if remaining is not None:
-            self.remaining = int(float(remaining))
-        return data
-
-    def current_week(self) -> tuple[int, int, str]:
-        """The season, week and season type of the next games, from the
-        calendar: the first week that has not ended yet."""
-        today = self.today or datetime.datetime.now(datetime.timezone.utc).date()
-        year = today.year if today.month >= 3 else today.year - 1
-        weeks = self._call("calendar", {"year": year})
-        for week in sorted(
-            weeks, key=lambda w: w.get("endDate") or w.get("lastGameStart")
-        ):
-            end = (week.get("endDate") or week.get("lastGameStart") or "")[:10]
-            if end and datetime.date.fromisoformat(end) >= today:
-                return year, int(week["week"]), week.get("seasonType", "regular")
-        raise LookupError(f"no college football weeks left in {year}")
+        return games[cfb.fbs(games) & ~games["completed"] & soon]
 
     def fetch(self) -> pd.DataFrame:
-        if not self.api_key:
-            raise RuntimeError("set CFBD_API_KEY to fetch college football lines")
-        year, week, season_type = self.year, self.week, self.season_type
-        if year is None or week is None:
-            year, week, season_type = self.current_week()
-        params = {"year": year, "week": week, "seasonType": season_type or "regular"}
+        games = self.games()
+        ids = list(games["id"]) if len(games) else []
+        with concurrent.futures.ThreadPoolExecutor(8) as pool:
+            items = dict(zip(ids, pool.map(self._odds, ids)))
         rows = []
-        for game in self._call("lines", params):
-            home, away = game["homeTeam"], game["awayTeam"]
+        for game in games.itertuples():
             # FCS opponents are one pooled team in the games table
-            if game.get("homeClassification") not in (None, "fbs"):
-                home = FCS
-            if game.get("awayClassification") not in (None, "fbs"):
-                away = FCS
-            for line in game.get("lines", []):
+            home = game.home_team if game.home_classification == "fbs" else FCS
+            away = game.away_team if game.away_classification == "fbs" else FCS
+            for item in items[game.id]:
+                book = (item.get("provider") or {}).get("name") or ""
+                if not book or book in cfb.NOT_BOOKS or "live" in book.lower():
+                    continue
+                home_odds = item.get("homeTeamOdds") or {}
+                away_odds = item.get("awayTeamOdds") or {}
+                opening = (home_odds.get("open") or {}).get("pointSpread") or {}
+                total_open = ((item.get("open") or {}).get("total") or {}).get(
+                    "american"
+                )
                 rows.append(
                     {
-                        "book": line.get("provider"),
+                        "book": book,
                         "home": home,
                         "away": away,
-                        "commence": game.get("startDate"),
-                        "spread": cfbd_spread(line, home, away, "spread"),
-                        "spread_open": cfbd_spread(line, home, away, "spreadOpen"),
-                        "ml_home": line.get("homeMoneyline"),
-                        "ml_away": line.get("awayMoneyline"),
-                        "total": line.get("overUnder"),
-                        "total_open": line.get("overUnderOpen"),
+                        "commence": game.start_date,
+                        # ESPN's spread is the home handicap: -3 is home by 3
+                        "spread": -cfb._number(item.get("spread")),
+                        "spread_home_odds": home_odds.get("spreadOdds"),
+                        "spread_away_odds": away_odds.get("spreadOdds"),
+                        "ml_home": cfb._moneyline(home_odds.get("moneyLine")),
+                        "ml_away": cfb._moneyline(away_odds.get("moneyLine")),
+                        "total": item.get("overUnder") or None,
+                        "over_odds": item.get("overOdds"),
+                        "under_odds": item.get("underOdds"),
+                        "spread_open": -cfb._number(opening.get("american")),
+                        "total_open": cfb._number(total_open),
                     }
                 )
         return _frame(rows)
-
-
-def cfbd_spread(line: dict, home: str, away: str, key: str) -> float:
-    """The home team's expected margin from a CFBD line.
-
-    CFBD's ``spread`` is the home handicap (negative: home favored); its
-    ``formattedSpread`` ("Georgia -21.5") names the favorite and settles the
-    sign when present.
-    """
-    value = line.get(key)
-    if value is None:
-        return np.nan
-    margin = -float(value)
-    match = re.match(r"^(.*)\s(-?\d+(?:\.\d+)?)$", line.get("formattedSpread") or "")
-    if match and key == "spread":
-        favorite, points = match.group(1).strip(), abs(float(match.group(2)))
-        if favorite == home:
-            margin = points
-        elif favorite == away:
-            margin = -points
-    return margin
 
 
 def _frame(rows: list[dict]) -> pd.DataFrame:
@@ -270,10 +247,12 @@ def _http_get(url: str, params: dict, headers: dict | None = None):
 
 
 def provider_for(sport: str, name: str) -> Provider:
-    """A sport's provider by name (``oddsapi`` or ``cfbd``), with the sport's
-    sportsbook team-name map where it has one."""
-    if name == "cfbd":
-        return CFBD()
+    """A sport's provider by name (``oddsapi``, or ``espn`` for college
+    football), with the sport's sportsbook team-name map where it has one."""
+    if name == "espn":
+        if sport != "cfb":
+            raise ValueError("the espn odds provider is college football's")
+        return ESPN()
     if name == "oddsapi":
         names = {}
         try:
@@ -283,4 +262,4 @@ def provider_for(sport: str, name: str) -> Provider:
         except (ImportError, AttributeError):
             logger.info("no odds_map for %s: keeping sportsbook team names", sport)
         return OddsAPI(sport, names=names)
-    raise ValueError(f"unknown odds provider {name!r} (oddsapi, cfbd)")
+    raise ValueError(f"unknown odds provider {name!r} (oddsapi, espn)")

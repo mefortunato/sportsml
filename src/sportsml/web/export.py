@@ -45,6 +45,27 @@ def download_games(sport: str) -> pd.DataFrame:
     return process(sport, get_sport(sport).download())
 
 
+def refresh_snapshots(snapshots: dict[str, Snapshot]) -> dict[str, Snapshot]:
+    """Each snapshot with freshly downloaded games.
+
+    A sport whose download fails (e.g. its API's rate limit) keeps its
+    snapshot as built, so one source cannot hold back the other sports;
+    the export fails only when every download does.
+    """
+    fresh, errors = {}, []
+    for sport, snap in snapshots.items():
+        try:
+            fresh[sport] = snap.refreshed(download_games(sport))
+        except Exception as error:
+            # a GitHub Actions annotation, plain text elsewhere
+            print(f"::warning::{sport} refresh failed, keeping the built data: {error}")
+            errors.append(error)
+            fresh[sport] = snap
+    if errors and len(errors) == len(snapshots):
+        raise errors[0]
+    return fresh
+
+
 def load_snapshots(data_dir: str | pathlib.Path) -> dict[str, Snapshot]:
     """One snapshot per sport subdirectory of ``data_dir``."""
     snapshots = {}
@@ -120,8 +141,8 @@ def export(
             refreshed with the saved model; nothing is retrained). A failed
             download fails the export, so the last published site stays.
         odds: Fetch current lines per sport from a provider, e.g.
-            ``{nfl: oddsapi, cfb: cfbd}`` (keys ``ODDS_API_KEY`` /
-            ``CFBD_API_KEY``). Skipped when no game kicks off within 8
+            ``{nfl: oddsapi, cfb: espn}`` (The Odds API needs
+            ``ODDS_API_KEY``; ESPN no key). Skipped when no game kicks off within 8
             days; a failed fetch keeps the previous lines and does not fail
             the export.
         odds_history: The previous ``data/`` (a directory or the deployed
@@ -129,10 +150,7 @@ def export(
     """
     snapshots = load_snapshots(data_dir)
     if refresh:
-        snapshots = {
-            sport: snap.refreshed(download_games(sport))
-            for sport, snap in snapshots.items()
-        }
+        snapshots = refresh_snapshots(snapshots)
     out = pathlib.Path(output_dir) / "data"
     out.mkdir(parents=True, exist_ok=True)
     (out / "sports.json").write_text(

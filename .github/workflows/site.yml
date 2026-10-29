@@ -8,14 +8,12 @@
 # secret; no game within 8 days: no request). The schedule fits the free
 # tier's 150 requests a month for the NFL: about 23 runs a week in season,
 # more on game days (times in UTC, before each Eastern kickoff window).
-# College football results and lines come from CollegeFootballData
-# (CFBD_API_KEY secret; ~3-4 calls a run with finished seasons cached, well
-# within its free tier's 1,000 a month). NBA results come from
-# sportsdataverse's ESPN files (refreshed ~11:45 UTC, so every day has a run
-# after last night's games are in) and its lines from ESPN, a few dozen
-# requests a run; so do men's and women's college basketball and the WNBA.
-# NHL and MLB results come from the leagues' own stats APIs and their lines
-# from ESPN.
+# College football and NBA results come from sportsdataverse's files (no
+# key; NBA's refreshed ~11:45 UTC, so every day has a run after last night's
+# games are in) and their lines from ESPN's odds API (no key, no quota), a
+# few dozen to a hundred requests a run; so do men's and women's college
+# basketball and the WNBA. NHL and MLB results come from the leagues' own
+# stats APIs and their lines from ESPN.
 name: Site
 
 on:
@@ -70,13 +68,14 @@ jobs:
             sleep 30
           done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
-      - name: Cache CollegeFootballData responses
+      - name: Cache CFB files and lines
         uses: actions/cache@v4
         with:
-          # finished seasons and weeks; CFBD's free tier is 1,000 calls a month
-          path: data/cfb/cfbd_cache
-          key: cfbd-${{ github.run_id }}
-          restore-keys: cfbd-
+          # finished seasons' schedules and box scores, finished games' lines
+          # (a download without it makes ~12,000 odds requests)
+          path: data/cfb/espn_cache
+          key: espn-cfb-${{ github.run_id }}
+          restore-keys: espn-cfb-
       - name: Cache ESPN NBA files and lines
         uses: actions/cache@v4
         with:
@@ -103,10 +102,9 @@ jobs:
       - name: Export fresh data and lines
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: >
           uv run sportsml web export --data_dir webdata --output_dir web/static
-          --refresh true --odds "{nfl: oddsapi, cfb: cfbd}"
+          --refresh true --odds "{nfl: oddsapi, cfb: espn}"
           --odds_history "${{ steps.pages.outputs.base_url }}/data"
       - uses: actions/setup-node@v6
         with:

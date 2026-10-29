@@ -1,47 +1,44 @@
 from ...core.schema import GameSchema
 
+# ESPN's team box score (every FBS game since 2004)
 STATS_COLUMNS = [
     "points",
-    "rushingTDs",
-    "passingTDs",
-    "kickReturnYards",
-    "kickReturnTDs",
-    "kickReturns",
-    "kickingPoints",
-    "interceptionYards",
-    "interceptionTDs",
-    "passesIntercepted",
-    "fumblesRecovered",
-    "totalFumbles",
-    "possessionTime",
-    "interceptions",
-    "fumblesLost",
-    "turnovers",
-    "yardsPerRushAttempt",
-    "rushingAttempts",
-    "rushingYards",
-    "yardsPerPass",
-    "netPassingYards",
-    "totalYards",
     "firstDowns",
-    "totalPenalties",
-    "totalPenaltiesYards",
+    "totalYards",
+    "netPassingYards",
     "passingCompletions",
     "passingAttempts",
-    "fourthDownAtt",
-    "fourthDownConv",
-    "thirdDownAtt",
+    "yardsPerPass",
+    "rushingYards",
+    "rushingAttempts",
+    "yardsPerRushAttempt",
     "thirdDownConv",
-    "sacks",
-    "tacklesForLoss",
+    "thirdDownAtt",
+    "fourthDownConv",
+    "fourthDownAtt",
+    "totalPenalties",
+    "totalPenaltiesYards",
+    "turnovers",
+    "fumblesLost",
+    "interceptions",
+    "possessionTime",
 ]
 
 OPP_STATS_COLUMNS = [f"opp_{col}" for col in STATS_COLUMNS]
 
-# The betting market from CFBD's /lines (no spread or over/under prices).
-# Lines for upcoming games are as of the last download; like the NFL's they
+# The betting market from ESPN's odds API. Lines for upcoming games are as of
+# the last download (ESPN posts them about a week ahead); like the NFL's they
 # are not default features.
-MARKET_COLUMNS = ["spread_line", "total_line", "moneyline", "opp_moneyline"]
+MARKET_COLUMNS = [
+    "spread_line",
+    "total_line",
+    "moneyline",
+    "opp_moneyline",
+    "over_odds",
+    "under_odds",
+    "spread_odds",
+    "opp_spread_odds",
+]
 
 SCHEMA = GameSchema(
     season="season",
@@ -61,6 +58,7 @@ SCHEMA = GameSchema(
         ("conference", "opp_conference"),
         ("rest", "opp_rest"),
         ("moneyline", "opp_moneyline"),
+        ("spread_odds", "opp_spread_odds"),
     ),
     negated=("spread_line",),
     team_name="team_name",
@@ -70,4 +68,5 @@ SCHEMA = GameSchema(
     market_moneyline=("moneyline", "opp_moneyline"),
     total="total",
     market_total="total_line",
+    market_total_odds=("over_odds", "under_odds"),
 )

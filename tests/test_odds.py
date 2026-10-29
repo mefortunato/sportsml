@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from sportsml.nfl.data.names import odds_map
-from sportsml.odds.providers import CFBD, OddsAPI
+from sportsml.odds.providers import ESPN, OddsAPI
 from sportsml.web.odds import build_odds, load_previous, match_games, refresh_odds
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -52,34 +52,69 @@ def test_odds_api_lines_from_the_home_side(monkeypatch):
         OddsAPI("nfl", api_key="", get=fake_get("oddsapi_nfl.json")).fetch()
 
 
-def test_cfbd_lines_read_the_favorite_from_the_formatted_spread():
-    get = fake_get("cfbd_lines.json", {"x-calllimit-remaining": "990"})
-    provider = CFBD(year=2024, week=10, api_key="k", get=get)
-    lines = provider.fetch().set_index(["home", "book"])
-    assert provider.remaining == 990
-    assert get.calls[0][1] == {"year": 2024, "week": 10, "seasonType": "regular"}
-    uga = lines.loc[("Georgia", "DraftKings")]
-    assert (uga.spread, uga.spread_open, uga.total, uga.total_open) == (
-        14.5,
-        13.5,
-        50.5,
-        49.5,
-    )
-    assert pd.isna(uga.spread_home_odds)  # CFBD has no spread prices
-    # the home team as the underdog: Iowa State -3.5 at Texas Tech
-    assert lines.loc[("Texas Tech", "DraftKings"), "spread"] == -3.5
-    assert pd.isna(lines.loc[("Georgia", "ESPN Bet"), "ml_home"])
+def espn_provider(**kw):
+    from .cfb_fixtures import ODDS, SCHEDULE, item
+
+    odds = ODDS | {
+        "11": [
+            item("DraftKings", -3.0, 52.5, -150, 130, home_price=-105,
+                 away_price=-115, over=-110, under=-110,
+                 home_open={"pointSpread": {"american": "-2.5"}},
+                 open={"total": {"american": "51.5"}}),
+            item("Opening", -1.0, 50.0),
+            item("DraftKings - Live Odds", 7.0, 70.5),
+        ]
+    }  # fmt: skip
+    calls = []
+
+    def get(game_id):
+        calls.append(game_id)
+        return odds.get(game_id, [])
+
+    today = datetime.datetime(2099, 12, 28, tzinfo=datetime.timezone.utc)
+    provider = ESPN(schedule=SCHEDULE, odds=get, today=today, **kw)
+    return provider, calls
 
 
-def test_cfbd_finds_the_coming_week_from_the_calendar():
-    calendar = [
-        {"week": 9, "seasonType": "regular", "endDate": "2024-10-28T07:00:00.000Z"},
-        {"week": 10, "seasonType": "regular", "endDate": "2024-11-04T07:00:00.000Z"},
-    ]
-    provider = CFBD(
-        api_key="k", get=lambda *a: (calendar, {}), today=datetime.date(2024, 10, 30)
+def test_espn_lines_of_the_coming_games_from_the_home_side():
+    provider, calls = espn_provider()
+    lines = provider.fetch()
+    assert calls == ["11"]  # only the upcoming FBS game within 8 days
+    assert lines["book"].tolist() == ["DraftKings"]  # no opening or live lines
+    dk = lines.iloc[0]
+    assert (dk.home, dk.away, dk.spread, dk.spread_open) == (
+        "Georgia",
+        "Auburn",
+        3.0,
+        2.5,
     )
-    assert provider.current_week() == (2024, 10, "regular")
+    assert (dk.spread_home_odds, dk.spread_away_odds, dk.ml_home, dk.ml_away) == (
+        -105,
+        -115,
+        -150,
+        130,
+    )
+    assert (dk.total, dk.total_open, dk.over_odds) == (52.5, 51.5, -110)
+    assert dk.commence == pd.Timestamp("2099-12-31T20:00Z")
+    provider, calls = espn_provider(days=2)
+    assert provider.fetch().empty and calls == []
+
+
+def test_espn_pools_fcs_sides_like_the_games_table():
+    from .cfb_fixtures import SCHEDULE, item
+
+    game = SCHEDULE.iloc[[0]].assign(
+        completed=False, home_points=None, away_points=None,
+        start_date="2024-11-23T19:00:00.000Z",
+    )  # fmt: skip
+    provider = ESPN(
+        schedule=game,
+        odds=lambda gid: [item("DraftKings", -40.5, 55.5)],
+        today=datetime.datetime(2024, 11, 20, tzinfo=datetime.timezone.utc),
+    )
+    lines = provider.fetch()
+    assert list(lines[["home", "away"]].iloc[0]) == ["Alabama", "FCS"]
+    assert lines["spread"].iloc[0] == 40.5
 
 
 def card(game_id, home, away, kickoff):
@@ -214,18 +249,3 @@ def webdata_for_odds(tmp_path_factory):
         max_epochs=1,
     )
     return out
-
-
-def test_cfbd_pools_fcs_sides_like_the_games_table():
-    game = {
-        "homeTeam": "Alabama",
-        "homeClassification": "fbs",
-        "awayTeam": "Mercer",
-        "awayClassification": "fcs",
-        "startDate": "2024-11-23T19:00:00.000Z",
-        "lines": [{"provider": "DraftKings", "spread": -40.5, "overUnder": 55.5}],
-    }
-    provider = CFBD(year=2024, week=13, api_key="k", get=lambda *a: ([game], {}))
-    lines = provider.fetch()
-    assert list(lines[["home", "away"]].iloc[0]) == ["Alabama", "FCS"]
-    assert lines["spread"].iloc[0] == 40.5

@@ -74,7 +74,6 @@ VIEW = SportView(
         Stat("third_down_pct", "Third-down conversion %", third_down_pct, 0),
         Stat("turnovers", "Turnovers", column("turnovers"), 1, False),
         Stat("takeaways", "Takeaways", column("opp_turnovers")),
-        Stat("sacks", "Sacks", column("sacks")),
         Stat("penalty_yards", "Penalty yards", column("totalPenaltiesYards"), 0, False),
     ),
 )

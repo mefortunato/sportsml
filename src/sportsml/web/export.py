@@ -141,8 +141,8 @@ def export(
             refreshed with the saved model; nothing is retrained). A failed
             download fails the export, so the last published site stays.
         odds: Fetch current lines per sport from a provider, e.g.
-            ``{nfl: oddsapi, cfb: cfbd}`` (keys ``ODDS_API_KEY`` /
-            ``CFBD_API_KEY``). Skipped when no game kicks off within 8
+            ``{nfl: oddsapi, cfb: espn}`` (The Odds API needs
+            ``ODDS_API_KEY``; ESPN no key). Skipped when no game kicks off within 8
             days; a failed fetch keeps the previous lines and does not fail
             the export.
         odds_history: The previous ``data/`` (a directory or the deployed

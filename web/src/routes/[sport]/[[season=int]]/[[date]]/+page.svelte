@@ -43,9 +43,14 @@
 				{#if upcoming.season}<span class="muted">{seasonText(upcoming.season, info.split_season)}</span>{/if}
 			</h1>
 			<p class="muted small legend">
-				<span class="key vegas"></span> Vegas line
-				<span class="key model"></span> model's predicted margin
-				<span class="key edge"></span> where they disagree · right of center favors the home team
+				{#if info.has_spread}
+					<span class="key vegas"></span> Vegas line
+					<span class="key model"></span> model's predicted margin
+					<span class="key edge"></span> where they disagree · right of center favors the home team
+				{:else}
+					<span class="key model"></span> model's predicted margin · right of center favors the home
+					team
+				{/if}
 			</p>
 		</div>
 		{#if upcoming.dates.length > 1}
@@ -88,7 +93,12 @@
 		{/if}
 		<div class="games">
 			{#each games as game (game.game_id)}
-				<GameCard {game} sport={info.sport} odds={gameOdds(data.odds, game.game_id)} />
+				<GameCard
+					{game}
+					sport={info.sport}
+					odds={gameOdds(data.odds, game.game_id)}
+					hasSpread={info.has_spread}
+				/>
 			{/each}
 		</div>
 	{/if}

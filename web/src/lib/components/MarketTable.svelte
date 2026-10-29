@@ -4,12 +4,27 @@
 	import type { GameHeader, GameResult, Prediction, Side } from '$lib/types';
 
 	// One row per market: the line, the model's number, its pick and, once
-	// played, how the market finished.
+	// played, how the market finished. Sports without a point spread (hockey,
+	// baseball) have no spread row.
 	let {
 		game,
 		prediction,
-		result = null
-	}: { game: GameHeader; prediction: Prediction | null; result?: GameResult | null } = $props();
+		result = null,
+		hasSpread = true
+	}: {
+		game: GameHeader;
+		prediction: Prediction | null;
+		result?: GameResult | null;
+		hasSpread?: boolean;
+	} = $props();
+
+	interface Row {
+		market: string;
+		vegas: string;
+		model: string;
+		pick: string;
+		result: string | null;
+	}
 
 	const team = (side: Side) => (side === 'home' ? game.home : game.away);
 	// the moneyline favorite by the market (home on a pick'em)
@@ -25,8 +40,9 @@
 		const fav = favorite;
 		const vegasFav = prob(p?.market_prob, fav);
 		const modelFav = prob(p?.win_prob, fav);
-		const out = [
-			{
+		const out: Row[] = [];
+		if (hasSpread) {
+			out.push({
 				market: 'Spread',
 				vegas: spreadLabel(game.home, game.away, game.spread),
 				model: p ? marginLabel(game.home, game.away, p.margin) : '—',
@@ -41,8 +57,8 @@
 							? `${team(result.covered).team} covered`
 							: '—'
 					: null
-			}
-		];
+			});
+		}
 		if (ml) {
 			out.push({
 				market: 'Moneyline',

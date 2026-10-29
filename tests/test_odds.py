@@ -2,6 +2,7 @@ import datetime
 import json
 import pathlib
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -140,6 +141,34 @@ def test_lines_match_the_nearest_game_and_flip_to_its_home_side():
     assert set(matched.game_id) == {"2024_09_BUF_KC", "2024_09_DAL_ATL"}
     atl = matched[matched.game_id == "2024_09_DAL_ATL"].iloc[0]
     assert (atl.home, atl.ml_home, atl.ml_away) == ("DAL", -150, 130)  # flipped prices
+
+
+def test_lines_match_on_display_names_without_a_name_map():
+    """College basketball: sportsbooks name schools "Duke Blue Devils"."""
+    lines = pd.DataFrame(
+        [{"home": "North Carolina Tar Heels", "away": "Duke Blue Devils",
+          "commence": pd.Timestamp("2026-03-07T23:30Z"), "spread": -2.5,
+          "spread_open": np.nan, "spread_home_odds": -110, "spread_away_odds": -110,
+          "ml_home": -140, "ml_away": 120}]
+    )  # fmt: skip
+    cards = [
+        {"game_id": "1", "kickoff": "2026-03-07 18:30",
+         "home": {"team": "Duke", "name": "Duke Blue Devils"},
+         "away": {"team": "North Carolina", "name": "North Carolina Tar Heels"}}
+    ]  # fmt: skip
+    row = match_games(lines, cards).iloc[0]
+    assert (row.game_id, row.spread, row.ml_home, row.ml_away) == ("1", 2.5, 120, -140)
+
+
+def test_hockey_and_baseball_request_no_spreads():
+    get = fake_get("oddsapi_nfl.json")
+    OddsAPI("nhl", api_key="k", get=get).fetch()
+    OddsAPI("nba", api_key="k", get=get).fetch()
+    assert get.calls[0][0].endswith("/sports/icehockey_nhl/odds")
+    assert [params["markets"] for _, params in get.calls] == [
+        "h2h,totals",
+        "h2h,spreads,totals",
+    ]
 
 
 def test_odds_payload_has_consensus_best_prices_and_history():

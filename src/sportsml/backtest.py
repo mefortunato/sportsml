@@ -9,7 +9,10 @@ Where the sport's schema names market columns, the market's spread and
 moneylines are scored on the same games, and the model's disagreements with
 the market are scored as bets against it: against the spread, on the
 moneyline (at the posted odds) and, for models that predict the total, on
-the over/under.
+the over/under. Sports without a point spread (hockey's puck line and
+baseball's run line are fixed handicaps priced like moneylines) are scored
+against the moneylines alone, and the market's margin is the one its win
+probability implies (:func:`implied_sigma`).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import scipy.stats
 import sklearn.base
 
 from .core.io import Table, read_table
@@ -188,6 +192,40 @@ def payout(odds) -> np.ndarray:
         return np.where(odds > 0, odds / 100, 100 / -odds)
 
 
+def has_market(schema: GameSchema) -> bool:
+    """Whether the schema names a market to score against (a spread or
+    moneylines)."""
+    return bool(schema.market_spread or schema.market_moneyline)
+
+
+def implied_sigma(y, prob) -> float:
+    """Residual spread ``s`` of margins around the ones win probabilities
+    imply, ``s * z`` with ``z = Phi^-1(prob)``: the ``s`` whose implied
+    margins leave residuals of spread ``s`` (``mean((y - s z)^2) = s^2``)."""
+    y = np.asarray(y, dtype=float)
+    z = scipy.stats.norm.ppf(np.clip(np.asarray(prob, dtype=float), 1e-6, 1 - 1e-6))
+    ok = np.isfinite(y) & np.isfinite(z)
+    y, z = y[ok], z[ok]
+    if not len(y):
+        return np.nan
+    a, b, c = 1 - np.mean(z**2), 2 * np.mean(y * z), -np.mean(y**2)
+    if a <= 0:
+        return float(np.sqrt(-c))
+    return float((-b + np.sqrt(b * b - 4 * a * c)) / (2 * a))
+
+
+def market_sigma(history: pd.DataFrame, schema: GameSchema) -> float:
+    """Residual spread of results around the market's margin, from earlier
+    seasons' lined games: around the spread where there is one, else around
+    the margin the moneylines imply (:func:`implied_sigma`)."""
+    if schema.market_spread:
+        lined = history.dropna(subset=[schema.market_spread])
+        return fit_sigma(lined[schema.target], lined[schema.market_spread])
+    team, opp = (history[col] for col in schema.market_moneyline)
+    sigma = implied_sigma(history[schema.target], no_vig_probability(team, opp))
+    return sigma if np.isfinite(sigma) else float(history[schema.target].std())
+
+
 def market_predictions(
     rows: pd.DataFrame, schema: GameSchema, sigma: float
 ) -> pd.DataFrame:
@@ -196,14 +234,21 @@ def market_predictions(
 
     Probabilities come from the moneylines where both exist, else from the
     spread with residual spread ``sigma``; the over probability comes from
-    the no-vig over/under odds.
+    the no-vig over/under odds. Without a spread the margin is the one the
+    moneylines imply with residual spread ``sigma``.
     """
-    margin = rows[schema.market_spread].astype(float)
-    prob = win_probability(margin, sigma)
+    if schema.market_spread:
+        margin = rows[schema.market_spread].astype(float)
+        prob = win_probability(margin, sigma)
+    else:
+        margin = prob = np.full(len(rows), np.nan)
     if schema.market_moneyline:
         team, opp = (rows[col] for col in schema.market_moneyline)
         no_vig = no_vig_probability(team, opp)
         prob = np.where(np.isfinite(no_vig), no_vig, prob)
+    if not schema.market_spread:
+        z = scipy.stats.norm.ppf(np.clip(prob, 1e-6, 1 - 1e-6))
+        margin = sigma * z
     out = pd.DataFrame({"market_margin": margin, "market_prob": prob}, index=rows.index)
     odds = schema.market_total_odds
     if odds and all(col in rows for col in odds):
@@ -252,9 +297,8 @@ def walk_forward(
                 season_preds.append(predictor.predict(day[has_state]))
         season_preds = pd.concat(season_preds, ignore_index=True)
 
-        if schema.market_spread:
-            lined = history.dropna(subset=[schema.market_spread])
-            sigma = fit_sigma(lined[schema.target], lined[schema.market_spread])
+        if has_market(schema):
+            sigma = market_sigma(history, schema)
             market = market_predictions(season_preds, schema, sigma)
             season_preds = pd.concat([season_preds, market], axis=1)
         out.append(season_preds)
@@ -448,8 +492,9 @@ def summarize(results: pd.DataFrame, schema: GameSchema, early_dates: int = 4):
         "by_phase": {p: score(f) for p, f in results.groupby(phase)},
     }
     if "market" in sources:
-        summary["ats"] = ats_record(results, schema).to_dict("records")
-        summary["edge_correlation"] = edge_correlation(results, schema)
+        if schema.market_spread:
+            summary["ats"] = ats_record(results, schema).to_dict("records")
+            summary["edge_correlation"] = edge_correlation(results, schema)
         if schema.market_moneyline and set(schema.market_moneyline) <= set(results):
             summary["moneyline"] = moneyline_record(results, schema).to_dict("records")
         totals = totals_summary(results, schema)
@@ -624,10 +669,11 @@ def compare(
                 "brier_vs_market": float(diff.mean()),
                 "brier_vs_market_ci95": float(half),
             }
-            one = games.assign(pred_margin=margin)
-            ats = ats_record(one, schema, thresholds=(0,)).iloc[0]
-            row["ats_win_pct"] = float(ats["win_pct"])
-            row["edge_corr"] = edge_correlation(one, schema)["r"]
+            if schema.market_spread:
+                one = games.assign(pred_margin=margin)
+                ats = ats_record(one, schema, thresholds=(0,)).iloc[0]
+                row["ats_win_pct"] = float(ats["win_pct"])
+                row["edge_corr"] = edge_correlation(one, schema)["r"]
         rows.append(row)
     table = pd.DataFrame(rows).set_index("source").sort_values("brier")
     table["n"] = table["n"].astype(int)

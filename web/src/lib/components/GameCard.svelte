@@ -11,8 +11,9 @@
 	let {
 		game: built,
 		sport,
-		odds = null
-	}: { game: UpcomingGame; sport: string; odds?: GameOdds | null } = $props();
+		odds = null,
+		hasSpread = true
+	}: { game: UpcomingGame; sport: string; odds?: GameOdds | null; hasSpread?: boolean } = $props();
 
 	// current sportsbook lines, when the site has them, replace the ones it
 	// was built with; the picks follow the lines
@@ -41,7 +42,7 @@
 
 	<WinProbBar home={game.home} away={game.away} probability={prediction.win_prob} />
 
-	<MarketTable {game} {prediction} />
+	<MarketTable {game} {prediction} {hasSpread} />
 
 	{#if odds}
 		<div class="lines muted small">

@@ -3,6 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.stats
 import sklearn.linear_model
 
 from sportsml.backtest import (
@@ -15,7 +16,7 @@ from sportsml.backtest import (
 )
 from sportsml.cli import run
 
-from .conftest import TOY_SCHEMA
+from .conftest import TOY_SCHEMA, make_games
 
 
 def test_walk_forward_only_sees_the_past(toy_games):
@@ -199,3 +200,41 @@ def test_benchmark_compares_families_on_common_games(toy_games, tmp_path):
     for name in ("benchmark.csv", "benchmark.json", "benchmark_games.csv"):
         assert (tmp_path / name).exists()
     assert {"elo_margin", "transformer_prob"} <= set(out["games"])
+
+
+def test_implied_sigma_recovers_the_residual_spread():
+    from sportsml.backtest import implied_sigma
+
+    rng = np.random.default_rng(0)
+    mu = rng.normal(0, 1.0, 20000)
+    y = mu + rng.normal(0, 2.5, len(mu))
+    prob = scipy.stats.norm.cdf(mu / 2.5)
+    assert implied_sigma(y, prob) == pytest.approx(2.5, rel=0.03)
+
+
+def test_moneyline_only_markets_are_scored_without_a_spread(toy_games, monkeypatch):
+    """Hockey and baseball: no point spread, the market is its moneylines."""
+    import dataclasses
+
+    from sportsml.backtest import summarize
+    from sportsml.core import sport
+
+    schema = dataclasses.replace(TOY_SCHEMA, market_spread=None)
+    toy_ml = sport.Sport(name="toy_ml", schema=schema, download=make_games)
+    monkeypatch.setitem(sport._registry, "toy_ml", toy_ml)
+    results = walk_forward(
+        toy_games,
+        "toy_ml",
+        sklearn_fitter("toy_ml", model=sklearn.linear_model.Ridge()),
+        seasons=[2024],
+    )
+    no_vig = no_vig_probability(results.moneyline, results.opp_moneyline)
+    assert np.allclose(results.market_prob, no_vig)
+    # the implied margin has the moneyline's sign and roughly the spread's size
+    assert (np.sign(results.market_margin) == np.sign(results.market_prob - 0.5)).all()
+    spread = toy_games.set_index(["game_id", "team"]).spread
+    spread = spread.loc[list(zip(results.game_id, results.team))].to_numpy()
+    assert np.corrcoef(results.market_margin, spread)[0, 1] > 0.95
+    summary = summarize(results, schema)
+    assert "ats" not in summary and "moneyline" in summary
+    assert summary["overall"]["market"]["n"] == len(results)

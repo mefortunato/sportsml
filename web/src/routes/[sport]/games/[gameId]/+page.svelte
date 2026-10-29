@@ -51,7 +51,9 @@
 		</div>
 
 		<div class="chips">
-			<span class="pill">Vegas {spreadLabel(game.home, game.away, game.spread)}</span>
+			{#if info.has_spread}
+				<span class="pill">Vegas {spreadLabel(game.home, game.away, game.spread)}</span>
+			{/if}
 			{#if prediction}
 				<span class="pill accent">Model {marginLabel(game.home, game.away, prediction.margin)}</span>
 				{#if pickTeam && prediction.edge !== null}
@@ -95,7 +97,7 @@
 				<TotalChart line={game.total_line} model={prediction?.total ?? null} result={result?.total ?? null} />
 			</div>
 		{/if}
-		<MarketTable {game} {prediction} {result} />
+		<MarketTable {game} {prediction} {result} hasSpread={info.has_spread} />
 	</div>
 
 	{#if odds}
@@ -106,7 +108,13 @@
 
 	{#if prediction && !result && info.pricing}
 		<div class="section">
-			<LineCalculator {game} {prediction} pricing={info.pricing} books={odds?.books ?? []} />
+			<LineCalculator
+				{game}
+				{prediction}
+				pricing={info.pricing}
+				books={odds?.books ?? []}
+				hasSpread={info.has_spread}
+			/>
 		</div>
 	{/if}
 

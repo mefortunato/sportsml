@@ -437,9 +437,8 @@ def staking(
     results = read_table(results)
     schema = get_sport(sport).schema
     if markets is None:
-        markets = ["spread", "moneyline"] + (
-            ["total"] if "pred_total" in results else []
-        )
+        markets = (["spread"] if schema.market_spread else []) + ["moneyline"]
+        markets += ["total"] if "pred_total" in results else []
     report = {}
     for market in markets:
         bets = market_bets(results, schema, market)

@@ -11,7 +11,8 @@ import pandas as pd
 
 from ..core.io import Table, read_table
 from ..core.process import process
-from ..core.sport import get_sport
+from ..core.sport import BUILTIN_SPORTS, get_sport
+from .cache import open_store
 from .views import get_view
 
 # Bump to rebuild every cached backtest season once, e.g. after a change the
@@ -23,20 +24,31 @@ BACKTEST_CACHE_VERSION = 1
 _UNHASHED = ("web/", "odds/", "cli.py")
 
 
-def code_hash() -> str:
-    """Hash of the package source that shapes backtest results."""
+def code_hash(sport: str | None = None) -> str:
+    """Hash of the package source that shapes backtest results; with
+    ``sport``, without the other built-in sports' packages, so changing one
+    sport leaves the others' stored backtests valid."""
     root = pathlib.Path(__file__).resolve().parents[1]
+    others = tuple(f"{s}/" for s in BUILTIN_SPORTS if sport and s != sport)
     digest = hashlib.sha256()
     for file in sorted(root.rglob("*.py")):
         rel = file.relative_to(root).as_posix()
         if rel.startswith(_UNHASHED) and rel != "web/build.py":
+            continue
+        if rel.startswith(others):
             continue
         digest.update(rel.encode())
         digest.update(file.read_bytes())
     return digest.hexdigest()
 
 
-def backtest_key(sport: str, season: int, max_epochs: int, code: str) -> str:
+def model_key(sport: str, max_epochs: int, code: str) -> str:
+    """Identifies how a sport's model is trained (settings, epochs, code);
+    with the season, :func:`backtest_key`."""
+    return backtest_key(sport, None, max_epochs, code)
+
+
+def backtest_key(sport: str, season: int | None, max_epochs: int, code: str) -> str:
     """Identifies one season's walk-forward backtest: the same key means the
     same model, training and code, so the stored results can be reused.
 
@@ -48,7 +60,7 @@ def backtest_key(sport: str, season: int, max_epochs: int, code: str) -> str:
     spec = {
         "version": BACKTEST_CACHE_VERSION,
         "sport": sport,
-        "season": int(season),
+        "season": None if season is None else int(season),
         "family": "transformer",
         "settings": get_sport(sport).transformer,
         "model": transformer_config(sport),
@@ -93,6 +105,9 @@ def build(
     backtest_seasons: int = 5,
     max_epochs: int = 100,
     refresh_backtest: bool = False,
+    cache: str | None = None,
+    reuse_model_days: float = 0,
+    max_new_seasons: int | None = None,
 ) -> None:
     """Prepare everything the web app shows, one directory per sport.
 
@@ -102,11 +117,13 @@ def build(
     pool, and its team ratings before each date the power rankings) and
     saves team metadata.
 
-    Backtest seasons are reused from the previous build in ``output_dir``
-    when nothing that shapes them changed (:func:`backtest_key`: the model
-    settings, ``max_epochs`` and the model code), so a routine build only
-    trains the model for upcoming games and backtests newly completed
-    seasons.
+    Backtest seasons are reused from the previous build in ``output_dir``,
+    or from the shared ``cache``, when nothing that shapes them changed
+    (:func:`backtest_key`: the model settings, ``max_epochs`` and the
+    model code), so a routine build only trains the model for upcoming
+    games and backtests newly completed seasons. Every season the build
+    holds is added to ``cache``, so another machine (a GPU box, the Train
+    workflow) can reuse it.
 
     Args:
         sports: Sports to build (default ``["nfl"]``).
@@ -115,7 +132,19 @@ def build(
             sport only).
         max_epochs: Transformer training epochs (per fit).
         refresh_backtest: Backtest every season again, ignoring the previous
-            build (e.g. after a data source revised old seasons).
+            build and the cache (e.g. after a data source revised old
+            seasons); the cache's entries are replaced.
+        cache: Shared store of backtest seasons and trained models
+            (:func:`~sportsml.web.cache.open_store`: a directory, or
+            ``release:<tag>`` for a GitHub release every machine can use).
+        reuse_model_days: Use the cache's model for upcoming games instead
+            of training one, if it was trained with the same settings and
+            code at most this many days ago (0: always train). Its team
+            state is refreshed with the newest games either way.
+        max_new_seasons: Backtest at most this many of the seasons neither
+            the previous build nor the cache has (the latest ones); the
+            rest are left out until a build elsewhere caches them
+            (``None``: backtest them all).
     """
     from ..backtest import backtest, complete_seasons, summarize
     from ..inference.utils import power_ratings
@@ -139,24 +168,72 @@ def build(
         teams = view.load_teams()
         (path / "teams.json").write_text(teams.to_json(orient="records", indent=1))
 
-        trainer = default_trainer(
-            max_epochs=max_epochs, enable_progress_bar=False, enable_model_summary=False
+        store = open_store(cache)
+        code = code_hash(sport)
+        mkey = model_key(sport, max_epochs, code)
+        stored_model = (
+            store.get_model(sport, mkey, path / "model", reuse_model_days)
+            if store is not None and reuse_model_days > 0
+            else None
         )
-        fitted = fit_transformer(
-            table, sport, trainer=trainer, save_dir=str(path / "model"), overwrite=True
-        )
+        if stored_model is not None:
+            print(f"{sport} model: from the cache ({stored_model['trained_at']})")
+            fitted = {"metrics": stored_model["metrics"]}
+        else:
+            trainer = default_trainer(
+                max_epochs=max_epochs,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+            )
+            fitted = fit_transformer(
+                table,
+                sport,
+                trainer=trainer,
+                save_dir=str(path / "model"),
+                overwrite=True,
+            )
+            if store is not None:
+                trained_at = datetime.datetime.now(datetime.timezone.utc)
+                store.put_model(
+                    sport,
+                    mkey,
+                    path / "model",
+                    {
+                        "trained_at": trained_at.isoformat(timespec="seconds"),
+                        "metrics": fitted["metrics"],
+                    },
+                )
         schema = get_sport(sport).schema
         seasons = complete_seasons(table, schema)[-backtest_seasons:]
-        code = code_hash()
         keys = {s: backtest_key(sport, s, max_epochs, code) for s in seasons}
         if refresh_backtest:
             pool, rankings, reused = pd.DataFrame(), pd.DataFrame(), []
         else:
             pool, rankings, reused = cached_backtest(path, keys, schema.season)
-        missing = [s for s in seasons if s not in reused]
+        fetched = []
+        if store is not None and not refresh_backtest:
+            parts = [pool], [rankings]
+            for s in seasons:
+                if (
+                    s in reused
+                    or (entry := store.get_season(sport, s, keys[s])) is None
+                ):
+                    continue
+                parts[0].append(entry[0])
+                parts[1].append(entry[1])
+                fetched.append(s)
+            pool = pd.concat(parts[0], ignore_index=True)
+            rankings = pd.concat(parts[1], ignore_index=True)
+        missing = [s for s in seasons if s not in reused and s not in fetched]
+        if max_new_seasons is not None and len(missing) > max_new_seasons:
+            skipped = missing[: len(missing) - max_new_seasons]
+            missing = missing[len(skipped) :]
+            seasons = [s for s in seasons if s not in skipped]
+            keys = {s: keys[s] for s in seasons}
+            print(f"{sport} backtest: leaving out {skipped} (max_new_seasons)")
         print(
-            f"{sport} backtest: reusing {reused or 'none'}, "
-            f"backtesting {missing or 'none'}",
+            f"{sport} backtest: reusing {reused or 'none'}, from the cache "
+            f"{fetched or 'none'}, backtesting {missing or 'none'}",
             flush=True,
         )
 
@@ -184,6 +261,19 @@ def build(
         rankings = rankings.sort_values(["season", "date"], kind="stable")
         pool.to_csv(path / "pool.csv", index=False)
         rankings.to_csv(path / "rankings.csv", index=False)
+        if store is not None:
+            for s in seasons:
+                if s in fetched or (s not in missing and store.has_season(
+                    sport, s, keys[s]
+                )):  # fmt: skip
+                    continue
+                store.put_season(
+                    sport,
+                    s,
+                    keys[s],
+                    pool[pool[schema.season] == s],
+                    rankings[rankings["season"] == s],
+                )
 
         summary = {"seasons": [int(s) for s in seasons], **summarize(pool, schema)}
         meta = {
@@ -210,4 +300,36 @@ def build(
         print(f"built {sport} -> {path}")
 
 
-__all__ = ["build"]
+def push_cache(
+    cache: str, data_dir: str = "webdata", sports: list[str] | None = None
+) -> None:
+    """Add a finished build's backtest seasons (``<data_dir>/<sport>/``,
+    with the keys its ``meta.json`` recorded) to the shared ``cache``, e.g.
+    to seed it from the current ``webdata`` release."""
+    store = open_store(cache)
+    root = pathlib.Path(data_dir)
+    for path in sorted(p for p in root.iterdir() if (p / "meta.json").exists()):
+        sport = path.name
+        if sports and sport not in sports:
+            continue
+        keys = json.loads((path / "meta.json").read_text()).get("backtest_cache", {})
+        season = get_sport(sport).schema.season
+        pool, rankings, reused = cached_backtest(
+            path, {int(s): k for s, k in keys.items()}, season
+        )
+        added = []
+        for s in reused:
+            if store.has_season(sport, s, keys[str(s)]):
+                continue
+            store.put_season(
+                sport,
+                s,
+                keys[str(s)],
+                pool[pool[season] == s],
+                rankings[rankings["season"] == s],
+            )
+            added.append(s)
+        print(f"{sport}: added {added or 'nothing'} to {cache}")
+
+
+__all__ = ["build", "push_cache"]

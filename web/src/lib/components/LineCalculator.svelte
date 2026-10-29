@@ -14,17 +14,20 @@
 
 	// Price the line your sportsbook offers: starts at the Vegas consensus;
 	// change any number and every pick, probability and stake updates.
+	// Sports without a point spread (hockey, baseball) price no spread.
 	let {
 		game,
 		prediction,
 		pricing,
-		books = []
+		books = [],
+		hasSpread = true
 	}: {
 		game: GameHeader;
 		prediction: Prediction;
 		pricing: Pricing;
 		/** Sportsbooks' current lines, to load one into the calculator. */
 		books?: (BookLine & { book: string })[];
+		hasSpread?: boolean;
 	} = $props();
 
 	// books quote the home team's handicap: minus the expected home margin
@@ -76,16 +79,18 @@
 	const rows = $derived.by<Row[]>(() => {
 		const out: Row[] = [];
 		const spreadOk = validOdds(line.spreadHome) && validOdds(line.spreadAway) && Number.isFinite(line.handicap);
-		out.push({
-			market: 'spread',
-			quotes: spreadOk
-				? priceSpread(prediction, -line.handicap, { home: line.spreadHome, away: line.spreadAway }, pricing)
-				: null,
-			describe: (q) => {
-				const h = q.pick === 'home' ? line.handicap : -line.handicap;
-				return `${pickLabel(q.pick, game.home, game.away)} ${h > 0 ? '+' : ''}${h === 0 ? 'PK' : h}`;
-			}
-		});
+		if (hasSpread) {
+			out.push({
+				market: 'spread',
+				quotes: spreadOk
+					? priceSpread(prediction, -line.handicap, { home: line.spreadHome, away: line.spreadAway }, pricing)
+					: null,
+				describe: (q) => {
+					const h = q.pick === 'home' ? line.handicap : -line.handicap;
+					return `${pickLabel(q.pick, game.home, game.away)} ${h > 0 ? '+' : ''}${h === 0 ? 'PK' : h}`;
+				}
+			});
+		}
 		const mlOk = validOdds(line.mlHome) && validOdds(line.mlAway);
 		out.push({
 			market: 'moneyline',
@@ -142,21 +147,23 @@
 	</p>
 
 	<div class="inputs">
-		<fieldset>
-			<legend>Spread</legend>
-			<label>
-				<span>{game.home.team} handicap</span>
-				<input type="number" step="0.5" bind:value={line.handicap} aria-label="{game.home.team} spread handicap" />
-			</label>
-			<label>
-				<span>{game.home.team} odds</span>
-				<input type="number" step="5" bind:value={line.spreadHome} aria-label="{game.home.team} spread odds" />
-			</label>
-			<label>
-				<span>{game.away.team} odds</span>
-				<input type="number" step="5" bind:value={line.spreadAway} aria-label="{game.away.team} spread odds" />
-			</label>
-		</fieldset>
+		{#if hasSpread}
+			<fieldset>
+				<legend>Spread</legend>
+				<label>
+					<span>{game.home.team} handicap</span>
+					<input type="number" step="0.5" bind:value={line.handicap} aria-label="{game.home.team} spread handicap" />
+				</label>
+				<label>
+					<span>{game.home.team} odds</span>
+					<input type="number" step="5" bind:value={line.spreadHome} aria-label="{game.home.team} spread odds" />
+				</label>
+				<label>
+					<span>{game.away.team} odds</span>
+					<input type="number" step="5" bind:value={line.spreadAway} aria-label="{game.away.team} spread odds" />
+				</label>
+			</fieldset>
+		{/if}
 		<fieldset>
 			<legend>Moneyline</legend>
 			<label>

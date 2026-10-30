@@ -94,6 +94,7 @@ class Cache:
 
 
 _client: httpx.Client | None = None
+_ODDS_FORBIDDEN: set[tuple[str, str]] = set()
 
 
 def client() -> httpx.Client:
@@ -221,11 +222,26 @@ def parse_odds(data: dict) -> dict:
             for k, v in out.items()}  # fmt: skip
 
 
-def fetch_odds(sport: str, league: str, game_id: str) -> dict:
-    """One game's :func:`parse_odds` (empty if ESPN has none)."""
+def fetch_odds(sport: str, league: str, game_id: str) -> dict | None:
+    """One game's :func:`parse_odds` (empty if ESPN has none; ``None`` if denied).
+
+    A 403 disables further odds requests for this league in the current
+    process; schedule and box-score downloads remain unaffected.
+    """
+    key = (sport, league)
+    if key in _ODDS_FORBIDDEN:
+        return None
     response = _get(ODDS_URL.format(sport=sport, league=league, game=game_id))
     if response.status_code == 404:
         return {}
+    if response.status_code == 403:
+        _ODDS_FORBIDDEN.add(key)
+        logger.warning(
+            "ESPN odds API returned 403 for %s/%s; skipping further odds requests",
+            sport,
+            league,
+        )
+        return None
     response.raise_for_status()
     return parse_odds(response.json())
 
@@ -248,9 +264,11 @@ def season_lines(
         logger.info("%d: fetching lines of %d games", season, len(wanted))
         with concurrent.futures.ThreadPoolExecutor(workers) as pool:
             fetched = dict(zip(wanted, pool.map(fetch, wanted)))
-        if missing:
-            cache.write_json(name, cached | {g: fetched[g] for g in missing})
-        cached = cached | fetched
+        available = {g: lines for g, lines in fetched.items() if lines is not None}
+        final = {g: lines for g, lines in available.items() if g in missing}
+        if final:
+            cache.write_json(name, cached | final)
+        cached = cached | available
     return {g: cached[g] for g in final_ids + upcoming_ids if g in cached}
 
 

@@ -145,6 +145,35 @@ def test_lines_only_for_division_one_games():
     assert set(wanted.game_id) == {"1", "4", "5", "7"}
 
 
+@pytest.mark.parametrize(
+    "league", ["mens-college-basketball", "womens-college-basketball"]
+)
+def test_forbidden_espn_odds_do_not_block_college_training(
+    monkeypatch, league, tmp_path
+):
+    from sportsml import espn
+
+    calls = []
+
+    class Forbidden:
+        status_code = 403
+
+    def get(url):
+        calls.append(url)
+        return Forbidden()
+
+    cache = espn.Cache(str(tmp_path))
+    monkeypatch.setattr(espn, "_ODDS_FORBIDDEN", set())
+    monkeypatch.setattr(espn, "_get", get)
+
+    def fetch(game_id):
+        return espn.fetch_odds("basketball", league, game_id)
+
+    assert espn.season_lines(2025, ["1", "2"], [], cache, fetch, workers=1) == {}
+    assert len(calls) == 1
+    assert not (tmp_path / "odds_2025.json").exists()
+
+
 def test_season_of_and_completion():
     assert college.season_of(datetime.date(2024, 11, 5)) == 2025
     assert college.season_of(datetime.date(2025, 4, 7)) == 2025

@@ -8,7 +8,9 @@ of ESPN's one per game (~5,000 a season, which gets a runner refused with
 (``sourceId``), the games table's ``game_id``.
 
 CBBD has the spread, total and both moneylines (and opening lines), but no
-spread or over/under prices: those stay empty.
+spread or over/under prices: those stay empty. It lists some games without
+any lines (about 6% of 2024-25, and whole stretches of older seasons) that
+ESPN has; those are left to ESPN (see :func:`season_lines`).
 """
 
 from __future__ import annotations
@@ -29,11 +31,6 @@ KEY_ENV = "CBBD_API_KEY"
 
 # The most games one request returns; a window that fills it is split.
 LIMIT = 3000
-
-# A finished game CBBD has no lines for this many days after it ended is
-# recorded as having none (its lines are not coming), so it is not asked
-# for again.
-SETTLE_DAYS = 3
 
 
 def api_key() -> str | None:
@@ -153,15 +150,12 @@ def parse_lines(lines: list[dict]) -> dict:
     return out
 
 
-def season_lines(
-    season: int, games: pd.DataFrame, key: str, today=None
-) -> dict[str, dict]:
+def season_lines(season: int, games: pd.DataFrame, key: str) -> dict[str, dict]:
     """``{game_id: lines}`` of finished ``games`` (a :func:`espn.schedule_frame`
     subset: ``game_id``, ``start``, ``home_score``, ``away_score``) from CBBD,
-    keyed by ESPN's game id. A game CBBD has no lines for maps to ``{}`` once
-    :data:`SETTLE_DAYS` have passed; a game whose home and away sides CBBD
-    has the other way around (by the score) is left out."""
-    today = pd.Timestamp(today or datetime.datetime.now(datetime.timezone.utc))
+    keyed by ESPN's game id. Only games CBBD has lines for are in it: one it
+    lists without any, does not list, or has with home and away the other
+    way around (by the score) is left out, for ESPN to fetch."""
     if games.empty:
         return {}
     # only the dates of these games: a daily refresh asks for a day or two
@@ -182,8 +176,6 @@ def season_lines(
     for game in games.itertuples(index=False):
         row = by_game.get(game.game_id)
         if row is None:
-            if game.start < today - pd.Timedelta(days=SETTLE_DAYS):
-                out[game.game_id] = {}
             continue
         home, away = row.get("homeScore"), row.get("awayScore")
         if (
@@ -194,10 +186,11 @@ def season_lines(
         ):
             flipped += 1
             continue
-        out[game.game_id] = parse_lines(row.get("lines") or [])
+        if lines := parse_lines(row.get("lines") or []):
+            out[game.game_id] = lines
     if flipped:
         logger.warning(
-            "%d: %d CBBD games have home and away swapped; left without lines",
+            "%d: %d CBBD games have home and away swapped; their lines from ESPN",
             season,
             flipped,
         )

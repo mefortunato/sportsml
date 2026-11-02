@@ -246,7 +246,9 @@ answers a runner that many with 403. With `CBBD_API_KEY` (free at
 [CollegeBasketballData](https://collegebasketballdata.com)) the men's
 finished games' lines come from its `/lines` instead, about a dozen
 requests a season, every book's spread, total and moneylines but no spread
-or over/under prices; upcoming games' lines still come from ESPN. Finished
+or over/under prices; upcoming games' lines, and those of finished games
+CollegeBasketballData has none for (about 6% of a recent season, more of
+older ones), still come from ESPN. Finished
 seasons and games are cached in `data/<sport>/espn_cache`, and a refresh
 makes a few hundred requests (two to CollegeBasketballData).
 

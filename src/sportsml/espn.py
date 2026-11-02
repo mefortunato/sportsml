@@ -265,10 +265,9 @@ def season_lines(
     """``{game_id: lines}`` for a season's finished games (cached) and the
     given upcoming ones (fetched every time), ``fetch``-ed by game id.
 
-    With ``bulk``, finished games come from ``bulk(game_ids)`` instead
-    (``{game_id: lines}``, ``{}`` for a game known to have none; a game
-    left out is asked for again next time) and only upcoming ones are
-    ``fetch``-ed.
+    With ``bulk``, finished games come from ``bulk(game_ids)`` first
+    (``{game_id: lines}``); the ones it leaves out are ``fetch``-ed, and
+    cached, like any other.
     """
     name = f"odds_{season}.json"
     cached = cache.read_json(name)
@@ -282,7 +281,7 @@ def season_lines(
             if final:
                 cache.write_json(name, cached | final)
                 cached = cached | final
-        missing = []
+            missing = [g for g in missing if g not in final]
     wanted = missing + [g for g in upcoming_ids if g not in cached]
     if wanted:
         logger.info("%d: fetching lines of %d games", season, len(wanted))
@@ -744,7 +743,8 @@ def basketball_season(
     ``wants_lines(games)`` limits which games' lines are fetched (default:
     all; college basketball skips games against non-Division I teams).
     ``bulk_lines(season, games)`` gives finished games' lines from another
-    source (see :func:`season_lines`); ESPN then only has upcoming games'.
+    source (see :func:`season_lines`); ESPN then has upcoming games' and
+    the finished ones it leaves out.
     """
     schedule = season_file(
         league.schedule_url.format(season=season),

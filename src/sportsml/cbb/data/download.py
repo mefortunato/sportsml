@@ -186,7 +186,8 @@ def fetch_season(
     """``(schedule, team box scores, lines)`` of one season; lines only of
     games between two Division I teams. Men's finished games' lines come
     from CollegeBasketballData when ``CBBD_API_KEY`` is set (see
-    :mod:`.cbbd`), upcoming games' from ESPN."""
+    :mod:`.cbbd`); upcoming games', and finished ones CBBD has none for,
+    from ESPN."""
     return espn.basketball_season(
         college.league,
         season,
@@ -195,7 +196,7 @@ def fetch_season(
         cache,
         lines_days,
         wants_lines=division_one,
-        bulk_lines=bulk_lines(college, today),
+        bulk_lines=bulk_lines(college),
     )
 
 
@@ -207,16 +208,17 @@ def _no_key() -> None:
     )
 
 
-def bulk_lines(college: College, today):
+def bulk_lines(college: College):
     """CBBD's lines of finished games for the men with a key, else ``None``
-    (every game's lines from ESPN)."""
+    (every game's lines from ESPN). Games CBBD has no lines for still come
+    from ESPN."""
     key = cbbd.api_key()
     if college is not MEN:
         return None
     if key is None:
         _no_key()
         return None
-    return lambda season, games: cbbd.season_lines(season, games, key, today)
+    return lambda season, games: cbbd.season_lines(season, games, key)
 
 
 def download_college(

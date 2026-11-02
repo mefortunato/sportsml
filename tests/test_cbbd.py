@@ -7,8 +7,6 @@ from sportsml import espn
 from sportsml.cbb.data import cbbd
 from sportsml.cbb.data import download as college
 
-TODAY = datetime.datetime(2025, 3, 20, 12, tzinfo=datetime.timezone.utc)
-
 # CBBD's /games (its own id -> ESPN's sourceId) and /lines, as its API spec
 # describes them
 GAMES = [
@@ -31,6 +29,8 @@ LINES = [
     # CBBD has home and away the other way around: left out
     {"gameId": 2, "homeScore": 60, "awayScore": 75,
      "lines": [{"provider": "Bovada", "spread": 3}]},
+    # listed without lines (ESPN may have them): left out
+    {"gameId": 3, "homeScore": 66, "awayScore": 64, "lines": []},
 ]  # fmt: skip
 
 
@@ -70,14 +70,12 @@ def test_season_lines_by_espn_id(api):
     games = schedule(
         ("401700001", "2025-03-01T20:00Z", 80, 70),
         ("401700002", "2025-03-02T20:00Z", 75, 60),
-        ("401700003", "2025-03-03T20:00Z", 66, 64),  # settled, no lines
-        ("401700004", "2025-03-19T20:00Z", 66, 64),  # lines may still come
+        ("401700003", "2025-03-03T20:00Z", 66, 64),  # no lines in CBBD
+        ("401700004", "2025-03-19T20:00Z", 66, 64),  # not in CBBD
     )
-    lines = cbbd.season_lines(2025, games, "secret", TODAY)
+    lines = cbbd.season_lines(2025, games, "secret")
+    assert set(lines) == {"401700001"}
     assert lines["401700001"]["spread_line"] == 7.0
-    assert "401700002" not in lines
-    assert lines["401700003"] == {}
-    assert "401700004" not in lines
     # only the windows holding these games' dates: March, two endpoints
     assert [path for path, _ in api] == ["games", "lines"]
     assert api[0][1]["startDateRange"] == "2025-02-28T20:00:00Z"
@@ -100,31 +98,41 @@ def test_full_windows_are_split(monkeypatch):
 
 def test_season_lines_cache_bulk_finished_games(api, tmp_path):
     cache = espn.Cache(str(tmp_path))
-    games = schedule(("401700001", "2025-03-01T20:00Z", 80, 70))
+    games = schedule(
+        ("401700001", "2025-03-01T20:00Z", 80, 70),
+        ("401700002", "2025-03-02T20:00Z", 75, 60),
+        ("401700003", "2025-03-03T20:00Z", 66, 64),
+    )
+    finished = list(games.game_id)
     fetched = []
 
     def fetch(game_id):
         fetched.append(game_id)
-        return {"spread_line": 1.0}
+        return {} if game_id == "401700003" else {"spread_line": 1.0}
 
     def bulk(ids):
-        return cbbd.season_lines(2025, games[games.game_id.isin(ids)], "secret", TODAY)
+        return cbbd.season_lines(2025, games[games.game_id.isin(ids)], "secret")
 
     lines = espn.season_lines(
-        2025, ["401700001"], ["401700009"], cache, fetch, workers=1, bulk=bulk
+        2025, finished, ["401700009"], cache, fetch, workers=1, bulk=bulk
     )
-    # finished games in bulk, upcoming ones from ESPN
+    # finished games in bulk; the ones CBBD has no lines for (swapped, or
+    # listed without any) and upcoming ones from ESPN
     assert lines["401700001"]["spread_line"] == 7.0
-    assert fetched == ["401700009"]
-    assert set(cache.read_json("odds_2025.json")) == {"401700001"}
-    # cached: no second request
-    espn.season_lines(2025, ["401700001"], [], cache, fetch, workers=1, bulk=bulk)
+    assert lines["401700002"] == {"spread_line": 1.0}
+    assert lines["401700003"] == {}
+    assert sorted(fetched) == ["401700002", "401700003", "401700009"]
+    assert set(cache.read_json("odds_2025.json")) == set(finished)
+    # all cached, ESPN's answers too: no second request anywhere
+    fetched.clear()
+    espn.season_lines(2025, finished, [], cache, fetch, workers=1, bulk=bulk)
     assert len(api) == 2
+    assert fetched == []
 
 
 def test_bulk_lines_only_for_men_with_a_key(monkeypatch):
     monkeypatch.delenv(cbbd.KEY_ENV, raising=False)
-    assert college.bulk_lines(college.MEN, TODAY) is None
+    assert college.bulk_lines(college.MEN) is None
     monkeypatch.setenv(cbbd.KEY_ENV, "secret")
-    assert college.bulk_lines(college.MEN, TODAY) is not None
-    assert college.bulk_lines(college.WOMEN, TODAY) is None
+    assert college.bulk_lines(college.MEN) is not None
+    assert college.bulk_lines(college.WOMEN) is None

@@ -3,6 +3,7 @@
 // run here.
 import { base } from '$app/paths';
 import { units } from './markets';
+import { currentUpcoming, type UpcomingFile } from './upcoming';
 import type {
 	ChallengeAnswer,
 	ChallengeGame,
@@ -133,16 +134,8 @@ export const api = {
 		for (const g of week.games) for (const t of [g.home, g.away]) teams.set(t.team, t);
 		return [...teams.values()];
 	},
-	upcoming: async (name: string, season?: number | null, date?: number | null) => {
-		const file = await load<{
-			default: Upcoming;
-			by_date: Record<string, Upcoming>;
-		}>(`${name}/upcoming.json`);
-		if (season == null || date == null) return file.default;
-		const week = file.by_date[`${season}-${date}`];
-		if (!week) throw new Error(`No games for ${season} ${date}`);
-		return week;
-	},
+	upcoming: async (name: string, season?: number | null, date?: number | null) =>
+		currentUpcoming(await load<UpcomingFile>(`${name}/upcoming.json`), season, date),
 	game: async (name: string, gameId: string) => {
 		const game = (await load<Record<string, GameDetail>>(`${name}/games.json`))[gameId];
 		if (!game) throw new Error(`Unknown game ${gameId}`);

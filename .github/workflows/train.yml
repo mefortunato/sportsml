@@ -49,6 +49,11 @@ jobs:
         sport: [nfl, cfb, nba, cbb, wcbb, wnba, nhl, mlb]
     env:
       MLFLOW_TRACKING_URI: sqlite:///${{ github.workspace }}/mlflow.db
+      # the keys the per-sport caches had before they were merged into one
+      # step, so existing caches keep being restored
+      CACHE_PREFIX: >-
+        ${{ matrix.sport == 'cfb' && 'espn-cfb-' || matrix.sport == 'nba'
+        && 'espn-nba-' || format('data-{0}-', matrix.sport) }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
@@ -56,37 +61,24 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked --no-default-groups
-      - name: Cache CFB files and lines
-        if: matrix.sport == 'cfb'
-        uses: actions/cache@v4
+      # Each cache is restored here and saved after the build even when it
+      # fails: ESPN answers 403 to a runner after a burst of odds requests,
+      # and saving the lines fetched until then lets the next run go on from
+      # there instead of starting over (and being refused again).
+      - name: Restore cached ESPN files and lines
+        if: matrix.sport != 'nfl'
+        uses: actions/cache/restore@v4
         with:
-          # finished seasons' schedules and box scores, finished games' lines
-          # (a download without it makes ~12,000 odds requests)
-          path: data/cfb/espn_cache
-          key: espn-cfb-${{ github.run_id }}
-          restore-keys: espn-cfb-
-      - name: Cache ESPN NBA files and lines
-        if: matrix.sport == 'nba'
-        uses: actions/cache@v4
-        with:
-          # finished seasons' schedules and box scores, finished games' lines
-          # (a download without it makes ~18,000 odds requests)
-          path: data/nba/espn_cache
-          key: espn-nba-${{ github.run_id }}
-          restore-keys: espn-nba-
-      - name: Cache downloaded files and lines
-        if: contains(fromJSON('["cbb", "wcbb", "wnba", "nhl", "mlb"]'), matrix.sport)
-        uses: actions/cache@v4
-        with:
-          # finished seasons' files and finished games' lines (a download
-          # without it makes thousands of odds requests: ~85,000 for men's
-          # college basketball, ~35,000 for MLB)
+          # finished seasons' schedules and box scores (and NHL / MLB files),
+          # finished games' lines (a download without it makes thousands of
+          # odds requests: ~12,000 for college football, ~18,000 for the NBA,
+          # ~85,000 for men's college basketball, ~35,000 for MLB)
           path: |
             data/${{ matrix.sport }}/espn_cache
             data/${{ matrix.sport }}/nhl_cache
             data/${{ matrix.sport }}/mlb_cache
-          key: data-${{ matrix.sport }}-${{ github.run_id }}
-          restore-keys: data-${{ matrix.sport }}-
+          key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
+          restore-keys: ${{ env.CACHE_PREFIX }}
       - name: Fetch the previous build (its backtest seasons can be reused)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,6 +99,15 @@ jobs:
           ${{ contains(fromJSON('["cbb", "wcbb"]'), matrix.sport) && '--max_new_seasons 1' || '' }}
           --refresh_backtest ${{ inputs.refresh_backtest || false }}
           --reuse_model_days ${{ inputs.reuse_model_days || 0 }}
+      - name: Save the ESPN files and lines fetched so far
+        if: ${{ !cancelled() && matrix.sport != 'nfl' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/${{ matrix.sport }}/espn_cache
+            data/${{ matrix.sport }}/nhl_cache
+            data/${{ matrix.sport }}/mlb_cache
+          key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
       - name: Pack this sport's build
         run: tar -czf webdata-${{ matrix.sport }}.tar.gz -C webdata ${{ matrix.sport }}
       - uses: actions/upload-artifact@v4

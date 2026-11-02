@@ -222,6 +222,11 @@ def parse_odds(data: dict) -> dict:
             for k, v in out.items()}  # fmt: skip
 
 
+def odds_refused() -> list[str]:
+    """The ``sport/league``s whose odds ESPN refused (403) in this process."""
+    return sorted(f"{sport}/{league}" for sport, league in _ODDS_FORBIDDEN)
+
+
 def fetch_odds(sport: str, league: str, game_id: str) -> dict | None:
     """One game's :func:`parse_odds` (empty if ESPN has none; ``None`` if denied).
 

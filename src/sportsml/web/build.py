@@ -9,6 +9,7 @@ import pathlib
 
 import pandas as pd
 
+from .. import espn
 from ..core.io import Table, read_table
 from ..core.process import process
 from ..core.sport import BUILTIN_SPORTS, get_sport
@@ -164,6 +165,16 @@ def build(
             if games is not None
             else process(sport, get_sport(sport).download())
         )
+        if games is None and (refused := espn.odds_refused()):
+            # Backtests are stored by model and code, not by data: a season
+            # backtested without its lines would be reused without them.
+            # The lines fetched so far are cached; a later run goes on.
+            raise RuntimeError(
+                f"ESPN refused odds requests for {', '.join(refused)} (403, "
+                "usually after a burst of requests from one IP); not building "
+                f"{sport} without its lines. The lines fetched so far are in "
+                "its download cache: run again later to fetch the rest."
+            )
         table.to_csv(path / "games.csv", index=False)
         teams = view.load_teams()
         (path / "teams.json").write_text(teams.to_json(orient="records", indent=1))

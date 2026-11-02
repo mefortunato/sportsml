@@ -1,5 +1,6 @@
 import concurrent.futures
 import datetime
+import logging
 
 import httpx
 import pandas as pd
@@ -8,6 +9,8 @@ from ... import espn
 from .download import MEN, NON_D1, WOMEN, College, season_of
 
 CORE = "https://sports.core.api.espn.com/v2/sports/basketball/leagues/{league}"
+
+logger = logging.getLogger(__name__)
 
 # The pooled non-Division I opponent (see download.NON_D1).
 NON_D1_TEAM = {
@@ -24,15 +27,38 @@ NON_D1_TEAM = {
 
 
 def _core(url: str) -> dict:
-    response = httpx.get(url, params={"limit": 100}, timeout=30)
+    response = espn._get(url, limit=100)
     response.raise_for_status()
     return response.json()
 
 
-def conferences(league: str, season: int) -> list[dict]:
+def conferences(
+    league: str, season: int, cache: espn.Cache | None = None
+) -> list[dict]:
     """This season's Division I conferences from ESPN's core API, each with
     its ``shortName`` and its ``teams`` (ids), as :func:`espn.teams_frame`
-    takes them (the site API's ``/groups`` lists only some of them)."""
+    takes them (the site API's ``/groups`` lists only some of them).
+
+    Each fetch is kept in ``cache``. When ESPN refuses (it answers 403 to a
+    runner after a burst of odds requests), the cached copy is used, or none:
+    teams then have no conference rather than failing the build.
+    """
+    name = f"conferences_{season}.json"
+    try:
+        groups = _fetch_conferences(league, season)
+    except (httpx.HTTPStatusError, httpx.TransportError) as error:
+        cached = cache.read_json(name) if cache is not None else {}
+        logger.warning(
+            "ESPN conferences of %s %d unavailable (%s); using %s",
+            league, season, error, "the cached copy" if cached else "none",
+        )  # fmt: skip
+        return cached.get("conferences", [])
+    if cache is not None:
+        cache.write_json(name, {"conferences": groups})
+    return groups
+
+
+def _fetch_conferences(league: str, season: int) -> list[dict]:
     base = f"{CORE.format(league=league)}/seasons/{season}/types/2/groups"
     refs = [item["$ref"] for item in _core(f"{base}/50/children")["items"]]
 
@@ -65,9 +91,10 @@ def load_college_teams(college: College) -> pd.DataFrame:
     today = datetime.datetime.now(datetime.timezone.utc).date()
     league = college.league.league
     teams = espn.site_json("basketball", league, "teams", groups=50, limit=500)
+    cache = espn.Cache(f"data/{college.name}/espn_cache")
     return teams_frame(
         teams["sports"][0]["leagues"][0]["teams"],
-        conferences(league, season_of(today)),
+        conferences(league, season_of(today), cache),
     )
 
 

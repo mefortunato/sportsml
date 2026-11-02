@@ -48,16 +48,21 @@ function quote(pick: Pick, odds: number, raw: number, prob: number): Quote {
 
 const toward = (market: number, model: number, trust = 0) => market + trust * (model - market);
 
-/** Both sides of a spread. `spread` is the home team's expected margin by the
- * market (positive: home favored), i.e. minus the home handicap books quote. */
+/** Both sides of a spread. `spread` is the line priced, as the home team's
+ * expected margin (positive: home favored), i.e. minus the home handicap books
+ * quote. `market` is the consensus margin the model is moved toward (default:
+ * `spread` itself, a coin flip); a line off the consensus is then priced from
+ * the market's own view, so moving the line moves the win chance. */
 export function priceSpread(
 	prediction: Prediction,
 	spread: number,
 	odds: { home: number; away: number },
-	pricing: Pricing
+	pricing: Pricing,
+	market: number = spread
 ): [Quote, Quote] {
 	const raw = normalCdf((prediction.margin - spread) / pricing.sigma);
-	const prob = toward(0.5, raw, pricing.trust.spread);
+	const anchor = normalCdf((market - spread) / pricing.sigma);
+	const prob = toward(anchor, raw, pricing.trust.spread);
 	return [quote('away', odds.away, 1 - raw, 1 - prob), quote('home', odds.home, raw, prob)];
 }
 
@@ -74,16 +79,19 @@ export function priceMoneyline(
 	return [quote('away', odds.away, 1 - raw, 1 - prob), quote('home', odds.home, raw, prob)];
 }
 
-/** Over and under of a total line, for a model that predicts the total. */
+/** Over and under of a total line, for a model that predicts the total.
+ * `market` is the consensus total the model is moved toward (default: `line`). */
 export function priceTotal(
 	prediction: Prediction,
 	line: number,
 	odds: { over: number; under: number },
-	pricing: Pricing
+	pricing: Pricing,
+	market: number = line
 ): [Quote, Quote] | null {
 	if (prediction.total == null || !pricing.total_sigma) return null;
 	const raw = normalCdf((prediction.total - line) / pricing.total_sigma);
-	const prob = toward(0.5, raw, pricing.trust.total);
+	const anchor = normalCdf((market - line) / pricing.total_sigma);
+	const prob = toward(anchor, raw, pricing.trust.total);
 	return [quote('over', odds.over, raw, prob), quote('under', odds.under, 1 - raw, 1 - prob)];
 }
 

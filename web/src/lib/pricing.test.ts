@@ -52,6 +52,28 @@ describe('pricing', () => {
 		expect(plus.stake).toBeGreaterThan(0);
 	});
 
+	it('prices a spread off the consensus from the market view', () => {
+		// with no trust, the consensus line is a coin flip...
+		const [, atMarket] = priceSpread(prediction, 3, juice, untrusted, 3);
+		expect(atMarket.prob).toBeCloseTo(0.5);
+		// ...but getting 7 extra points on the home side is not
+		const [away, home] = priceSpread(prediction, -4, juice, untrusted, 3);
+		expect(home.prob).toBeCloseTo(normalCdf(7 / 13));
+		expect(home.ev).toBeGreaterThan(atMarket.ev);
+		expect(away.prob).toBeCloseTo(1 - normalCdf(7 / 13));
+		// partial trust lands between the market and the model
+		const half = { ...untrusted, trust: { spread: 0.5 } };
+		const [, mixed] = priceSpread(prediction, -4, juice, half, 3);
+		expect(mixed.prob).toBeCloseTo(normalCdf(7 / 13) + 0.5 * (normalCdf(10 / 13) - normalCdf(7 / 13)));
+	});
+
+	it('prices a total off the consensus from the market view', () => {
+		const [over] = priceTotal(prediction, 40.5, { over: -110, under: -110 }, untrusted, 44.5)!;
+		expect(over.prob).toBeCloseTo(normalCdf(4 / 13));
+		const [even] = priceTotal(prediction, 44.5, { over: -110, under: -110 }, untrusted, 44.5)!;
+		expect(even.prob).toBeCloseTo(0.5);
+	});
+
 	it('moves the moneyline toward the consensus market, not the price entered', () => {
 		const odds = { home: -150, away: 130 };
 		const consensus = 0.6;

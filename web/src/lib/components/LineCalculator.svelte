@@ -64,8 +64,9 @@
 		};
 	}
 
-	// the moneyline is moved toward the consensus market, not toward the
-	// price you enter (a better price is what you are looking for)
+	// every market is moved toward the consensus (its spread, total and
+	// moneyline), not toward the line you enter: a better number is what you
+	// are looking for, so moving the line off the consensus moves the win chance
 	const marketProb = $derived(
 		game.moneyline ? noVig(game.moneyline.home, game.moneyline.away) : undefined
 	);
@@ -83,7 +84,13 @@
 			out.push({
 				market: 'spread',
 				quotes: spreadOk
-					? priceSpread(prediction, -line.handicap, { home: line.spreadHome, away: line.spreadAway }, pricing)
+					? priceSpread(
+							prediction,
+							-line.handicap,
+							{ home: line.spreadHome, away: line.spreadAway },
+							pricing,
+							game.spread ?? undefined
+						)
 					: null,
 				describe: (q) => {
 					const h = q.pick === 'home' ? line.handicap : -line.handicap;
@@ -101,7 +108,13 @@
 		});
 		const totalOk = validOdds(line.over) && validOdds(line.under) && Number.isFinite(line.total);
 		const total = totalOk
-			? priceTotal(prediction, line.total, { over: line.over, under: line.under }, pricing)
+			? priceTotal(
+					prediction,
+					line.total,
+					{ over: line.over, under: line.under },
+					pricing,
+					game.total_line ?? undefined
+				)
 			: null;
 		if (total || prediction.total != null) {
 			out.push({

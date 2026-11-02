@@ -93,6 +93,10 @@ jobs:
         env:
           # the backtest-cache release: seasons (and models) any machine built
           GH_TOKEN: ${{ github.token }}
+          # men's college basketball lines from CollegeBasketballData, about
+          # a dozen requests a season instead of ESPN's ~5,000 (without it
+          # they come from ESPN; see sportsml.cbb.data.cbbd)
+          CBBD_API_KEY: ${{ secrets.CBBD_API_KEY }}
         run: >
           uv run sportsml web build --sports '[${{ matrix.sport }}]'
           --output_dir webdata --cache release:backtest-cache

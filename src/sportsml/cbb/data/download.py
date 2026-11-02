@@ -4,8 +4,10 @@ Shared by men's (``cbb``) and women's (``wcbb``) college basketball, like the
 NBA's :mod:`~sportsml.nba.data.download`: the schedule and team box scores
 come from sportsdataverse's ESPN release files (one parquet file per season,
 refreshed daily), the betting lines from ESPN's odds API, one request per
-game (see :mod:`sportsml.espn`). Finished seasons' files and finished games'
-lines are cached on disk (``cache_dir``).
+game (see :mod:`sportsml.espn`), except the men's finished games', which
+come from CollegeBasketballData by the season when ``CBBD_API_KEY`` is set
+(see :mod:`.cbbd`). Finished seasons' files and finished games' lines are
+cached on disk (``cache_dir``).
 
 Only Division I teams have a team state of their own. ESPN lists every
 opponent of a Division I team, and a school from Division II, III or the
@@ -22,6 +24,7 @@ changed its name keeps one history.
 from __future__ import annotations
 
 import datetime
+import functools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ... import espn
+from . import cbbd
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +184,9 @@ def fetch_season(
     lines_days: int = LINES_DAYS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """``(schedule, team box scores, lines)`` of one season; lines only of
-    games between two Division I teams."""
+    games between two Division I teams. Men's finished games' lines come
+    from CollegeBasketballData when ``CBBD_API_KEY`` is set (see
+    :mod:`.cbbd`), upcoming games' from ESPN."""
     return espn.basketball_season(
         college.league,
         season,
@@ -189,7 +195,28 @@ def fetch_season(
         cache,
         lines_days,
         wants_lines=division_one,
+        bulk_lines=bulk_lines(college, today),
     )
+
+
+@functools.cache
+def _no_key() -> None:
+    logger.warning(
+        "%s not set: men's finished games' lines from ESPN, one request a game",
+        cbbd.KEY_ENV,
+    )
+
+
+def bulk_lines(college: College, today):
+    """CBBD's lines of finished games for the men with a key, else ``None``
+    (every game's lines from ESPN)."""
+    key = cbbd.api_key()
+    if college is not MEN:
+        return None
+    if key is None:
+        _no_key()
+        return None
+    return lambda season, games: cbbd.season_lines(season, games, key, today)
 
 
 def download_college(
@@ -237,7 +264,8 @@ def download(
             lines start in 2012-13.
         cache_dir: Reuse finished seasons' files and finished games' lines
             from here (``None``: always download). A full download makes
-            about 5,000 odds requests a season; a daily refresh a few
-            hundred.
+            about 5,000 odds requests a season from ESPN, or about a dozen
+            from CollegeBasketballData with ``CBBD_API_KEY``; a daily
+            refresh a few hundred (ESPN, upcoming games).
     """
     return download_college(MEN, output_file, first_season, last_season, cache_dir)

@@ -108,10 +108,12 @@ def client() -> httpx.Client:
     return _client
 
 
-def _get(url: str, retries: int = 4, **params) -> httpx.Response:
+def _get(
+    url: str, retries: int = 4, headers: dict | None = None, **params
+) -> httpx.Response:
     for attempt in range(retries + 1):
         try:
-            response = client().get(url, params=params or None)
+            response = client().get(url, params=params or None, headers=headers)
             if response.status_code != 429 and response.status_code < 500:
                 return response
         except httpx.TransportError:
@@ -222,6 +224,11 @@ def parse_odds(data: dict) -> dict:
             for k, v in out.items()}  # fmt: skip
 
 
+def odds_refused() -> list[str]:
+    """The ``sport/league``s whose odds ESPN refused (403) in this process."""
+    return sorted(f"{sport}/{league}" for sport, league in _ODDS_FORBIDDEN)
+
+
 def fetch_odds(sport: str, league: str, game_id: str) -> dict | None:
     """One game's :func:`parse_odds` (empty if ESPN has none; ``None`` if denied).
 
@@ -253,12 +260,28 @@ def season_lines(
     cache: Cache,
     fetch: Callable[[str], dict],
     workers: int = 8,
+    bulk: Callable[[list[str]], dict[str, dict]] | None = None,
 ) -> dict[str, dict]:
     """``{game_id: lines}`` for a season's finished games (cached) and the
-    given upcoming ones (fetched every time), ``fetch``-ed by game id."""
+    given upcoming ones (fetched every time), ``fetch``-ed by game id.
+
+    With ``bulk``, finished games come from ``bulk(game_ids)`` first
+    (``{game_id: lines}``); the ones it leaves out are ``fetch``-ed, and
+    cached, like any other.
+    """
     name = f"odds_{season}.json"
     cached = cache.read_json(name)
     missing = [g for g in final_ids if g not in cached]
+    if bulk is not None:
+        if missing:
+            found = bulk(missing)
+            final = {g: found[g] for g in missing if g in found}
+            logger.info("%d: %d of %d finished games' lines in bulk",
+                        season, len(final), len(missing))  # fmt: skip
+            if final:
+                cache.write_json(name, cached | final)
+                cached = cached | final
+            missing = [g for g in missing if g not in final]
     wanted = missing + [g for g in upcoming_ids if g not in cached]
     if wanted:
         logger.info("%d: fetching lines of %d games", season, len(wanted))
@@ -713,11 +736,15 @@ def basketball_season(
     cache: Cache,
     lines_days: int,
     wants_lines: Callable[[pd.DataFrame], pd.Series] | None = None,
+    bulk_lines: Callable[[int, pd.DataFrame], dict[str, dict]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """``(schedule, team box scores, lines)`` of one season of ``league``.
 
     ``wants_lines(games)`` limits which games' lines are fetched (default:
     all; college basketball skips games against non-Division I teams).
+    ``bulk_lines(season, games)`` gives finished games' lines from another
+    source (see :func:`season_lines`); ESPN then has upcoming games' and
+    the finished ones it leaves out.
     """
     schedule = season_file(
         league.schedule_url.format(season=season),
@@ -737,5 +764,13 @@ def basketball_season(
         if wants_lines is not None:
             games = games[wants_lines(games)]
         finished, soon = lines_to_fetch(games, today, lines_days)
-        lines = season_lines(season, finished, soon, cache, league.fetch_odds)
+        bulk = None
+        if bulk_lines is not None:
+
+            def bulk(ids: list[str]) -> dict[str, dict]:
+                return bulk_lines(season, games[games["game_id"].isin(ids)])
+
+        lines = season_lines(
+            season, finished, soon, cache, league.fetch_odds, bulk=bulk
+        )
     return schedule, box, lines

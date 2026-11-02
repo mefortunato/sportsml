@@ -236,14 +236,21 @@ uv run sportsml cbb fit transformer #                                    -> mode
 uv run sportsml cbb predict --model_dir models/cbb/transformer
 ```
 
-`wcbb` is the same for the women's game. No key is needed: like the NBA's,
-games and team box scores come from sportsdataverse's ESPN files (men's
-from 2002-03, women's from 2005-06, upcoming games included) and lines from
-ESPN's odds API, one request per game between two Division I teams (men's
-from 2012-13, women's from 2021-22). A season is ~6,000 games, so a full
-men's download makes ~85,000 odds requests (1-2 hours); finished seasons
-and games are cached in `data/<sport>/espn_cache`, and a refresh makes a
-few hundred.
+`wcbb` is the same for the women's game. Like the NBA's, games and team
+box scores come from sportsdataverse's ESPN files (men's from 2002-03,
+women's from 2005-06, upcoming games included) and lines from ESPN's odds
+API, one request per game between two Division I teams (men's from
+2012-13, women's from 2021-22). A season is ~6,000 games, so a full men's
+download from ESPN makes ~85,000 odds requests (1-2 hours), and ESPN
+answers a runner that many with 403. With `CBBD_API_KEY` (free at
+[CollegeBasketballData](https://collegebasketballdata.com)) the men's
+finished games' lines come from its `/lines` instead, about a dozen
+requests a season, every book's spread, total and moneylines but no spread
+or over/under prices; upcoming games' lines, and those of finished games
+CollegeBasketballData has none for (about 6% of a recent season, more of
+older ones), still come from ESPN. Finished
+seasons and games are cached in `data/<sport>/espn_cache`, and a refresh
+makes a few hundred requests (two to CollegeBasketballData).
 
 - **Division I and the rest.** A Division I team is one ESPN files under a
   conference. Division II, III and NAIA opponents play one or two of these
@@ -565,7 +572,7 @@ many upcoming dates are exported (`upcoming_dates`).
 | NFL | `nfl` | [nflverse](https://github.com/nflverse/nflverse-data) via `nflreadpy` | none |
 | College football | `cfb` | [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) (CFBD's schedule, ESPN's box scores) and ESPN's odds API | none |
 | NBA | `nba` | ESPN via [sportsdataverse](https://github.com/sportsdataverse/sportsdataverse-data) and ESPN's odds API | none |
-| Men's college basketball | `cbb` | ESPN via sportsdataverse and ESPN's odds API | none |
+| Men's college basketball | `cbb` | ESPN via sportsdataverse, lines from CollegeBasketballData and ESPN's odds API | `CBBD_API_KEY` (optional: without it every line from ESPN) |
 | Women's college basketball | `wcbb` | ESPN via sportsdataverse and ESPN's odds API | none |
 | WNBA | `wnba` | ESPN via sportsdataverse and ESPN's odds API | none |
 | NHL | `nhl` | The NHL's stats API (`api.nhle.com`), ESPN's odds API | none |

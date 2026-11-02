@@ -187,3 +187,43 @@ def test_women_share_the_builder():
     assert get_sport("wcbb").schema is SCHEMA
     assert college.WOMEN.league.league == "womens-college-basketball"
     assert college.WOMEN.league.first_lines_season == 2022
+
+
+def test_conferences_fall_back_to_the_cached_copy(monkeypatch, tmp_path):
+    import httpx
+
+    from sportsml import espn
+    from sportsml.cbb.data import teams
+
+    groups = [{"name": "ACC", "shortName": "ACC", "teams": [{"id": "150"}]}]
+    cache = espn.Cache(str(tmp_path))
+    monkeypatch.setattr(teams, "_fetch_conferences", lambda league, season: groups)
+    assert teams.conferences("mens-college-basketball", 2025, cache) == groups
+
+    def refused(league, season):
+        request = httpx.Request("GET", "https://sports.core.api.espn.com")
+        response = httpx.Response(403, request=request)
+        raise httpx.HTTPStatusError("403", request=request, response=response)
+
+    monkeypatch.setattr(teams, "_fetch_conferences", refused)
+    assert teams.conferences("mens-college-basketball", 2025, cache) == groups
+    # nothing cached: teams go without conferences instead of failing
+    assert teams.conferences("mens-college-basketball", 2024, cache) == []
+
+
+def test_build_stops_when_odds_were_refused(monkeypatch, tmp_path):
+    from sportsml import espn
+    from sportsml.web import build as web_build
+
+    class Sport:
+        def download(self):
+            espn._ODDS_FORBIDDEN.add(("basketball", "mens-college-basketball"))
+            return pd.DataFrame()
+
+    monkeypatch.setattr(espn, "_ODDS_FORBIDDEN", set())
+    monkeypatch.setattr(web_build, "get_sport", lambda sport: Sport())
+    monkeypatch.setattr(web_build, "get_view", lambda sport: None)
+    monkeypatch.setattr(web_build, "process", lambda sport, games: games)
+    with pytest.raises(RuntimeError, match="refused odds"):
+        web_build.build(sports=["cbb"], output_dir=str(tmp_path))
+    assert not (tmp_path / "cbb" / "games.csv").exists()

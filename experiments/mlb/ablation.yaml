@@ -1,0 +1,12 @@
+# mlb ablation: walk-forward over the last three complete seasons.
+#   uv run sportsml mlb ablate --config experiments/mlb/ablation.yaml
+seasons: [2024, 2025, 2026]
+baseline: base
+configs:
+  base: {}
+  market:
+    model: {market_tokens: true}
+  efficiency:
+    model: {efficiency: true}
+  all:
+    model: {market_tokens: true, efficiency: true, antisymmetric: true}

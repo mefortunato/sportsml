@@ -28,6 +28,7 @@ them predicted (and the market priced):
   above 0 means the model's probability carries information the market's
   does not; ``blend_gain`` is the Brier the blend saves over the market
   (in-sample, so an upper bound);
+- a ``vegas`` row: the market's own scores on the same games;
 - ``edge_corr`` (the correlation of model minus market margin with the
   result minus the market margin), against-the-spread and over/under pick
   rates.
@@ -49,6 +50,9 @@ from .core.io import Table, read_table
 from .core.metrics import evaluate
 from .core.schema import GameSchema
 from .core.sport import get_sport
+
+# the ablation table's row for the betting market itself
+MARKET_ROW = "vegas"
 
 
 def _run_job(
@@ -202,7 +206,7 @@ def ablation_table(
 
     ref = brier(aligned[baseline]["win_prob"].to_numpy(dtype=float))
     rows = []
-    for name, frame in {**aligned, "market": None}.items():
+    for name, frame in {**aligned, MARKET_ROW: None}.items():
         if frame is None:
             margin, prob = base["market_margin"].to_numpy(dtype=float), market
         else:

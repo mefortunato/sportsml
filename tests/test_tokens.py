@@ -286,7 +286,7 @@ def test_ablation_table_compares_configs_on_common_games():
     table = ablation_table(results, "toy", baseline="a")
     assert table.loc["a", "d_brier"] == 0
     assert table.loc["b", "d_brier"] > 0  # less informative than a
-    assert "market" in table.index
+    assert "vegas" in table.index
     assert "| b |" in format_table(table)
 
 

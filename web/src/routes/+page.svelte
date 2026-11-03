@@ -1,4 +1,5 @@
 <script lang="ts">
+	import HowItWorks from '$lib/components/HowItWorks.svelte';
 	import { links } from '$lib/links';
 	import { pct, seasonsText } from '$lib/format';
 	import { breakEven } from '$lib/markets';
@@ -52,6 +53,8 @@
 				with Vegas and how often that disagreement has been right.
 			</p>
 		</section>
+
+		<HowItWorks />
 
 		<section class="sports" aria-label="Sports">
 			{#each data.sports as info (info.sport)}

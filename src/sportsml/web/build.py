@@ -12,8 +12,10 @@ import pandas as pd
 from .. import espn
 from ..core.io import Table, read_table
 from ..core.process import process
+from ..core.schema import played
 from ..core.sport import BUILTIN_SPORTS, get_sport
 from .cache import open_store
+from .equivalent_code import EQUIVALENT_CODE
 from .views import get_view
 
 # Bump to rebuild every cached backtest season once, e.g. after a change the
@@ -43,15 +45,36 @@ def code_hash(sport: str | None = None) -> str:
     return digest.hexdigest()
 
 
+def ranking_dates(dates, every: int | None = None) -> list:
+    """The dates of a season to rank teams before: the first, then each
+    one at least ``every`` (in the schema's date units) after the last
+    kept, and the last. Every date when ``every`` is ``None``."""
+    dates = sorted(dates)
+    if not every or len(dates) < 3:
+        return dates
+    kept = [dates[0]]
+    for date in dates[1:-1]:
+        if date - kept[-1] >= every:
+            kept.append(date)
+    return [*kept, dates[-1]]
+
+
 def model_key(sport: str, max_epochs: int, code: str) -> str:
     """Identifies how a sport's model is trained (settings, epochs, code);
     with the season, :func:`backtest_key`."""
     return backtest_key(sport, None, max_epochs, code)
 
 
-def backtest_key(sport: str, season: int | None, max_epochs: int, code: str) -> str:
+def backtest_key(
+    sport: str,
+    season: int | None,
+    max_epochs: int,
+    code: str,
+    ranking_every: int | None = None,
+) -> str:
     """Identifies one season's walk-forward backtest: the same key means the
-    same model, training and code, so the stored results can be reused.
+    same model, training, code and ranking dates (:func:`ranking_dates`),
+    so the stored results can be reused.
 
     Game data is deliberately left out: finished seasons are treated as
     final (pass ``refresh_backtest`` after a source revises old data).
@@ -68,15 +91,18 @@ def backtest_key(sport: str, season: int | None, max_epochs: int, code: str) -> 
         "max_epochs": max_epochs,
         "code": code,
     }
+    if ranking_every is not None and season is not None:
+        # only when set: the keys of sports ranked before every date stay
+        spec["ranking_every"] = ranking_every
     text = json.dumps(spec, sort_keys=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
 def cached_backtest(
-    path: pathlib.Path, keys: dict[int, str], season: str = "season"
+    path: pathlib.Path, keys: dict[int, list[str]], season: str = "season"
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[int]]:
     """A previous build's pool and rankings rows for the seasons whose
-    backtest key is unchanged, and those seasons."""
+    backtest key is one of the season's ``keys``, and those seasons."""
     empty = pd.DataFrame(), pd.DataFrame(), []
     try:
         meta = json.loads((path / "meta.json").read_text())
@@ -88,7 +114,7 @@ def cached_backtest(
     reuse = [
         s
         for s, key in keys.items()
-        if stored.get(str(s)) == key
+        if stored.get(str(s)) in key
         and (pool[season] == s).any()
         and (rankings["season"] == s).any()
     ]
@@ -216,23 +242,38 @@ def build(
                 )
         schema = get_sport(sport).schema
         seasons = complete_seasons(table, schema)[-backtest_seasons:]
-        keys = {s: backtest_key(sport, s, max_epochs, code) for s in seasons}
+        every = view.ranking_every
+        keys = {s: backtest_key(sport, s, max_epochs, code, every) for s in seasons}
+        # seasons stored under an equivalent older code's keys are reused too
+        accepted = {
+            s: [
+                keys[s],
+                *(
+                    backtest_key(sport, s, max_epochs, old, every)
+                    for old in EQUIVALENT_CODE.get(code, ())
+                ),
+            ]
+            for s in seasons
+        }
         if refresh_backtest:
             pool, rankings, reused = pd.DataFrame(), pd.DataFrame(), []
         else:
-            pool, rankings, reused = cached_backtest(path, keys, schema.season)
-        fetched = []
+            pool, rankings, reused = cached_backtest(path, accepted, schema.season)
+        fetched, stored_as = [], {}
         if store is not None and not refresh_backtest:
             parts = [pool], [rankings]
             for s in seasons:
-                if (
-                    s in reused
-                    or (entry := store.get_season(sport, s, keys[s])) is None
-                ):
+                if s in reused:
+                    continue
+                for key in accepted[s]:
+                    if (entry := store.get_season(sport, s, key)) is not None:
+                        break
+                else:
                     continue
                 parts[0].append(entry[0])
                 parts[1].append(entry[1])
                 fetched.append(s)
+                stored_as[s] = key
             pool = pd.concat(parts[0], ignore_index=True)
             rankings = pd.concat(parts[1], ignore_index=True)
         missing = [s for s in seasons if s not in reused and s not in fetched]
@@ -249,8 +290,12 @@ def build(
         )
 
         ranked = []
+        game_days = played(table, schema).groupby(schema.season)[schema.date]
+        to_rank = {s: set(ranking_dates(d.unique(), every)) for s, d in game_days}
 
         def rank(predictor, season, date):
+            if date not in to_rank[season]:
+                return
             playing = table.loc[table[schema.season] == season, schema.team]
             for team, rating in power_ratings(predictor, playing.unique()).items():
                 ranked.append(
@@ -274,9 +319,12 @@ def build(
         rankings.to_csv(path / "rankings.csv", index=False)
         if store is not None:
             for s in seasons:
-                if s in fetched or (s not in missing and store.has_season(
-                    sport, s, keys[s]
-                )):  # fmt: skip
+                # (again under the current key if it came under an older one)
+                if stored_as.get(s) == keys[s] or (
+                    s not in missing
+                    and s not in stored_as
+                    and store.has_season(sport, s, keys[s])
+                ):
                     continue
                 store.put_season(
                     sport,

@@ -699,3 +699,49 @@ def test_build_reuses_unchanged_backtest_seasons(tmp_path, monkeypatch):
     assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 2, code)
     assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2023, 1, code)
     assert backtest_key("toy", 2022, 1, code) != backtest_key("toy", 2022, 1, "x")
+
+
+def test_ranking_dates_keep_the_first_last_and_every_nth():
+    from sportsml.web.build import ranking_dates
+
+    assert ranking_dates([3, 1, 2]) == [1, 2, 3]
+    assert ranking_dates(range(1, 16), 7) == [1, 8, 15]
+    assert ranking_dates(range(1, 13), 5) == [1, 6, 11, 12]
+    # game days with gaps: the next one at least `every` after the last kept
+    assert ranking_dates([1, 3, 6, 9, 10], 4) == [1, 6, 10]
+    assert ranking_dates([4, 9], 7) == [4, 9]
+
+
+def test_ranking_every_thins_backtest_and_current_rankings(
+    games, tmp_path, monkeypatch
+):
+    from sportsml.web import views
+    from sportsml.web.build import backtest_key, code_hash, ranking_dates
+
+    toy = views.get_view("toy")
+    monkeypatch.setitem(views._views, "toy", dataclasses.replace(toy, ranking_every=5))
+    build(sports=["toy"], output_dir=str(tmp_path), games=games,
+          backtest_seasons=1, max_epochs=1)  # fmt: skip
+
+    played = games[games["margin"].notna()]
+    weeks = {s: sorted(w["week"].unique()) for s, w in played.groupby("season")}
+    rankings = pd.read_csv(tmp_path / "toy" / "rankings.csv")
+    assert sorted(rankings["date"].unique()) == ranking_dates(weeks[2023], 5)
+    assert len(ranking_dates(weeks[2023], 5)) < len(weeks[2023])
+    # every game is still predicted
+    pool = pd.read_csv(tmp_path / "toy" / "pool.csv")
+    assert sorted(pool["week"].unique()) == weeks[2023]
+
+    # the setting is part of the key: not reused by a build ranking every date
+    meta = json.loads((tmp_path / "toy" / "meta.json").read_text())
+    code = code_hash("toy")
+    assert meta["backtest_cache"]["2023"] == backtest_key("toy", 2023, 1, code, 5)
+    assert backtest_key("toy", 2023, 1, code, 5) != backtest_key("toy", 2023, 1, code)
+
+    current = next(
+        s
+        for s in Snapshot.load(tmp_path / "toy").rankings()["seasons"]
+        if s["source"] == "current"
+    )
+    upcoming_week = games.loc[games["margin"].isna(), "week"].min()
+    assert current["dates"] == [*ranking_dates(weeks[2024], 5), upcoming_week]

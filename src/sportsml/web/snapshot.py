@@ -325,9 +325,12 @@ class Snapshot:
     def _with_current_rankings(self, predictor: Predictor) -> pd.DataFrame:
         """Baked rankings plus the current season's, from the saved model.
 
-        One rating per team before each played date of the season and before
-        its next date, from the games played until then (like the backtest).
+        One rating per team before each played date of the season (or
+        those :func:`~sportsml.web.build.ranking_dates` keeps) and before its
+        next date, from the games played until then (like the backtest).
         """
+        from .build import ranking_dates
+
         s = self.schema
         baked = self.baked_rankings
         season = (
@@ -338,7 +341,10 @@ class Snapshot:
         if pd.isna(season) or (len(baked) and season in set(baked["season"])):
             return baked
         current = self.games[self.games[s.season] == season]
-        dates = sorted(current.loc[current[s.target].notna(), s.date].unique())
+        dates = ranking_dates(
+            current.loc[current[s.target].notna(), s.date].unique(),
+            self.view.ranking_every,
+        )
         later = current.loc[current[s.target].isna(), s.date]
         dates += [later.min()] if len(later) else []
         playing = current[s.team].unique()

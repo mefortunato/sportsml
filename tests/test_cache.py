@@ -154,3 +154,36 @@ def test_max_new_seasons_fills_in_over_several_builds(tmp_path, spies):
     pool = run(tmp_path / "workflow", max_new_seasons=1)
     assert spies["backtest"] == [[2023], [2022]]
     assert set(pool["season"]) == {2022, 2023}
+
+
+def test_seasons_of_an_equivalent_older_code_are_reused(tmp_path, spies, monkeypatch):
+    import sportsml.web.build as build_module
+    from sportsml.web.build import backtest_key
+
+    cache = str(tmp_path / "cache")
+    run(tmp_path / "a", cache=cache)
+    old = code_hash("toy")
+    monkeypatch.setattr(build_module, "code_hash", lambda sport=None: "new code")
+    monkeypatch.setitem(build_module.EQUIVALENT_CODE, "new code", (old,))
+
+    # from the previous build and from the cache: nothing backtested, and the
+    # seasons are recorded and stored under the new keys
+    spies["backtest"].clear()
+    run(tmp_path / "a")
+    meta = json.loads((tmp_path / "a" / "toy" / "meta.json").read_text())
+    new = {str(s): backtest_key("toy", s, 1, "new code") for s in (2022, 2023)}
+    assert meta["backtest_cache"] == new
+    run(tmp_path / "b", cache=cache)
+    assert spies["backtest"] == []
+    store = DirectoryStore(cache)
+    assert all(store.has_season("toy", int(s), key) for s, key in new.items())
+
+    # once stored under the new keys the old ones are not needed
+    monkeypatch.delitem(build_module.EQUIVALENT_CODE, "new code")
+    run(tmp_path / "c", cache=cache)
+    assert spies["backtest"] == []
+
+    # without the mapping, a new code backtests again
+    monkeypatch.setattr(build_module, "code_hash", lambda sport=None: "other code")
+    run(tmp_path / "d", cache=cache)
+    assert spies["backtest"] == [[2022, 2023]]

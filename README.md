@@ -344,6 +344,41 @@ come from ESPN's odds API from 2013, matched like the NHL's
 - The Elo baseline uses `k` 4, a 24-point home edge and 90 Elo points a
   run (tuned on 2010-2018).
 
+## Play-by-play game embeddings (NFL)
+
+The transformer can also read a vector per team per game from a
+play-by-play model, [runitback](https://github.com/mefortunato/runitback)'s
+`runitback nfl embed` (the mean of its play transformer's hidden states over
+each team's possessions and its opponent's). Each history game's vector goes
+through a LayerNorm and a low-rank projection (`embedding_rank`, default 16)
+and is added to that game's token; games without one (before 1999, or not
+embedded yet) get a learned "missing" vector, and in training a game's vector
+is swapped for it with probability `embedding_drop`, so the model also works
+from the box score alone. The file is matched to games on `game_id` and
+`team`, and read again on every state refresh, so `predict` picks up new
+weeks once runitback has embedded them.
+
+```sh
+uv run sportsml nfl fit transformer \
+    --game_embeddings data/nfl/embeddings/games.parquet \
+    --model.encoder.init_args.embedding_dim 384   # 2 x runitback's d_model
+```
+
+A saved model is tied to the checkpoint that wrote its vectors: a refresh
+from another checkpoint's file fails, so retrain after retraining runitback.
+The play model can also leak: in a backtest, the vectors of season Y's games
+must come from a runitback checkpoint that never saw season Y. Pass a
+template and each fold reads its own file; a fold fails if the file's
+`in_sample` column says its play model was trained on the test season:
+
+```sh
+uv run sportsml nfl backtest --family transformer \
+    --game_embeddings 'data/nfl/embeddings/cutoff_{season}.parquet'
+```
+
+The runitback README shows how to write the per-season files. A plain `fit`
+only warns when the play model saw the test seasons.
+
 ## Backtesting against the market
 
 ```sh

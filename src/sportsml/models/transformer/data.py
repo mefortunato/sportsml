@@ -16,6 +16,7 @@ import pandas as pd
 import torch
 
 from ...core.schema import GameSchema, played
+from .embeddings import GameEmbeddings
 
 # Pre-game strength of both teams in each token's game (opponent_strength).
 STRENGTH_COLUMNS = ["_team_elo", "_opp_elo", "_opp_margin_avg"]
@@ -78,6 +79,8 @@ class SequenceFeatures:
     schema: GameSchema | None = None
     opponent_strength: bool = False
     elo_margin: bool = False
+    # per-game vectors from a play-by-play model, next to each token
+    game_embeddings: GameEmbeddings | None = None
 
     @classmethod
     def fit(
@@ -87,6 +90,7 @@ class SequenceFeatures:
         history: int,
         opponent_strength: bool = False,
         elo_margin: bool = False,
+        game_embeddings: GameEmbeddings | None = None,
     ) -> SequenceFeatures:
         location = [schema.location] if schema.location else []
         tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
@@ -107,6 +111,7 @@ class SequenceFeatures:
             schema=schema,
             opponent_strength=opponent_strength,
             elo_margin=elo_margin,
+            game_embeddings=game_embeddings,
         )
 
     @property
@@ -116,6 +121,23 @@ class SequenceFeatures:
     @property
     def context_dim(self) -> int:
         return len(self.context_columns)
+
+    @property
+    def embedding_dim(self) -> int:
+        source = getattr(self, "game_embeddings", None)  # saved before embeddings
+        return source.dim if source is not None else 0
+
+    def embeddings(self, games: pd.DataFrame) -> dict[str, torch.Tensor]:
+        """``{"emb", "emb_known"}`` for played ``games`` (empty without
+        game embeddings), aligned with :meth:`tokens`."""
+        source = getattr(self, "game_embeddings", None)
+        if source is None:
+            return {}
+        values, known = source.table(games, self.schema)
+        return {
+            "emb": torch.from_numpy(values),
+            "emb_known": torch.from_numpy(known),
+        }
 
     def _standardize(self, frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
         values = frame.reindex(columns=columns).apply(pd.to_numeric, errors="coerce")
@@ -167,22 +189,28 @@ def opponent_rows(games: pd.DataFrame, schema: GameSchema) -> np.ndarray:
     return position.reindex(opp).fillna(-1).astype(np.int64).to_numpy()
 
 
-def sequence(tokens, seasons, index, season) -> dict[str, torch.Tensor]:
+def sequence(tokens, seasons, index, season, emb=None, emb_known=None):
     """Gather token sequences; ``index`` -1 entries are padding.
 
     Args:
         tokens: ``[N, F]`` token table; seasons: ``[N]`` their seasons.
         index: ``[B, K]`` rows of ``tokens`` per sequence.
         season: ``[B]`` season being predicted (for ``seasons_ago``).
+        emb / emb_known: Optional ``[N, E]`` game vectors of the same rows
+            and ``[N]`` whether each is known.
     """
     pad = index < 0
     safe = index.clamp(min=0)
     seasons_ago = (season[:, None] - seasons[safe]).masked_fill(pad, 0)
-    return {
+    out = {
         "tokens": tokens[safe].masked_fill(pad[..., None], 0.0),
         "seasons_ago": seasons_ago.float(),
         "pad": pad,
     }
+    if emb is not None:
+        out["emb"] = emb[safe].masked_fill(pad[..., None], 0.0)
+        out["emb_known"] = emb_known[safe] & ~pad
+    return out
 
 
 class SequenceData(torch.utils.data.Dataset):
@@ -201,6 +229,7 @@ class SequenceData(torch.utils.data.Dataset):
         extra_targets: tuple[str, ...] = (),
     ):
         self.tokens = torch.from_numpy(features.tokens(games))
+        self.embeddings = features.embeddings(games)
         self.seasons = torch.tensor(games[schema.season].to_numpy(dtype=np.float32))
         self.history = torch.from_numpy(histories(games, schema, features.history))
         opp = torch.from_numpy(opponent_rows(games, schema))
@@ -226,9 +255,14 @@ class SequenceData(torch.utils.data.Dataset):
     def __getitem__(self, positions) -> dict:
         rows = self.rows[torch.as_tensor(positions)]
         season = self.seasons[rows]
+        emb = self.embeddings
         return {
-            "team": sequence(self.tokens, self.seasons, self.history[rows], season),
-            "opp": sequence(self.tokens, self.seasons, self.opp_history[rows], season),
+            "team": sequence(
+                self.tokens, self.seasons, self.history[rows], season, **emb
+            ),
+            "opp": sequence(
+                self.tokens, self.seasons, self.opp_history[rows], season, **emb
+            ),
             "context": self.context[rows],
             "y": self.y[rows],
         }

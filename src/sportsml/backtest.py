@@ -94,11 +94,21 @@ def gnn_fitter(
 
 
 def transformer_fitter(
-    sport: str, max_epochs: int = 100, model: dict | None = None, **kwargs
+    sport: str,
+    max_epochs: int = 100,
+    model: dict | None = None,
+    game_embeddings: str | None = None,
+    **kwargs,
 ) -> Fitter:
     """``model``: encoder/config overrides for :func:`default_model`, e.g.
     ``{"history": 24, "season_decay": True}``; ``kwargs`` go to
-    :func:`fit_transformer`."""
+    :func:`fit_transformer`.
+
+    ``game_embeddings``: per-game vectors file, or a template with
+    ``{season}``, filled with each fold's test season, so every fold reads
+    vectors from a play model that never saw it (e.g.
+    ``data/nfl/embeddings/cutoff_{season}.parquet``). Folds fail if the
+    file's play model was trained on the test season."""
     from .models.lightning import default_trainer
     from .models.transformer import default_model, fit_transformer
 
@@ -108,6 +118,10 @@ def transformer_fitter(
             enable_progress_bar=False,
             enable_model_summary=False,
         )
+        embeddings = None
+        if game_embeddings is not None:
+            test_season = int(max([*split.train, *split.val])) + 1
+            embeddings = game_embeddings.format(season=test_season)
         return fit_transformer(
             games,
             sport,
@@ -116,8 +130,11 @@ def transformer_fitter(
                 kwargs.get("context"),
                 kwargs.get("opponent_strength"),
                 kwargs.get("elo_margin", False),
+                game_embeddings=embeddings,
                 **(model or {}),
             ),
+            game_embeddings=embeddings,
+            strict_embeddings=embeddings is not None,
             trainer=trainer,
             train_seasons=split.train,
             val_seasons=split.val,
@@ -155,13 +172,17 @@ def family_fitter(
     sport: str,
     model: sklearn.base.BaseEstimator | None = None,
     max_epochs: int = 100,
+    game_embeddings: str | None = None,
 ) -> Fitter:
     """The :data:`Fitter` of a built-in model family.
 
     ``model`` is the sklearn regressor for ``sklearn``; ``max_epochs`` caps
     training of the neural families, which get a fresh default model and
-    trainer for every fit.
+    trainer for every fit; ``game_embeddings`` is passed to
+    :func:`transformer_fitter`.
     """
+    if game_embeddings is not None and family != "transformer":
+        raise ValueError("game_embeddings needs family='transformer'")
     if family in ("home", "point_diff", "elo"):
         return baseline_fitter(sport, family)
     if family == "sklearn":
@@ -169,7 +190,9 @@ def family_fitter(
     if family == "gnn":
         return gnn_fitter(sport, max_epochs=max_epochs)
     if family == "transformer":
-        return transformer_fitter(sport, max_epochs=max_epochs)
+        return transformer_fitter(
+            sport, max_epochs=max_epochs, game_embeddings=game_embeddings
+        )
     raise ValueError(f"unknown model family {family!r}; choose from {FAMILIES}")
 
 
@@ -570,6 +593,7 @@ def backtest(
     output_dir: str | None = None,
     print_summary: bool = True,
     on_date: OnDate | None = None,
+    game_embeddings: str | None = None,
 ) -> dict:
     """Walk-forward backtest of a model family against the market.
 
@@ -584,6 +608,9 @@ def backtest(
         output_dir: Write ``<family>_games.csv`` (one row per game) and
             ``<family>_summary.json`` here.
         on_date: Passed to :func:`walk_forward`.
+        game_embeddings: ``transformer`` only: per-game vectors from a
+            play-by-play model, as a path or a template with ``{season}``
+            (each test season's own file); see :func:`transformer_fitter`.
 
     Returns:
         ``{"results": per-game DataFrame, "summary": dict}``
@@ -592,7 +619,13 @@ def backtest(
     schema = get_sport(sport).schema
     if seasons is None:
         seasons = complete_seasons(games, schema)[-n_seasons:]
-    fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
+    fitter = family_fitter(
+        family,
+        sport,
+        model=model,
+        max_epochs=max_epochs,
+        game_embeddings=game_embeddings,
+    )
 
     results = walk_forward(
         games, sport, fitter, seasons, verbose=print_summary, on_date=on_date

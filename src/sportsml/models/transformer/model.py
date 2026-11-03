@@ -35,6 +35,17 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
             season opener's sequence (no games yet this season) is therefore
             not penalized; mid-season, last season's games count for less
             than this season's.
+        embedding_dim: Size of an external per-game vector added to each
+            token (e.g. runitback's pooled play-by-play states; 0 = none).
+            It goes through a LayerNorm and a low-rank projection
+            (``embedding_rank``), since a game vector can be far wider than
+            the few thousand games a sport has can fit. Games without a
+            vector get a learned "missing" embedding instead.
+        embedding_dropout: Dropout on the game vector's entries.
+        embedding_drop: Chance, in training, that a game's vector is
+            replaced by the "missing" embedding, so the model also works
+            from the box score alone (games before play-by-play, or whose
+            vectors are not written yet).
     """
 
     def __init__(
@@ -49,6 +60,10 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         season_decay: bool = False,
         max_seasons_ago: int = 3,
         decay_init: float = 1.0,
+        embedding_dim: int = 0,
+        embedding_rank: int = 16,
+        embedding_dropout: float = 0.1,
+        embedding_drop: float = 0.1,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -70,6 +85,21 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
             if season_decay
             else None
         )
+        self.embedding_dim = embedding_dim
+        self.embedding_drop = embedding_drop
+        self.game_embedding = (
+            nn.Sequential(
+                nn.LayerNorm(embedding_dim),
+                nn.Dropout(embedding_dropout),
+                nn.Linear(embedding_dim, embedding_rank, bias=False),
+                nn.Linear(embedding_rank, d_model),
+            )
+            if embedding_dim
+            else None
+        )
+        self.missing_embedding = (
+            nn.Parameter(torch.zeros(d_model)) if embedding_dim else None
+        )
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         layer = nn.TransformerEncoderLayer(
             d_model,
@@ -84,16 +114,22 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
         )
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, tokens, seasons_ago, pad) -> torch.Tensor:
+    def forward(
+        self, tokens, seasons_ago, pad, emb=None, emb_known=None
+    ) -> torch.Tensor:
         """
         Args:
             tokens: ``[B, K, token_dim]``; seasons_ago: ``[B, K]``;
             pad: ``[B, K]`` bool, True where there is no game.
+            emb / emb_known: ``[B, K, embedding_dim]`` game vectors and
+                ``[B, K]`` whether each is known (with ``embedding_dim``).
         Returns:
             ``[B, d_model]`` team embeddings.
         """
         batch, length, _ = tokens.shape
         x = self.embed(torch.cat([tokens, seasons_ago.unsqueeze(-1)], dim=-1))
+        if getattr(self, "game_embedding", None) is not None:
+            x = x + self._game_embedding(emb, emb_known)
         if self.season is not None:
             ago = seasons_ago.clamp(0, self.max_seasons_ago).long()
             x = x + self.season(ago)
@@ -104,6 +140,18 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
             return self.norm(self.encoder(x, src_key_padding_mask=pad)[:, 0])
         return self.norm(
             self.encoder(x, mask=self._attention_bias(seasons_ago, pad))[:, 0]
+        )
+
+    def _game_embedding(self, emb, known) -> torch.Tensor:
+        if emb is None:
+            raise ValueError(
+                "this encoder was trained with game embeddings; the batch has none"
+            )
+        if self.training and self.embedding_drop > 0:
+            keep = torch.rand(known.shape, device=known.device) >= self.embedding_drop
+            known = known & keep
+        return torch.where(
+            known[..., None], self.game_embedding(emb), self.missing_embedding
         )
 
     def _attention_bias(self, seasons_ago, pad) -> torch.Tensor:
@@ -242,6 +290,7 @@ class TransformerMatchupModel(MatchupModel):
         games = played(games, s).sort_values([s.season, s.date], kind="stable")
         self.state_season = games[s.season].max()
         tokens = self.features.tokens(games)
+        self.embeddings = self.features.embeddings(games)
         seasons = games[s.season].to_numpy(dtype=np.float32)
         # teams of this season or the last: a team still waiting for its
         # first game of the season (a bye, a staggered start) keeps its state
@@ -279,7 +328,8 @@ class TransformerMatchupModel(MatchupModel):
 
         def side(keys):
             index = self.history[[self.team_index[k] for k in keys]]
-            return sequence(self.tokens, self.seasons, index, season)
+            emb = getattr(self, "embeddings", {})  # saved before embeddings
+            return sequence(self.tokens, self.seasons, index, season, **emb)
 
         batch = {
             "team": side(matchups[s.team]),

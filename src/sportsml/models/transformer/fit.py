@@ -13,11 +13,13 @@ from ...core.splits import split_seasons
 from ...core.sport import get_sport
 from ..lightning import best_model, default_trainer, output_targets, seed_and_reset
 from .data import SequenceData, SequenceFeatures, extra_columns
+from .embeddings import GameEmbeddings, embedding_dim
 from .model import PairHead, SequenceEncoder, TransformerMatchupModel, TransformerModel
 
 ENCODER_KEYS = (
     "history", "d_model", "nhead", "num_layers", "dropout",
     "season_embedding", "season_decay", "max_seasons_ago", "decay_init",
+    "embedding_dim", "embedding_rank", "embedding_dropout", "embedding_drop",
 )  # fmt: skip
 
 
@@ -109,8 +111,14 @@ def default_model(
     elo_margin: bool = False,
     total_weight: float | None = None,
     stats_weight: float | None = None,
+    game_embeddings: str | None = None,
     **overrides,
 ) -> TransformerModel:
+    """A :class:`TransformerModel` from :func:`transformer_config`;
+    ``game_embeddings`` (a file of per-game vectors) sets the encoder's
+    ``embedding_dim`` to the file's."""
+    if game_embeddings is not None:
+        overrides["embedding_dim"] = embedding_dim(game_embeddings)
     config = transformer_config(
         sport,
         context,
@@ -161,6 +169,8 @@ def fit_transformer(
     elo_margin: bool = False,
     total_weight: float | None = None,
     stats_weight: float | None = None,
+    game_embeddings: str | None = None,
+    strict_embeddings: bool = False,
     seed: int | None = 0,
     overwrite: bool = False,
     print_metrics: bool = True,
@@ -191,6 +201,13 @@ def fit_transformer(
             ``pred_total``) and every box-score stat, with these loss
             weights (None: the sport's ``Sport.transformer`` setting). Used
             to build the default model; ignored with ``model``.
+        game_embeddings: File of per-game, per-team vectors from a
+            play-by-play model (``runitback nfl embed``), added to each
+            history token; see :mod:`~sportsml.models.transformer.embeddings`.
+            The model's ``encoder.embedding_dim`` must match the file.
+        strict_embeddings: Fail, instead of warn, if the play model was
+            trained on games after the last train / val season (a leak when
+            those games are scored). Backtests set it.
         seed: Seed for weight initialization and batch order (None: random).
 
     Returns:
@@ -213,10 +230,20 @@ def fit_transformer(
         elo_margin,
         total_weight=total_weight,
         stats_weight=stats_weight,
+        game_embeddings=game_embeddings,
     )
+    source = None
+    if game_embeddings is not None:
+        source = GameEmbeddings.from_file(game_embeddings, strict_embeddings)
+        source.fit_season = int(max([*split.train, *split.val]))
     train_games = games[games[schema.season].isin(split.train)]
     features = SequenceFeatures.fit(
-        train_games, schema, model.encoder.history, opponent_strength, elo_margin
+        train_games,
+        schema,
+        model.encoder.history,
+        opponent_strength,
+        elo_margin,
+        game_embeddings=source,
     )
     _check_dims(model, features)
     extra = tuple(model.extra_targets)
@@ -293,6 +320,10 @@ def _check_dims(model: TransformerModel, features: SequenceFeatures) -> None:
         "encoder token_dim": (model.encoder.token_dim, features.token_dim),
         "head context_dim": (model.head.context_dim, features.context_dim),
         "head in_dim": (model.head.in_dim, model.encoder.out_dim),
+        "encoder embedding_dim": (
+            getattr(model.encoder, "embedding_dim", 0),
+            features.embedding_dim,
+        ),
     }
     wrong = {k: v for k, v in expected.items() if v[0] != v[1]}
     if wrong:

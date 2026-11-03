@@ -12,7 +12,10 @@ and a calibrated win probability, with three interchangeable model families:
   seasons), so season openers still have a full history. `--opponent_strength
   true` (with `--model.encoder.init_args.token_dim` raised by 3) also gives
   each game the pre-game Elo of both teams and the opponent's season-to-date
-  margin; on NFL 2021-2025 that did not change the backtest Brier.
+  margin; on NFL 2021-2025 that did not change the backtest Brier. History
+  tokens can also carry the market's past view of each game
+  (`market_tokens`) and per-game efficiency rates (`efficiency`); see
+  [Experiments](#experiments).
 
 The neural families can also regress the total (combined points) and every
 box-score stat next to the margin, as extra outputs with their own loss
@@ -424,6 +427,90 @@ drawdown and profit by season; `staking_summary.json` and
 Any model can be backtested from Python with
 `sportsml.backtest.walk_forward(games, sport, fitter, seasons)`, where
 `fitter(games, split)` returns a fitted `Predictor`.
+
+## Experiments
+
+Changes to the transformer are judged by walk-forward ablations: every
+configuration is backtested on the same seasons (each fit on the seasons
+before it), and the report gives each one's Brier score and its paired
+difference from a baseline with a bootstrap 95% CI, its gap to the market,
+the Brier-optimal weight of the model in a blend with the market, the
+correlation of its edge (model minus market) with the result, and ATS /
+over-under records:
+
+```sh
+uv run sportsml nfl ablate --config experiments/nfl/ablation.yaml
+uv run sportsml nfl tune --config experiments/nfl/tune.yaml
+```
+
+`ablate` runs the configs in `experiments/<sport>/ablation.yaml` (model
+overrides and fit settings per config) in parallel processes, caches each
+season's predictions under `experiments/<sport>/ablation/<config>/`, and
+writes `ablation.md` / `ablation.json`. `tune` is an Optuna search
+(`uv sync --extra tune`) over learning rate, weight decay, dropout, width,
+heads, layers, head size, history length, season decay and batch size; a
+trial is a walk-forward backtest of the tuning seasons, scored by mean
+Brier, and the median pruner stops trials already worse than most after a
+season or two. Tune on seasons before the ones you report.
+
+What the options do:
+
+- `market_tokens: true`: each history game also carries its closing spread,
+  the cover margin, the probit of the no-vig moneyline probability, the win
+  surprise, the total and the total's residual, and a has-line flag, so
+  the model sees how the team did against expectations.
+- `market_rating: true`: a running per-team rating fitted to the closing
+  lines (rating - opponent rating + home ~ spread) before each game.
+- `efficiency: true`: per-game rates from the box score (`Sport.efficiency`,
+  [`core/efficiency.py`](src/sportsml/core/efficiency.py)): NFL
+  play-by-play EPA / play, success rate, early-down and neutral EPA,
+  explosive plays, special teams and drive scoring; CFB yards / points per
+  play and down conversion; basketball possessions, ratings and the four
+  factors; NHL Corsi, Fenwick, shooting / save % and PDO; MLB OBP, SLG,
+  ISO, K% / BB%, BABIP and FIP per PA. Each for the team and its opponent.
+- `antisymmetric: true`: the head predicts margin(A, B) = (g(A, B) -
+  g(B, A)) / 2, so swapping the teams exactly negates the margin.
+- `ensemble: N` (fit setting): average N models trained from different
+  seeds.
+
+### NFL, 2016-2025 (2,761 games)
+
+Brier difference from the old default (a 2-layer, 20-game transformer;
+negative is better), 95% CI:
+
+| config | Brier | Δ vs old default | vs market | edge r | ATS |
+|---|---|---|---|---|---|
+| old default | 0.2202 | | +0.0096 ± 0.0036 | 0.018 | 51.9% |
+| same, another seed | 0.2207 | +0.0005 ± 0.0022 | +0.0101 ± 0.0038 | 0.018 | 51.7% |
+| antisymmetric head | 0.2198 | -0.0004 ± 0.0014 | +0.0092 ± 0.0037 | 0.019 | 50.9% |
+| market tokens | 0.2211 | +0.0010 ± 0.0021 | +0.0106 ± 0.0037 | 0.016 | 52.0% |
+| efficiency | 0.2200 | -0.0001 ± 0.0020 | +0.0095 ± 0.0036 | 0.028 | 52.3% |
+| market tokens + efficiency | 0.2182 | -0.0020 ± 0.0021 | +0.0076 ± 0.0036 | 0.049 | 53.9% |
+| + antisymmetric | 0.2183 | -0.0019 ± 0.0023 | +0.0077 ± 0.0036 | 0.051 | 53.1% |
+| market rating | 0.2182 | -0.0019 ± 0.0021 | +0.0077 ± 0.0035 | 0.040 | 52.1% |
+| market rating + efficiency | 0.2182 | -0.0020 ± 0.0022 | +0.0076 ± 0.0035 | 0.039 | 52.4% |
+| tuned (market + efficiency) | 0.2180 | -0.0022 ± 0.0022 | +0.0074 ± 0.0035 | 0.041 | 52.0% |
+| tuned, 5-seed ensemble | 0.2179 | -0.0022 ± 0.0020 | +0.0074 ± 0.0034 | 0.040 | 51.4% |
+| market | 0.2106 | | | | |
+
+Market tokens and efficiency stats each do nothing alone but together cut
+about a fifth of the gap to the market, and they make the model's
+disagreements with the line more informative (edge correlation 0.018 ->
+0.049). The market rating is an equivalent alternative to the market
+tokens. The antisymmetric head is neutral (the predictor already averages
+each game with its mirror). The Optuna search (43 trials on 2012-2015,
+[`experiments/nfl/tune`](experiments/nfl/tune/best.json)) agreed on a
+wider, shallower model with a shorter history (d_model 128, 8 heads, 1
+layer, 14 games, lr 1.4e-4): 0.2210 vs 0.2261 for the old default on the
+tuning seasons, but on the held-out seasons it only matched market tokens +
+efficiency. A five-seed ensemble gave the same mean with a tighter
+interval. Changing seed alone moves a season's Brier by up to 0.0045, so
+gains under about 0.002 are noise. The tuned configuration (without the
+ensemble) is now the NFL default. The model still trails the market by
+0.0074 Brier, and the blend weight on the model (0.14 ± 0.17) does not
+exclude zero.
+
+<!-- OTHER SPORTS -->
 
 ## Web app
 

@@ -14,9 +14,19 @@
 # few dozen to a hundred requests a run; so do men's and women's college
 # basketball and the WNBA. NHL and MLB results come from the leagues' own
 # stats APIs and their lines from ESPN.
+#
+# A push to main that changes the frontend (web/) also rebuilds and
+# redeploys, so a merged UI change goes live without waiting for the next
+# scheduled run. Those runs keep the deployed NFL lines instead of spending
+# The Odds API quota (see "Export fresh data and lines").
 name: Site
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/site.yml"
   workflow_dispatch:
     inputs:
       webdata_sha256:
@@ -101,7 +111,9 @@ jobs:
         uses: actions/configure-pages@v5
       - name: Export fresh data and lines
         env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          # not on a push: without the key the fetch fails and the deployed
+          # lines carry over, keeping the quota for the scheduled runs
+          ODDS_API_KEY: ${{ github.event_name != 'push' && secrets.ODDS_API_KEY || '' }}
           # men's college basketball lines (see train.yml)
           CBBD_API_KEY: ${{ secrets.CBBD_API_KEY }}
         run: >

@@ -1,3 +1,4 @@
+from ..core.efficiency import nfl_efficiency
 from ..core.sport import Sport
 from .data.download import download
 from .data.features import SCHEMA
@@ -6,6 +7,7 @@ SPORT = Sport(
     name="nfl",
     schema=SCHEMA,
     download=download,
+    efficiency=nfl_efficiency,
     # tuned on 2025 validation: early stopping otherwise hits at epoch 1
     gnn={
         "hidden_dim": 128,

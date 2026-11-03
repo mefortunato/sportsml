@@ -1,3 +1,4 @@
+from ..core.efficiency import nhl_efficiency
 from ..core.sport import Sport
 from .data.download import download
 from .data.features import SCHEMA
@@ -6,6 +7,7 @@ SPORT = Sport(
     name="nhl",
     schema=SCHEMA,
     download=download,
+    efficiency=nhl_efficiency,
     gnn={"hidden_dim": 128, "out_dim": 64, "num_layers": 3},
     # about half a season of games, as in the NBA
     transformer={"history": 40, "total_weight": 1.0},

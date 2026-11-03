@@ -1,3 +1,4 @@
+from ..core.efficiency import basketball_efficiency
 from ..core.sport import Sport
 from .data.download import download
 from .data.features import SCHEMA
@@ -6,6 +7,7 @@ SPORT = Sport(
     name="wnba",
     schema=SCHEMA,
     download=download,
+    efficiency=basketball_efficiency,
     gnn={"hidden_dim": 128, "out_dim": 64, "num_layers": 3},
     # 40-44 games a season: about a season of history, as in the NBA's 40
     transformer={"history": 40, "total_weight": 1.0},

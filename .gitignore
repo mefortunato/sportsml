@@ -158,3 +158,6 @@ notebooks/lightning_logs
 /predictions
 /backtests
 /webdata
+/logs
+/experiments/*/*/*/
+/experiments/*/*/study.log

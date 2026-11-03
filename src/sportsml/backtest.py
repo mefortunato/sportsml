@@ -94,20 +94,28 @@ def gnn_fitter(
 
 
 def transformer_fitter(
-    sport: str, max_epochs: int = 100, model: dict | None = None, **kwargs
+    sport: str,
+    max_epochs: int = 100,
+    model: dict | None = None,
+    patience: int = 10,
+    **kwargs,
 ) -> Fitter:
     """``model``: encoder/config overrides for :func:`default_model`, e.g.
-    ``{"history": 24, "season_decay": True}``; ``kwargs`` go to
-    :func:`fit_transformer`."""
+    ``{"history": 24, "season_decay": True, "market_tokens": True,
+    "antisymmetric": True}``; ``kwargs`` go to :func:`fit_transformer`
+    (e.g. ``ensemble=5``, ``batch_size=128``)."""
     from .models.lightning import default_trainer
     from .models.transformer import default_model, fit_transformer
 
-    def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
-        trainer = default_trainer(
+    def trainer():
+        return default_trainer(
             max_epochs=max_epochs,
+            patience=patience,
             enable_progress_bar=False,
             enable_model_summary=False,
         )
+
+    def fit(games: pd.DataFrame, split: SeasonSplit) -> Predictor:
         return fit_transformer(
             games,
             sport,
@@ -115,7 +123,7 @@ def transformer_fitter(
                 sport,
                 kwargs.get("context"),
                 kwargs.get("opponent_strength"),
-                kwargs.get("elo_margin", False),
+                kwargs.get("elo_margin"),
                 **(model or {}),
             ),
             trainer=trainer,

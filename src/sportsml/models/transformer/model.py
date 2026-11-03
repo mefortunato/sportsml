@@ -9,7 +9,7 @@ from lightning.pytorch.core.mixins import HyperparametersMixin
 from torch import nn
 
 from ...core.predictor import MatchupModel
-from ...core.schema import GameSchema, played
+from ...core.schema import GameSchema, mirror, played
 from ..lightning import MarginModule
 from .data import SequenceFeatures, sequence
 
@@ -129,6 +129,13 @@ class SequenceEncoder(nn.Module, HyperparametersMixin):
 class PairHead(nn.Module, HyperparametersMixin):
     """MLP on (team embedding, opponent embedding, context) -> margin, or
     ``out_dim`` outputs (margin first, then e.g. total and box-score stats).
+
+    With ``antisymmetric`` the MLP ``g`` also reads the matchup from the
+    opponent's side (embeddings swapped, ``opp_context`` the mirrored
+    context) and output 0, the margin, is ``(g(A, B) - g(B, A)) / 2``, so
+    the opponent's predicted margin is exactly its negative; the outputs in
+    ``symmetric_outputs`` (the total, a distribution's log-scales) are
+    averaged over both sides and the rest come from the team's side.
     """
 
     def __init__(
@@ -138,6 +145,8 @@ class PairHead(nn.Module, HyperparametersMixin):
         hidden_dim: int = 64,
         dropout: float = 0.1,
         out_dim: int = 1,
+        antisymmetric: bool = False,
+        symmetric_outputs: tuple[int, ...] = (),
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -145,6 +154,8 @@ class PairHead(nn.Module, HyperparametersMixin):
         self.in_dim = in_dim
         self.context_dim = context_dim
         self.out_dim = out_dim
+        self.antisymmetric = antisymmetric
+        self.symmetric_outputs = tuple(symmetric_outputs)
         self.net = nn.Sequential(
             nn.Linear(2 * in_dim + context_dim, hidden_dim),
             nn.ReLU(),
@@ -152,9 +163,21 @@ class PairHead(nn.Module, HyperparametersMixin):
             nn.Linear(hidden_dim, out_dim),
         )
 
-    def forward(self, team, opp, context) -> torch.Tensor:
+    def _side(self, team, opp, context) -> torch.Tensor:
         parts = [team, opp] + ([context] if self.context_dim else [])
-        out = self.net(torch.cat(parts, dim=-1))
+        return self.net(torch.cat(parts, dim=-1))
+
+    def forward(self, team, opp, context, opp_context=None) -> torch.Tensor:
+        out = self._side(team, opp, context)
+        if getattr(self, "antisymmetric", False):
+            back = self._side(
+                opp, team, context if opp_context is None else opp_context
+            )
+            columns = list(out.unbind(-1))
+            columns[0] = (out[:, 0] - back[:, 0]) / 2
+            for i in self.symmetric_outputs:
+                columns[i] = (out[:, i] + back[:, i]) / 2
+            out = torch.stack(columns, dim=-1)
         return out.squeeze(-1) if getattr(self, "out_dim", 1) == 1 else out
 
 
@@ -174,6 +197,7 @@ class TransformerModel(MarginModule):
         extra_targets: tuple[str, ...] = (),
         extra_weights: tuple[float, ...] = (),
         distribution: bool = False,
+        token_features: dict | None = None,
     ):
         super().__init__(
             lr,
@@ -186,6 +210,8 @@ class TransformerModel(MarginModule):
         )
         self.encoder = encoder
         self.head = head
+        # the token options (TOKEN_KEYS) the model was built for
+        self.token_features = dict(token_features or {})
         self.save_hyperparameters(ignore=list(self.SUBMODULES))
         self.save_submodules()
 
@@ -197,10 +223,58 @@ class TransformerModel(MarginModule):
     def forward(self, batch) -> torch.Tensor:
         team = self.encoder(**batch["team"])
         opp = self.encoder(**batch["opp"])
-        return self.head(team, opp, batch["context"])
+        return self.head(team, opp, batch["context"], batch.get("opp_context"))
 
     def targets(self, batch) -> torch.Tensor:
         return batch["y"]
+
+
+class TransformerEnsemble(nn.Module):
+    """Several :class:`TransformerModel` fits of the same data (different
+    seeds) served as one: point outputs are the members' average, a score
+    distribution the average of their probabilities."""
+
+    def __init__(self, members: list[TransformerModel]):
+        super().__init__()
+        self.members = nn.ModuleList(members)
+
+    @property
+    def extra_targets(self) -> tuple[str, ...]:
+        return tuple(getattr(self.members[0], "extra_targets", ()))
+
+    @property
+    def distribution(self) -> bool:
+        return bool(getattr(self.members[0], "distribution", False))
+
+    @property
+    def margin_dist(self):
+        return self.members[0].margin_dist
+
+    @property
+    def total_dist(self):
+        return self.members[0].total_dist
+
+    @property
+    def encoder(self) -> SequenceEncoder:
+        return self.members[0].encoder
+
+    @property
+    def head(self) -> PairHead:
+        return self.members[0].head
+
+    def predict_outputs(self, batch) -> torch.Tensor:
+        return torch.stack([m.predict_outputs(batch) for m in self.members]).mean(0)
+
+    def predict_margin(self, batch) -> torch.Tensor:
+        return self.predict_outputs(batch)[:, 0]
+
+    def log_probs(self, batch) -> dict[str, torch.Tensor]:
+        per_member = [m.log_probs(batch) for m in self.members]
+        n = math.log(len(per_member))
+        return {
+            key: torch.logsumexp(torch.stack([p[key] for p in per_member]), 0) - n
+            for key in per_member[0]
+        }
 
 
 def distribution_outputs(module, batch) -> dict[str, np.ndarray]:
@@ -285,6 +359,7 @@ class TransformerMatchupModel(MatchupModel):
             "team": side(matchups[s.team]),
             "opp": side(matchups[s.opp]),
             "context": torch.from_numpy(self.features.context(matchups)),
+            "opp_context": torch.from_numpy(self.features.context(mirror(matchups, s))),
         }
         out = self.module.predict_outputs(batch).numpy()
         extra = getattr(self.module, "extra_targets", ())

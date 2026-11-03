@@ -1,4 +1,6 @@
-"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark,staking}``.
+"""``sportsml <sport> {download,process,fit,predict,backtest,benchmark,...}``.
+
+Also ``staking``, ``ablate`` and ``tune``.
 
 Every registered sport gets the same subcommands; per-sport defaults (paths,
 GNN sizes) come from its :class:`~sportsml.core.sport.Sport` entry.
@@ -12,11 +14,13 @@ from . import __version__
 from .backtest import backtest, benchmark
 from .core.process import process
 from .core.sport import Sport, all_sports
+from .experiments import ablate
 from .inference.utils import predict
 from .models.gnn.fit import fit_gnn, gnn_config
 from .models.sklearn.fit import fit_sklearn
 from .models.transformer.fit import fit_transformer, transformer_config
 from .staking import staking
+from .tune import tune
 from .web.build import build as web_build
 from .web.build import push_cache
 from .web.export import export as web_export
@@ -116,6 +120,12 @@ def sport_defaults(sport: Sport) -> dict:
         f"{n}.staking.sport": n,
         f"{n}.staking.results": f"backtests/{n}/transformer_games.csv",
         f"{n}.staking.output_dir": f"backtests/{n}",
+        f"{n}.ablate.sport": n,
+        f"{n}.ablate.games": games,
+        f"{n}.ablate.output_dir": f"experiments/{n}/ablation",
+        f"{n}.tune.sport": n,
+        f"{n}.tune.games": games,
+        f"{n}.tune.output_dir": f"experiments/{n}/tune",
     }
 
 
@@ -140,6 +150,8 @@ def run(args=None):
             "backtest": backtest,
             "benchmark": benchmark,
             "staking": staking,
+            "ablate": ablate,
+            "tune": tune,
         }
         for name, sport in sports.items()
     }

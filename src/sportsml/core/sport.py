@@ -27,6 +27,9 @@ class Sport:
         elo: The Elo baseline's settings (``k``, ``home``, ``regress``; see
             :class:`~sportsml.models.baselines.EloParams`) where the NFL's do
             not suit the sport.
+        efficiency: Derives per-game rate stats (``_eff_*`` columns) from
+            a games table's box score, for the transformer's history tokens
+            (see :mod:`sportsml.core.efficiency`).
     """
 
     name: str
@@ -35,6 +38,7 @@ class Sport:
     gnn: dict = field(default_factory=dict)
     transformer: dict = field(default_factory=dict)
     elo: dict = field(default_factory=dict)
+    efficiency: Callable[[pd.DataFrame], pd.DataFrame] | None = None
 
 
 def register_sport(sport: Sport) -> Sport:

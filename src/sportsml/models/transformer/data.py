@@ -36,6 +36,13 @@ MARKET_TOKEN_COLUMNS = [
 ]
 
 
+# The market's running rating of each token game's two teams (market_rating):
+# ratings fit to every earlier closing line, so ``rating - opp_rating + home``
+# reproduces the spread; each game's own line is in (it was set before the
+# game), its result never is.
+MARKET_RATING_COLUMNS = ["_mkt_rating", "_mkt_opp_rating", "_mkt_rating_gap"]
+
+
 def efficiency_columns(sport: str | None) -> list[str]:
     """The ``_eff_*`` columns ``sport``'s efficiency function derives."""
     from ...core.sport import get_sport
@@ -50,12 +57,92 @@ def extra_columns(
     market_tokens: bool = False,
     efficiency: bool = False,
     sport: str | None = None,
+    market_rating: bool = False,
 ) -> list[str]:
     return (
         (STRENGTH_COLUMNS if opponent_strength else [])
         + (ELO_MARGIN_COLUMNS if elo_margin else [])
         + (MARKET_TOKEN_COLUMNS if market_tokens else [])
         + (efficiency_columns(sport) if efficiency else [])
+        + (MARKET_RATING_COLUMNS if market_rating else [])
+    )
+
+
+def market_line(games: pd.DataFrame, schema: GameSchema) -> pd.Series:
+    """Each row's market line for its team: the spread where the sport has
+    one, else the probit of the no-vig moneyline probability."""
+    import scipy.stats
+
+    from ...backtest import no_vig_probability
+
+    if schema.market_spread and schema.market_spread in games:
+        return pd.to_numeric(games[schema.market_spread], errors="coerce")
+    if schema.market_moneyline and all(c in games for c in schema.market_moneyline):
+        prob = no_vig_probability(*(games[c] for c in schema.market_moneyline))
+        z = scipy.stats.norm.ppf(np.clip(prob, 0.005, 0.995))
+        return pd.Series(np.where(np.isfinite(prob), z, np.nan), index=games.index)
+    return pd.Series(np.nan, index=games.index)
+
+
+def market_ratings(
+    games: pd.DataFrame,
+    schema: GameSchema,
+    k: float = 0.3,
+    carry: float = 0.8,
+    home_k: float = 0.01,
+) -> pd.DataFrame:
+    """:data:`MARKET_RATING_COLUMNS` for each row of ``games``.
+
+    Games are replayed in order; at each game with a line ``s`` (the first
+    row's team's), the error ``s - (r_team - r_opp + h * location)`` moves
+    both ratings by ``k`` of it (in opposite directions) and the home edge
+    ``h`` by ``home_k``. Ratings shrink by ``carry`` between seasons. A row
+    gets both ratings after its game's line (before its result).
+    """
+    line = market_line(games, schema)
+    loc = (
+        pd.to_numeric(games[schema.location], errors="coerce").fillna(0)
+        if schema.location
+        else pd.Series(0.0, index=games.index)
+    )
+    order = games.sort_values([schema.season, schema.date], kind="stable")
+    first = ~order[schema.game_id].duplicated()
+    order = order[first]
+    teams = pd.Index(pd.unique(pd.concat([games[schema.team], games[schema.opp]])))
+    team_i = teams.get_indexer(order[schema.team])
+    opp_i = teams.get_indexer(order[schema.opp])
+    seasons = order[schema.season].to_numpy()
+    lines = line.reindex(order.index).to_numpy(dtype=float)
+    locs = loc.reindex(order.index).to_numpy(dtype=float)
+
+    rating = np.zeros(len(teams))
+    home = 0.0
+    after = np.zeros((len(order), 2))
+    previous = None
+    for i in range(len(order)):
+        if previous is not None and seasons[i] != previous:
+            rating *= carry
+        previous = seasons[i]
+        a, b = team_i[i], opp_i[i]
+        if np.isfinite(lines[i]):
+            err = lines[i] - (rating[a] - rating[b] + home * locs[i])
+            rating[a] += k * err
+            rating[b] -= k * err
+            home += home_k * err * locs[i]
+        after[i] = rating[a], rating[b]
+
+    by_game = pd.DataFrame(
+        {"_first_team": order[schema.team].to_numpy(), "_ra": after[:, 0],
+         "_rb": after[:, 1]},
+        index=order[schema.game_id].to_numpy(),
+    )  # fmt: skip
+    joined = by_game.reindex(games[schema.game_id].to_numpy())
+    same = joined["_first_team"].to_numpy() == games[schema.team].to_numpy()
+    own = np.where(same, joined["_ra"], joined["_rb"])
+    opp = np.where(same, joined["_rb"], joined["_ra"])
+    return pd.DataFrame(
+        {"_mkt_rating": own, "_mkt_opp_rating": opp, "_mkt_rating_gap": own - opp},
+        index=games.index,
     )
 
 
@@ -147,6 +234,7 @@ class SequenceFeatures:
     market_tokens: bool = False
     efficiency: bool = False
     sport: str | None = None
+    market_rating: bool = False
 
     @classmethod
     def fit(
@@ -159,6 +247,7 @@ class SequenceFeatures:
         market_tokens: bool = False,
         efficiency: bool = False,
         sport: str | None = None,
+        market_rating: bool = False,
     ) -> SequenceFeatures:
         location = [schema.location] if schema.location else []
         tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
@@ -174,10 +263,12 @@ class SequenceFeatures:
             market_tokens=market_tokens,
             efficiency=efficiency,
             sport=sport,
+            market_rating=market_rating,
         )
         extra = extra_columns(
-            opponent_strength, elo_margin, market_tokens, efficiency, sport
-        )
+            opponent_strength, elo_margin, market_tokens, efficiency, sport,
+            market_rating,
+        )  # fmt: skip
         if extra:
             tokens += extra
             train_games = features.with_derived(train_games)
@@ -204,6 +295,8 @@ class SequenceFeatures:
             )
         if market:
             parts.append(market_features(games, self.schema))
+        if getattr(self, "market_rating", False):
+            parts.append(market_ratings(games, self.schema))
         if efficiency:
             from ...core.sport import get_sport
 

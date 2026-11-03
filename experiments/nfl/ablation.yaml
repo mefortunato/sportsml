@@ -16,6 +16,9 @@ configs:
     model: {market_tokens: true, efficiency: true}
   all:
     model: {market_tokens: true, efficiency: true, antisymmetric: true}
-  all_ens5:
-    model: {market_tokens: true, efficiency: true, antisymmetric: true}
-    fit: {ensemble: 5}
+  rating:                       # the market's running team ratings
+    model: {market_rating: true}
+  rating_eff:
+    model: {market_rating: true, efficiency: true}
+  rating_market_eff:
+    model: {market_rating: true, market_tokens: true, efficiency: true}

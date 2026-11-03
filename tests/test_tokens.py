@@ -80,6 +80,23 @@ def test_market_features_describe_the_game_against_its_lines(games):
     assert m["_mkt_cover"].isna().all() and (m["_mkt_has_line"] == 0).all()
 
 
+def test_market_ratings_reproduce_the_next_line(games):
+    from sportsml.models.transformer.data import histories, market_ratings
+
+    rows = played(games, TOY_SCHEMA).reset_index(drop=True)
+    ratings = market_ratings(rows, TOY_SCHEMA)
+    opp = opponent_rows(rows, TOY_SCHEMA)
+    np.testing.assert_allclose(
+        ratings["_mkt_rating"], ratings["_mkt_opp_rating"].to_numpy()[opp]
+    )
+    # each team's rating after its previous game predicts the next spread
+    last = histories(rows, TOY_SCHEMA, 1)[:, 0]
+    ok = (last >= 0) & (last[opp] >= 0) & (rows["season"] > 2021).to_numpy()
+    r = ratings["_mkt_rating"].to_numpy()
+    estimate = r[last] - r[last[opp]]
+    assert np.corrcoef(estimate[ok], rows["spread"][ok])[0, 1] > 0.9
+
+
 def test_efficiency_columns_mirror_between_the_two_rows_of_a_game(games):
     rows = played(games, TOY_SCHEMA).reset_index(drop=True)
     frame = toy_efficiency(rows)

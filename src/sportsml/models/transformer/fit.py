@@ -35,7 +35,10 @@ ENCODER_KEYS = (
     "season_embedding", "season_decay", "max_seasons_ago", "decay_init",
 )  # fmt: skip
 # Token options: which derived columns each history token carries.
-TOKEN_KEYS = ("opponent_strength", "elo_margin", "market_tokens", "efficiency")
+TOKEN_KEYS = (
+    "opponent_strength", "elo_margin", "market_tokens", "efficiency",
+    "market_rating",
+)  # fmt: skip
 # Settings that are not model init args.
 FIT_KEYS = ("ensemble", "batch_size", "patience", "max_epochs")
 
@@ -47,12 +50,13 @@ def transformer_dims(
     market_tokens: bool = False,
     efficiency: bool = False,
     sport: str | None = None,
+    market_rating: bool = False,
 ) -> dict[str, int]:
     """Token / context feature counts a TransformerModel needs for ``schema``."""
     location = [schema.location] if schema.location else []
     tokens = list(dict.fromkeys([*schema.stats, schema.target, *location]))
     tokens += extra_columns(
-        opponent_strength, elo_margin, market_tokens, efficiency, sport
+        opponent_strength, elo_margin, market_tokens, efficiency, sport, market_rating
     )
     return {
         "token_dim": len(tokens),
@@ -112,7 +116,8 @@ def transformer_config(
     ``antisymmetric=True`` makes the head antisymmetric
     (:class:`PairHead`). Token options (:data:`TOKEN_KEYS`:
     ``opponent_strength``, ``elo_margin``, ``market_tokens``,
-    ``efficiency``) None or absent take the sport's setting (default off).
+    ``efficiency``, ``market_rating``) None or absent take the sport's
+    setting (default off).
     """
     spec = get_sport(sport)
     tokens = token_options(
@@ -229,6 +234,7 @@ def fit_transformer(
     elo_margin: bool | None = None,
     market_tokens: bool | None = None,
     efficiency: bool | None = None,
+    market_rating: bool | None = None,
     total_weight: float | None = None,
     stats_weight: float | None = None,
     ensemble: int | None = None,
@@ -270,6 +276,10 @@ def fit_transformer(
             moneyline probability, total against the over/under).
         efficiency: Add each history game's rate stats from the sport's
             ``Sport.efficiency`` (EPA per play, four factors, Corsi, ...).
+        market_rating: Add the market's running rating of both teams of
+            each history game, fit to every closing line so far
+            (:func:`~.data.market_ratings`): the latest token then says
+            what the market thinks of the team now.
         total_weight / stats_weight: Also regress the total (served as
             ``pred_total``) and every box-score stat, with these loss
             weights (None: the sport's ``Sport.transformer`` setting). Used
@@ -293,6 +303,7 @@ def fit_transformer(
         elo_margin=elo_margin,
         market_tokens=market_tokens,
         efficiency=efficiency,
+        market_rating=market_rating,
     )
     schema = get_sport(sport).schema.with_features(context, categorical=[])
     games = played(read_table(games), schema).reset_index(drop=True)

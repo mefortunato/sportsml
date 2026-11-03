@@ -17,8 +17,12 @@
 #
 # A push to main that changes the frontend (web/) also rebuilds and
 # redeploys, so a merged UI change goes live without waiting for the next
-# scheduled run. Those runs keep the deployed NFL lines instead of spending
-# The Odds API quota (see "Export fresh data and lines").
+# scheduled run. When the push changes nothing outside web/, the data is
+# not exported again: the deployed site's data/ is downloaded as is and
+# only the frontend is built (a couple of minutes instead of the full
+# export). A push that also changes other files (e.g. the exporter), or a
+# failed download, runs the full export, which keeps the deployed NFL lines
+# instead of spending The Odds API quota (see "Export fresh data and lines").
 name: Site
 
 on:
@@ -56,12 +60,64 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Check for a frontend-only push
+        id: changes
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
+            || ! git fetch --quiet --depth=1 origin "$BEFORE"; then
+            echo "no previous commit to compare with: full export"; exit 0
+          fi
+          others="$(git diff --name-only "$BEFORE" HEAD -- . ':!web/')"
+          if [ -n "$others" ]; then
+            printf 'changes outside web/, full export:\n%s\n' "$others"
+          else
+            echo "only web/ changed: reusing the deployed data"
+            echo "ui_only=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download the deployed data
+        id: deployed
+        if: steps.changes.outputs.ui_only == 'true'
+        # a failure (e.g. nothing deployed yet) falls back to the full export
+        continue-on-error: true
+        env:
+          BASE: ${{ steps.pages.outputs.base_url }}/data
+        run: |
+          set -euo pipefail
+          out=web/static/data
+          rm -rf "$out" && mkdir -p "$out"
+          get() { curl -fsSL --retry 3 --create-dirs "$BASE/$1" -o "$out/$1"; }
+          get sports.json
+          list="$RUNNER_TEMP/data-urls"
+          : > "$list"
+          for sport in $(jq -r '.[].sport' "$out/sports.json"); do
+            get "$sport/challenge/index.json"
+            shards="$(jq -er '[.data.games[][1]] | unique | .[] | "challenge/\(.).json"' \
+              "$out/$sport/challenge/index.json")"
+            for file in upcoming.json games.json performance.json rankings.json $shards; do
+              printf 'url = "%s"\noutput = "%s"\n' \
+                "$BASE/$sport/$file" "$out/$sport/$file" >> "$list"
+            done
+            # optional: a sport without lines has no odds.json
+            curl -fsL --retry 3 "$BASE/$sport/odds.json" -o "$out/$sport/odds.json" \
+              || { rm -f "$out/$sport/odds.json"; echo "$sport: no odds.json"; }
+          done
+          curl -fsSL --retry 3 --create-dirs --parallel --parallel-max 16 \
+            --fail-early --config "$list"
+          echo "downloaded $(find "$out" -name '*.json' | wc -l) files ($(du -sh "$out" | cut -f1))"
       - uses: astral-sh/setup-uv@v7
+        if: steps.deployed.outcome != 'success'
         with:
           enable-cache: true
       - name: Install
+        if: steps.deployed.outcome != 'success'
         run: uv sync --locked --no-default-groups
       - name: Fetch the trained model
+        if: steps.deployed.outcome != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ inputs.webdata_sha256 }}
@@ -79,6 +135,7 @@ jobs:
           done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
       - name: Cache CFB files and lines
+        if: steps.deployed.outcome != 'success'
         uses: actions/cache@v4
         with:
           # finished seasons' schedules and box scores, finished games' lines
@@ -87,6 +144,7 @@ jobs:
           key: espn-cfb-${{ github.run_id }}
           restore-keys: espn-cfb-
       - name: Cache ESPN NBA files and lines
+        if: steps.deployed.outcome != 'success'
         uses: actions/cache@v4
         with:
           # finished seasons' schedules and box scores, finished games' lines
@@ -95,6 +153,7 @@ jobs:
           key: espn-nba-${{ github.run_id }}
           restore-keys: espn-nba-
       - name: Cache the other sports' files and lines
+        if: steps.deployed.outcome != 'success'
         uses: actions/cache@v4
         with:
           # college basketball, WNBA (ESPN), NHL and MLB (league APIs, ESPN
@@ -107,9 +166,8 @@ jobs:
             data/mlb/mlb_cache
           key: data-site-${{ github.run_id }}
           restore-keys: data-site-
-      - id: pages
-        uses: actions/configure-pages@v5
       - name: Export fresh data and lines
+        if: steps.deployed.outcome != 'success'
         env:
           # not on a push: without the key the fetch fails and the deployed
           # lines carry over, keeping the quota for the scheduled runs

@@ -3,6 +3,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { pct, seasonsText } from '$lib/format';
+	import { effectiveTheme, otherTheme, storeTheme, storedTheme, type Theme } from '$lib/theme';
 
 	let { data, children } = $props();
 
@@ -11,6 +12,33 @@
 	// route ids, not page.url: in the hash-routed build the URL is the frame's
 	const route = $derived(page.route.id ?? '');
 	const backtest = $derived(info?.backtest);
+
+	// null until mounted: the prerendered artifact shell can't know the theme
+	let theme = $state<Theme | null>(null);
+
+	$effect(() => {
+		const root = document.documentElement;
+		const stored = storedTheme();
+		if (stored) root.dataset.theme = stored;
+		const media = matchMedia('(prefers-color-scheme: dark)');
+		const sync = () => (theme = effectiveTheme(root.dataset.theme, media.matches));
+		sync();
+		// follow the OS (or a host page re-theming us) until the reader picks
+		media.addEventListener('change', sync);
+		const observer = new MutationObserver(sync);
+		observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		return () => {
+			media.removeEventListener('change', sync);
+			observer.disconnect();
+		};
+	});
+
+	function toggleTheme() {
+		if (!theme) return;
+		const next = otherTheme(theme);
+		document.documentElement.dataset.theme = next;
+		storeTheme(next);
+	}
 </script>
 
 <header>
@@ -39,6 +67,29 @@
 				{/if}
 			</nav>
 		{/if}
+		<button
+			class="theme"
+			type="button"
+			onclick={toggleTheme}
+			disabled={!theme}
+			aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+			title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+		>
+			{#if theme === 'dark'}
+				<!-- sun -->
+				<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+					<circle cx="12" cy="12" r="4.5" />
+					<path
+						d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"
+					/>
+				</svg>
+			{:else}
+				<!-- moon -->
+				<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+					<path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z" />
+				</svg>
+			{/if}
+		</button>
 	</div>
 </header>
 
@@ -120,7 +171,46 @@
 	nav a {
 		white-space: nowrap;
 	}
+	.theme {
+		flex: none;
+		display: inline-grid;
+		place-items: center;
+		width: 34px;
+		height: 34px;
+		padding: 0;
+		background: transparent;
+		border-color: transparent;
+		color: var(--muted);
+	}
+	.theme:hover,
+	.theme:focus-visible {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.theme:disabled {
+		opacity: 1;
+		cursor: default;
+	}
+	.theme svg {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	/* no page nav: keep the toggle at the far right */
+	.brand + .theme,
+	.sports + .theme {
+		margin-left: auto;
+	}
 	@media (max-width: 640px) {
+		.theme {
+			order: 1;
+			margin-left: auto;
+		}
+		.pages {
+			order: 2;
+		}
 		.bar {
 			flex-wrap: wrap;
 			height: auto;

@@ -4,9 +4,7 @@ seasons: [2024, 2025, 2026]
 baseline: base
 configs:
   base: {}
-  market:
-    model: {market_tokens: true}
   efficiency:
     model: {efficiency: true}
-  all:
-    model: {market_tokens: true, efficiency: true, antisymmetric: true}
+  market_eff:                   # past-line tokens + efficiency (best on NFL)
+    model: {market_tokens: true, efficiency: true}

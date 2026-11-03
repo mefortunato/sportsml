@@ -2,26 +2,41 @@
 #   uv run sportsml nfl ablate --config experiments/nfl/ablation.yaml
 seasons: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
 baseline: base
+# ``base`` pins the transformer's settings before this study (the NFL
+# defaults now follow ``tuned``) so a rerun reproduces these results
 configs:
-  base: {}                      # the current default transformer
+  base:
+    model: &old {history: 20, d_model: 64, nhead: 4, num_layers: 2,
+                 hidden_dim: 64, dropout: 0.1, lr: 0.0003,
+                 weight_decay: 0.0001, market_tokens: false, efficiency: false}
+    fit: {batch_size: 256}
   base_seed1:                   # same, another seed: the noise floor
-    fit: {seed: 1}
+    model: *old
+    fit: {seed: 1, batch_size: 256}
   antisym:
-    model: {antisymmetric: true}
+    model: {<<: *old, antisymmetric: true}
+    fit: {batch_size: 256}
   market:
-    model: {market_tokens: true}
+    model: {<<: *old, market_tokens: true}
+    fit: {batch_size: 256}
   efficiency:
-    model: {efficiency: true}
+    model: {<<: *old, efficiency: true}
+    fit: {batch_size: 256}
   market_eff:
-    model: {market_tokens: true, efficiency: true}
+    model: {<<: *old, market_tokens: true, efficiency: true}
+    fit: {batch_size: 256}
   all:
-    model: {market_tokens: true, efficiency: true, antisymmetric: true}
+    model: {<<: *old, market_tokens: true, efficiency: true, antisymmetric: true}
+    fit: {batch_size: 256}
   rating:                       # the market's running team ratings
-    model: {market_rating: true}
+    model: {<<: *old, market_rating: true}
+    fit: {batch_size: 256}
   rating_eff:
-    model: {market_rating: true, efficiency: true}
+    model: {<<: *old, market_rating: true, efficiency: true}
+    fit: {batch_size: 256}
   rating_market_eff:
-    model: {market_rating: true, market_tokens: true, efficiency: true}
+    model: {<<: *old, market_rating: true, market_tokens: true, efficiency: true}
+    fit: {batch_size: 256}
   # Optuna's best (experiments/nfl/tune, tuned on 2012-2015) on top of market_eff
   tuned:
     model: {market_tokens: true, efficiency: true, d_model: 128, nhead: 8,

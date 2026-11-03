@@ -138,6 +138,8 @@ class SportView:
             shows ``"<date_label> <date>"``.
         upcoming_dates: How many upcoming dates to export (``None``: every
             date left in the schedule).
+        recent_dates: How many of the last played dates the recent-games
+            page shows (e.g. 4 weeks, or 14 game days).
         split_season: Seasons span two calendar years and are keyed by the
             year they end (the site shows 2026 as "2025–26").
     """
@@ -154,6 +156,7 @@ class SportView:
     playoff_labels: dict[str, str] = field(default_factory=dict)
     date_name: Callable[[pd.Series], str | None] | None = None
     upcoming_dates: int | None = None
+    recent_dates: int = 4
     split_season: bool = False
 
 

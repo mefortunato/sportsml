@@ -3,6 +3,7 @@
 // run here.
 import { base } from '$app/paths';
 import { units } from './markets';
+import { recentDay } from './recent';
 import { currentUpcoming, type UpcomingFile } from './upcoming';
 import type {
 	ChallengeAnswer,
@@ -14,6 +15,7 @@ import type {
 	Performance,
 	Pick,
 	Rankings,
+	RecentFile,
 	SportInfo,
 	Team,
 	Upcoming
@@ -125,6 +127,11 @@ async function challengeEntry(name: string, [gameId, shard]: ChallengeRef) {
 	return entry;
 }
 
+/** Recently played games' views (none from an export without them). */
+function recentGames(name: string): Promise<Record<string, GameDetail>> {
+	return load<Record<string, GameDetail>>(`${name}/recent_games.json`).catch(() => ({}));
+}
+
 export const api = {
 	sports: () => load<SportInfo[]>('sports.json'),
 	sport: (name: string) => sport(name),
@@ -137,10 +144,19 @@ export const api = {
 	upcoming: async (name: string, season?: number | null, date?: number | null) =>
 		currentUpcoming(await load<UpcomingFile>(`${name}/upcoming.json`), season, date),
 	game: async (name: string, gameId: string) => {
-		const game = (await load<Record<string, GameDetail>>(`${name}/games.json`))[gameId];
+		const game =
+			(await load<Record<string, GameDetail>>(`${name}/games.json`))[gameId] ??
+			(await recentGames(name))[gameId];
 		if (!game) throw new Error(`Unknown game ${gameId}`);
 		return game;
 	},
+	/** The last played dates' games (none from an export without them). */
+	recent: async (name: string, season?: number | null, date?: number | null) =>
+		recentDay(
+			await load<RecentFile>(`${name}/recent.json`).catch(() => null),
+			season ?? null,
+			date ?? null
+		),
 	performance: (name: string) => load<Performance>(`${name}/performance.json`),
 	/** Current sportsbook lines; null when the site was built without them. */
 	odds: (name: string) => load<OddsFile>(`${name}/odds.json`).catch(() => null),

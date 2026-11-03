@@ -129,9 +129,6 @@ class Snapshot:
         )
         self.playoffs = view.playoffs(self.played) if view.playoffs else {}
         self.date_names = self._date_names()
-        self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
-        self.rankings_table = self._with_current_rankings(predictor)
-        self.upcoming_games = self._predict_upcoming(predictor)
 
         if len(pool):
             pool = pool.assign(**{schema.game_id: pool[schema.game_id].astype(str)})
@@ -143,6 +140,14 @@ class Snapshot:
             pool = pool.dropna(subset=["market_margin"])
         self.pool = pool.set_index(schema.game_id) if len(pool) else pool
         self._markets: dict = {}
+
+        self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
+        self.rankings_table = self._with_current_rankings(predictor)
+        self.recent_games = self._predict_recent(predictor)
+        self._recent_rows = {
+            g: i for i, g in enumerate(self.recent_games.get(schema.game_id, []))
+        }
+        self.upcoming_games = self._predict_upcoming(predictor)
 
     # ---------------------------------------------------------------- loading
     @classmethod
@@ -455,6 +460,71 @@ class Snapshot:
             out["total"] = fit(prob, 0.5, over.to_numpy())
         return {k: v for k, v in out.items() if v is not None}
 
+    def _predict_recent(self, predictor: Predictor) -> pd.DataFrame:
+        """Pre-game predictions for the games of the last
+        ``view.recent_dates`` played dates, one row per game.
+
+        A game the walk-forward backtest covers keeps its backtest
+        prediction (``prediction_source`` "backtest"); the others are
+        replayed with the served model from team state built on the games
+        before their date only ("replay"), the way the upcoming games were
+        predicted. The served model never trains on the latest season (it
+        is the test season of :func:`~sportsml.core.splits.split_seasons`),
+        so a replay of a current-season game is out of sample.
+        """
+        s = self.schema
+        rows = one_row_per_game(self.played, s)
+        keys = (
+            rows[[s.season, s.date]]
+            .drop_duplicates()
+            .sort_values([s.season, s.date])
+            .tail(self.view.recent_dates)
+        )
+        tested = (
+            self.results.drop_duplicates(s.game_id).set_index(s.game_id)
+            if len(self.results)
+            else None
+        )
+        pred_columns = ["pred_margin", "win_prob", "pred_total", "over_prob"]
+        frames = []
+        for season, date in keys.itertuples(index=False):
+            day = rows[(rows[s.season] == season) & (rows[s.date] == date)]
+            in_pool = (
+                day[s.game_id].isin(tested.index)
+                if tested is not None
+                else pd.Series(False, index=day.index)
+            )
+            for game_id in day.loc[in_pool, s.game_id]:
+                pool = tested.loc[game_id]
+                row = self._row(game_id, pool[s.team])
+                preds = {c: pool[c] for c in pred_columns if c in pool}
+                frames.append(
+                    pd.DataFrame([{**row.to_dict(), **preds}]).assign(
+                        prediction_source="backtest"
+                    )
+                )
+            rest = day[~in_pool]
+            if rest.empty:
+                continue
+            known = self.played[
+                (self.played[s.season] < season)
+                | ((self.played[s.season] == season) & (self.played[s.date] < date))
+            ]
+            if known.empty:
+                continue
+            predictor.update_state(known)
+            teams = set(predictor.model.teams)
+            rest = rest[rest[s.team].isin(teams) & rest[s.opp].isin(teams)]
+            if len(rest):
+                frames.append(
+                    predictor.predict(rest).assign(prediction_source="replay")
+                )
+        if not frames:
+            return pd.DataFrame(columns=[*rows.columns, "pred_margin", "win_prob"])
+        out = pd.concat(frames, ignore_index=True)
+        out[s.game_id] = out[s.game_id].astype(str)
+        return out
+
     def _predict_upcoming(self, predictor: Predictor) -> pd.DataFrame:
         predictor.update_state(self.games)
         rows = one_row_per_game(upcoming(self.games, self.schema), self.schema)
@@ -576,11 +646,59 @@ class Snapshot:
             }
         )
 
+    def recent_dates(self) -> list[dict]:
+        """The recent-games page's dates, newest first:
+        ``[{"season", "date", "name"}]``."""
+        s = self.schema
+        games = self.recent_games
+        if games.empty:
+            return []
+        keys = games[[s.season, s.date]].drop_duplicates()
+        keys = keys.sort_values([s.season, s.date], ascending=False)
+        return py(
+            [
+                {"season": season, "date": date, "name": self.date_name(season, date)}
+                for season, date in keys.itertuples(index=False)
+            ]
+        )
+
+    def recent(self, season=None, date=None) -> dict:
+        """One recent date's played games: lines, the model's pre-game
+        prediction (against the lines the result is graded on), the result
+        and where the prediction came from (``prediction_source``:
+        "backtest" or "replay", see :meth:`_predict_recent`)."""
+        s = self.schema
+        dates = self.recent_dates()
+        if not dates:
+            return {"season": None, "date": None, "dates": [], "games": []}
+        if season is None or date is None:
+            season, date = dates[0]["season"], dates[0]["date"]
+        games = self.recent_games
+        day = games[(games[s.season] == season) & (games[s.date] == date)]
+        cards = []
+        for _, row in day.iterrows():
+            header = self._header(row)
+            cards.append(
+                {
+                    **header,
+                    "prediction": self._prediction(row, header),
+                    "result": self._result(row),
+                    "prediction_source": row["prediction_source"],
+                }
+            )
+        cards.sort(key=lambda g: (g["kickoff"] or "", str(g["game_id"])))
+        return py({"season": season, "date": date, "dates": dates, "games": cards})
+
     def game(self, game_id) -> dict | None:
         """Header, prediction, result (if played) and both teams' summaries."""
         s = self.schema
         in_pool = len(self.pool) and game_id in self.pool.index
-        team = self.pool.loc[game_id, s.team] if in_pool else None
+        recent = self._recent_rows.get(game_id)
+        team = None
+        if in_pool:
+            team = self.pool.loc[game_id, s.team]
+        elif recent is not None:  # the perspective its prediction is from
+            team = self.recent_games.iloc[recent][s.team]
         row = self._row(game_id, team)
         if row is None:
             return None
@@ -593,6 +711,8 @@ class Snapshot:
             prediction = self._prediction(pred, header)
         elif in_pool:
             prediction = self._prediction(self.pool.loc[game_id], header)
+        elif recent is not None:
+            prediction = self._prediction(self.recent_games.iloc[recent], header)
         return py(
             {
                 **header,

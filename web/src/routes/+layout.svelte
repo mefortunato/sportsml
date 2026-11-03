@@ -54,6 +54,9 @@
 		{#if info}
 			<nav class="pages">
 				<a href={links.upcoming(info.sport)} class:active={route.startsWith('/[sport]/[[season')}>Upcoming</a>
+				<a href={links.recent(info.sport)} class:active={route.startsWith('/[sport]/recent')}
+					>Recent</a
+				>
 				<a href={links.rankings(info.sport)} class:active={route === '/[sport]/rankings'}>Rankings</a>
 				{#if info.challenge_games}
 					<a href={links.performance(info.sport)} class:active={route === '/[sport]/performance'}

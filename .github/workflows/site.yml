@@ -98,7 +98,8 @@ jobs:
             get "$sport/challenge/index.json"
             shards="$(jq -er '[.data.games[][1]] | unique | .[] | "challenge/\(.).json"' \
               "$out/$sport/challenge/index.json")"
-            for file in upcoming.json games.json performance.json rankings.json $shards; do
+            for file in upcoming.json games.json recent.json recent_games.json performance.json \
+              rankings.json $shards; do
               printf 'url = "%s"\noutput = "%s"\n' \
                 "$BASE/$sport/$file" "$out/$sport/$file" >> "$list"
             done

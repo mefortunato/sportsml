@@ -39,6 +39,7 @@ VIEW = SportView(
     },
     date_name=calendar_date,
     upcoming_dates=7,
+    recent_dates=14,
     recent_games=10,
     stats=(
         Stat("runs", "Runs scored", column("runs"), 2),

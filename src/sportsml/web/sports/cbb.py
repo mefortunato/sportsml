@@ -53,6 +53,7 @@ VIEW = SportView(
     playoff_labels=PLAYOFF_LABELS,
     date_name=calendar_date,
     upcoming_dates=7,
+    recent_dates=10,
     split_season=True,
     recent_games=8,
     stats=STATS,

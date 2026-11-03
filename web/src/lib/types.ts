@@ -336,3 +336,38 @@ export interface OddsFile {
 	remaining: number | null;
 	games: Record<string, GameOdds>;
 }
+
+/** Where a recent game's prediction came from: the walk-forward backtest, or
+ * the served model replayed with team state from earlier games only. */
+export type PredictionSource = 'backtest' | 'replay';
+
+/** A played game on the recent-games page: its lines, the model's pre-game
+ * prediction and the result. */
+export interface PlayedGame extends GameHeader {
+	prediction: Prediction;
+	result: GameResult;
+	prediction_source: PredictionSource;
+}
+
+export interface RecentDate {
+	season: number;
+	date: number;
+	/** The date's display name, where the sport has them. */
+	name?: string | null;
+}
+
+/** `<sport>/recent.json`: the last played dates (newest first) and their games. */
+export interface RecentFile {
+	dates: RecentDate[];
+	by_date: Record<string, PlayedGame[]>;
+}
+
+/** One recent date's games, and every recent game for the window's totals. */
+export interface Recent {
+	season: number | null;
+	date: number | null;
+	name: string | null;
+	dates: RecentDate[];
+	games: PlayedGame[];
+	all: PlayedGame[];
+}

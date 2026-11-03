@@ -30,7 +30,13 @@
 </script>
 
 <div class="container section">
-	<a class="small" href={links.upcoming(info.sport)}>← {info.label} upcoming</a>
+	{#if result}
+		<a class="small" href={links.recent(info.sport, game.season, game.date)}
+			>← {info.label} recent games</a
+		>
+	{:else}
+		<a class="small" href={links.upcoming(info.sport)}>← {info.label} upcoming</a>
+	{/if}
 
 	<div class="card hero section">
 		<div class="meta muted small">

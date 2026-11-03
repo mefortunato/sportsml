@@ -24,7 +24,12 @@
 		model: string;
 		pick: string;
 		result: string | null;
+		/** Whether the model's pick won, once played (null: no pick, or a push). */
+		hit: boolean | null;
 	}
+
+	const graded = (pick: string | null | undefined, outcome: string | null | undefined) =>
+		!result || !pick || !outcome || outcome === 'push' ? null : pick === outcome;
 
 	const team = (side: Side) => (side === 'home' ? game.home : game.away);
 	// the moneyline favorite by the market (home on a pick'em)
@@ -56,7 +61,8 @@
 						: result.covered
 							? `${team(result.covered).team} covered`
 							: '—'
-					: null
+					: null,
+				hit: graded(p?.ats_pick, result?.covered)
 			});
 		}
 		if (ml) {
@@ -74,7 +80,8 @@
 						: result.winner
 							? `${team(result.winner).team} won`
 							: '—'
-					: null
+					: null,
+				hit: graded(p?.ml_pick, result?.winner)
 			});
 		}
 		if (game.total_line != null || p?.total != null) {
@@ -90,7 +97,8 @@
 					? result.total == null
 						? '—'
 						: `${result.total}${result.went ? ` · ${result.went === 'push' ? 'push' : result.went}` : ''}`
-					: null
+					: null,
+				hit: graded(p?.ou_pick, game.total_line == null ? null : result?.went)
 			});
 		}
 		return out;
@@ -115,7 +123,14 @@
 					<th scope="row">{row.market}</th>
 					<td class="tabular">{row.vegas}</td>
 					<td class="tabular">{row.model}</td>
-					<td class="tabular pick">{row.pick}</td>
+					<td class="tabular pick">
+						{row.pick}
+						{#if row.hit !== null}
+							<span class="mark" class:hit={row.hit} class:miss={!row.hit}
+								>{row.hit ? '✓' : '✗'}<span class="sr">{row.hit ? ' won' : ' lost'}</span></span
+							>
+						{/if}
+					</td>
 					{#if played}<td class="tabular">{row.result}</td>{/if}
 				</tr>
 			{/each}
@@ -154,5 +169,24 @@
 	.pick {
 		color: var(--accent);
 		font-weight: 600;
+	}
+	.mark {
+		position: relative;
+		margin-left: 4px;
+		font-weight: 700;
+	}
+	.mark.hit {
+		color: var(--good);
+	}
+	.mark.miss {
+		color: var(--bad);
+	}
+	.sr {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 </style>

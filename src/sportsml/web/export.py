@@ -11,6 +11,10 @@ Writes, under ``<output_dir>/data/``:
 * ``sports.json``: each sport's info (label, model, backtest summary);
 * ``<sport>/upcoming.json``: ``{"default": ..., "by_date": {"<season>-<date>": ...}}``;
 * ``<sport>/games.json``: ``{game_id: game view}`` for every upcoming game;
+* ``<sport>/recent.json``: ``{"dates": [{season, date, name}], "by_date":
+  {"<season>-<date>": [game]}}``, the last played dates' games with their
+  pre-game predictions and results (:meth:`Snapshot.recent`), and
+  ``<sport>/recent_games.json``, those games' views (like ``games.json``);
 * ``<sport>/challenge/<n>.json``: ``[{"game": ..., "answers": {market: ...}}]``
   per pool game playable on some market, each answer without the
   pick-dependent ``pick`` / ``correct`` / ``units``, in shards listed by
@@ -194,6 +198,23 @@ def export(
         games = {game_id: snap.game(game_id) for game_id in sorted(game_ids)}
         _write(out / sport / "games.json", games, teams)
 
+        recent_dates = snap.recent_dates()
+        recent = {
+            f"{d['season']}-{d['date']}": snap.recent(d["season"], d["date"])["games"]
+            for d in recent_dates
+        }
+        _write(
+            out / sport / "recent.json",
+            {"dates": recent_dates, "by_date": recent},
+            teams,
+        )
+        recent_ids = sorted({g["game_id"] for day in recent.values() for g in day})
+        _write(
+            out / sport / "recent_games.json",
+            {game_id: snap.game(game_id) for game_id in recent_ids},
+            teams,
+        )
+
         challenge = [
             {"game": snap.challenge_game(game_id), "answers": answers}
             for game_id in snap.pool.index
@@ -204,5 +225,6 @@ def export(
         _write(out / sport / "rankings.json", snap.rankings(), teams)
         print(
             f"exported {sport}: {len(by_date)} dates, {len(games)} games, "
+            f"{len(recent_ids)} recent games, "
             f"{len(challenge)} challenge games -> {out / sport}"
         )

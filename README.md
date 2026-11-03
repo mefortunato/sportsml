@@ -436,6 +436,13 @@ every sport above:
 - **Upcoming games**: each game's Vegas line and the model's predicted
   margin on one chart, the win probability, and the model's pick in each
   market: against the spread, on the moneyline and on the over/under.
+- **Recent games**: the last few weeks (or game days) of played games,
+  date by date: the final score next to the Vegas line and the model's
+  pre-game margin, whether each of its picks won, and its record, units
+  and average miss against Vegas for that date and the whole window. The
+  predictions are the ones made before each game: the served model (never
+  trained on the current season) replayed with team state from earlier
+  games only, or the walk-forward backtest's for backtested seasons.
 - **Game view**: both teams' per-game stats, W-L and ATS records, and recent
   results, all as of before kickoff.
 - **Price your line** (upcoming games): enter the spread, moneyline or

@@ -104,6 +104,66 @@ def test_game_view(snapshot):
     assert snapshot.game("nope") is None
 
 
+def test_recent_games_are_the_last_played_dates_newest_first(snapshot):
+    dates = snapshot.recent_dates()
+    assert [(d["season"], d["date"]) for d in dates] == [
+        (2024, 11), (2024, 10), (2024, 9), (2024, 8),
+    ]  # fmt: skip
+    day = snapshot.recent()
+    assert (day["season"], day["date"]) == (2024, 11)
+    assert len(day["games"]) == 6
+    for game in day["games"]:
+        result, pred = game["result"], game["prediction"]
+        assert result["margin"] is not None and result["covered"] is not None
+        # the current season is not backtested: replayed
+        assert game["prediction_source"] == "replay"
+        assert pred["edge"] == pytest.approx(pred["margin"] - game["spread"])
+        assert 0 < pred["win_prob"] < 1
+    assert snapshot.recent(2024, 8)["games"][0]["date"] == 8
+
+
+def test_recent_replays_use_only_earlier_games(snapshot, games, webdata):
+    """A replayed prediction is the one the model made before the date:
+    later results (here, everything after week 9) do not change it."""
+    cut = games[(games.season < 2024) | (games.week <= 9)]
+    earlier = Snapshot(
+        snapshot.view,
+        cut,
+        load_predictor(str(webdata / "toy" / "model")),
+        snapshot.pool.reset_index(),
+        pd.DataFrame(list(snapshot.teams.values())),
+    )
+    assert earlier.recent_dates()[0]["date"] == 9
+    for game in earlier.recent(2024, 9)["games"]:
+        now = snapshot.game(game["game_id"])
+        assert now["prediction"]["margin"] == pytest.approx(
+            game["prediction"]["margin"], abs=1e-5
+        )
+
+
+def test_recent_games_from_the_backtest_keep_its_predictions(snapshot, webdata):
+    view = dataclasses.replace(snapshot.view, recent_dates=200)
+    full = Snapshot(
+        view,
+        snapshot.games,
+        load_predictor(str(webdata / "toy" / "model")),
+        snapshot.results,
+        pd.DataFrame(list(snapshot.teams.values())),
+    )
+    tested = [
+        g
+        for d in full.recent_dates()
+        if d["season"] == 2023
+        for g in full.recent(d["season"], d["date"])["games"]
+    ]
+    assert tested and {g["prediction_source"] for g in tested} == {"backtest"}
+    results = snapshot.results.set_index("game_id")
+    for game in tested[:5]:
+        assert game["prediction"]["margin"] == pytest.approx(
+            results.loc[game["game_id"], "pred_margin"]
+        )
+
+
 def test_summaries_only_use_earlier_games(snapshot, games, webdata):
     cut = games[(games.season < 2024) | (games.week < 6)]
     earlier = Snapshot(
@@ -313,6 +373,19 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
     assert set(games) == ids
     for game_id, game in games.items():
         assert game == _exported(snapshot.game(game_id))
+
+    recent = _revive(data / "toy" / "recent.json")
+    assert recent["dates"] == _exported(snapshot.recent_dates())
+    for key, day in recent["by_date"].items():
+        season, date = key.split("-")
+        assert day == _exported(snapshot.recent(int(season), int(date))["games"])
+    recent_games = _revive(data / "toy" / "recent_games.json")
+    assert set(recent_games) == {
+        g["game_id"] for d in recent["by_date"].values() for g in d
+    }
+    for game_id, game in recent_games.items():
+        assert game == _exported(snapshot.game(game_id))
+        assert game["result"] is not None and game["prediction"] is not None
 
     index = _revive(data / "toy" / "challenge" / "index.json")
     shards = sorted({shard for _, shard, _ in index["games"]})

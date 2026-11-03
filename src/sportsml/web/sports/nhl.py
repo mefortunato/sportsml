@@ -38,6 +38,7 @@ VIEW = SportView(
     },
     date_name=calendar_date,
     upcoming_dates=7,
+    recent_dates=14,
     split_season=True,
     recent_games=8,
     stats=(

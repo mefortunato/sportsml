@@ -10,6 +10,12 @@ export const links = {
 			season: season == null ? undefined : String(season),
 			date: season == null || date == null ? undefined : String(date)
 		}),
+	recent: (sport: string, season?: number | null, date?: number | null) =>
+		resolve('/[sport]/recent/[[season=int]]/[[date=int]]', {
+			sport,
+			season: season == null ? undefined : String(season),
+			date: season == null || date == null ? undefined : String(date)
+		}),
 	game: (sport: string, gameId: string) => resolve('/[sport]/games/[gameId]', { sport, gameId }),
 	challenge: (sport: string) => resolve('/[sport]/challenge', { sport }),
 	rankings: (sport: string) => resolve('/[sport]/rankings', { sport }),

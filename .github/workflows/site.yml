@@ -20,8 +20,10 @@
 # scheduled run. When the push changes nothing outside web/, the data is
 # not exported again: the deployed site's data/ is downloaded as is and
 # only the frontend is built (a couple of minutes instead of the full
-# export). A push that also changes other files (e.g. the exporter), or a
-# failed download, runs the full export, which keeps the deployed NFL lines
+# export). "Nothing outside web/" is checked against the commit the deployed
+# data was exported from (data/export-sha.txt), so an exporter change whose
+# own run was cancelled is still picked up. Other changes, or a failed
+# download, run the full export, which keeps the deployed NFL lines
 # instead of spending The Odds API quota (see "Export fresh data and lines").
 name: Site
 
@@ -66,13 +68,17 @@ jobs:
         id: changes
         if: github.event_name == 'push'
         env:
-          BEFORE: ${{ github.event.before }}
+          BASE: ${{ steps.pages.outputs.base_url }}/data
+        # compare with the commit the deployed data was exported from, not
+        # the previous push: a cancelled or failed run would otherwise leave
+        # its exporter changes undeployed
         run: |
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
-            || ! git fetch --quiet --depth=1 origin "$BEFORE"; then
-            echo "no previous commit to compare with: full export"; exit 0
+          EXPORTED="$(curl -fsSL --retry 3 "$BASE/export-sha.txt" || true)"
+          if ! [[ "$EXPORTED" =~ ^[0-9a-f]{40}$ ]] \
+            || ! git fetch --quiet --depth=1 origin "$EXPORTED"; then
+            echo "no exported commit to compare with: full export"; exit 0
           fi
-          others="$(git diff --name-only "$BEFORE" HEAD -- . ':!web/')"
+          others="$(git diff --name-only "$EXPORTED" HEAD -- . ':!web/')"
           if [ -n "$others" ]; then
             printf 'changes outside web/, full export:\n%s\n' "$others"
           else
@@ -92,6 +98,7 @@ jobs:
           rm -rf "$out" && mkdir -p "$out"
           get() { curl -fsSL --retry 3 --create-dirs "$BASE/$1" -o "$out/$1"; }
           get sports.json
+          get export-sha.txt
           list="$RUNNER_TEMP/data-urls"
           : > "$list"
           for sport in $(jq -r '.[].sport' "$out/sports.json"); do
@@ -179,6 +186,7 @@ jobs:
           uv run sportsml web export --data_dir webdata --output_dir web/static
           --refresh true --odds "{nfl: oddsapi, cfb: espn}"
           --odds_history "${{ steps.pages.outputs.base_url }}/data"
+          && echo "$GITHUB_SHA" > web/static/data/export-sha.txt
       - uses: actions/setup-node@v6
         with:
           node-version: 22

@@ -38,9 +38,9 @@ import pandas as pd
 from ..core.process import process
 from ..core.sport import get_sport
 from ..odds.providers import provider_for
-from .views import BUILTIN_VIEWS
 from .odds import load_previous, refresh_odds
 from .snapshot import Snapshot
+from .views import BUILTIN_VIEWS
 
 logger = logging.getLogger(__name__)
 

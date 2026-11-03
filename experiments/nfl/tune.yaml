@@ -1,0 +1,9 @@
+# Optuna search on seasons before the ablation's (2016-2025), from the
+# features the ablation turned on.
+#   uv run sportsml nfl tune --config experiments/nfl/tune.yaml
+seasons: [2012, 2013, 2014, 2015]
+base:
+  model: {market_tokens: true, efficiency: true}
+n_trials: 40
+timeout_hours: 3.0
+n_jobs: 4

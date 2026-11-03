@@ -56,5 +56,7 @@ VIEW = SportView(
     recent_dates=10,
     split_season=True,
     recent_games=8,
+    # weekly: ~360 teams make ~130,000 pairs to rate per game day
+    ranking_every=7,
     stats=STATS,
 )

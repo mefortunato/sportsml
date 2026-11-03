@@ -142,6 +142,11 @@ class SportView:
             page shows (e.g. 4 weeks, or 14 game days).
         split_season: Seasons span two calendar years and are keyed by the
             year they end (the site shows 2026 as "2025–26").
+        ranking_every: Power rankings at most this often, in the schema's
+            date units (:func:`sportsml.web.build.ranking_dates`); ``None``:
+            before every date. For sports with hundreds of teams and a game
+            day most days, where rating every pair of teams before each
+            date is the most expensive part of a backtest.
     """
 
     sport: str
@@ -158,6 +163,7 @@ class SportView:
     upcoming_dates: int | None = None
     recent_dates: int = 4
     split_season: bool = False
+    ranking_every: int | None = None
 
 
 BUILTIN_VIEWS = ("nfl", "cfb", "nba", "cbb", "wcbb", "wnba", "nhl", "mlb")

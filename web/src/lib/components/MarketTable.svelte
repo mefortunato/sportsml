@@ -104,10 +104,15 @@
 		return out;
 	});
 	const played = $derived(result !== null);
+
+	// Cells wrap at spaces on narrow cards; the pick's last word stays glued
+	// to its ✓/✗ so the mark never lands on a line of its own.
+	const lead = (s: string) => s.slice(0, s.lastIndexOf(' ') + 1);
+	const last = (s: string) => s.slice(s.lastIndexOf(' ') + 1);
 </script>
 
 <div class="scroll">
-	<table class="markets small">
+	<table class="markets small" class:played>
 		<thead>
 			<tr>
 				<th></th>
@@ -121,17 +126,19 @@
 			{#each rows as row (row.market)}
 				<tr>
 					<th scope="row">{row.market}</th>
-					<td class="tabular">{row.vegas}</td>
-					<td class="tabular">{row.model}</td>
-					<td class="tabular pick">
-						{row.pick}
-						{#if row.hit !== null}
-							<span class="mark" class:hit={row.hit} class:miss={!row.hit}
-								>{row.hit ? '✓' : '✗'}<span class="sr">{row.hit ? ' won' : ' lost'}</span></span
-							>
-						{/if}
+					<td class="tabular" data-label="Vegas">{row.vegas}</td>
+					<td class="tabular" data-label="Model">{row.model}</td>
+					<td class="tabular pick" data-label="Model pick">
+						{lead(row.pick)}<span class="nowrap"
+							>{last(row.pick)}{#if row.hit !== null}<span
+									class="mark"
+									class:hit={row.hit}
+									class:miss={!row.hit}
+									>{row.hit ? '✓' : '✗'}<span class="sr">{row.hit ? ' won' : ' lost'}</span></span
+								>{/if}</span
+						>
 					</td>
-					{#if played}<td class="tabular">{row.result}</td>{/if}
+					{#if played}<td class="tabular" data-label="Result">{row.result}</td>{/if}
 				</tr>
 			{/each}
 		</tbody>
@@ -141,6 +148,7 @@
 <style>
 	.scroll {
 		overflow-x: auto;
+		container-type: inline-size;
 	}
 	.markets {
 		width: 100%;
@@ -150,8 +158,15 @@
 	td {
 		padding: 4px 6px;
 		text-align: left;
-		white-space: nowrap;
+		vertical-align: top;
 		border-bottom: 1px solid var(--border);
+	}
+	/* the market names and headers stay on one line; values wrap if the card is narrow */
+	th {
+		white-space: nowrap;
+	}
+	.nowrap {
+		white-space: nowrap;
 	}
 	thead th {
 		color: var(--muted);
@@ -180,6 +195,42 @@
 	}
 	.mark.miss {
 		color: var(--bad);
+	}
+	/* too narrow for the columns (phones): each market becomes a small block
+	   of labelled values, Vegas / Model / Pick (/ Result) side by side */
+	@container (max-width: 400px) {
+		thead {
+			display: none;
+		}
+		tbody tr {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			column-gap: 8px;
+			padding: 6px 0;
+			border-bottom: 1px solid var(--border);
+		}
+		.played tbody tr {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		tbody tr:last-child {
+			border-bottom: none;
+		}
+		tbody th {
+			grid-column: 1 / -1;
+			color: var(--text);
+		}
+		tbody th,
+		tbody td {
+			border-bottom: none;
+			padding: 2px 0;
+		}
+		td::before {
+			content: attr(data-label);
+			display: block;
+			color: var(--muted);
+			font-weight: 600;
+			font-size: 0.75rem;
+		}
 	}
 	.sr {
 		position: absolute;

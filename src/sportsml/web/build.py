@@ -71,10 +71,13 @@ def backtest_key(
     max_epochs: int,
     code: str,
     ranking_every: int | None = None,
+    main_model: bool = False,
 ) -> str:
     """Identifies one season's walk-forward backtest: the same key means the
     same model, training, code and ranking dates (:func:`ranking_dates`),
-    so the stored results can be reused.
+    so the stored results can be reused. ``main_model``: the season was
+    predicted by the model for upcoming games, which validated on it (see
+    :func:`build`), not by one fitted for the backtest.
 
     Game data is deliberately left out: finished seasons are treated as
     final (pass ``refresh_backtest`` after a source revises old data).
@@ -94,16 +97,19 @@ def backtest_key(
     if ranking_every is not None and season is not None:
         # only when set: the keys of sports ranked before every date stay
         spec["ranking_every"] = ranking_every
+    if main_model:
+        spec["fit"] = "main model, validated on the season"
     text = json.dumps(spec, sort_keys=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
 def cached_backtest(
     path: pathlib.Path, keys: dict[int, list[str]], season: str = "season"
-) -> tuple[pd.DataFrame, pd.DataFrame, list[int]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[int, str]]:
     """A previous build's pool and rankings rows for the seasons whose
-    backtest key is one of the season's ``keys``, and those seasons."""
-    empty = pd.DataFrame(), pd.DataFrame(), []
+    backtest key is one of the season's ``keys``, and those seasons (with
+    the key each was stored under)."""
+    empty = pd.DataFrame(), pd.DataFrame(), {}
     try:
         meta = json.loads((path / "meta.json").read_text())
         pool = read_table(str(path / "pool.csv"))
@@ -111,13 +117,13 @@ def cached_backtest(
     except (OSError, ValueError):
         return empty
     stored = meta.get("backtest_cache", {})
-    reuse = [
-        s
-        for s, key in keys.items()
-        if stored.get(str(s)) in key
+    reuse = {
+        s: stored[str(s)]
+        for s, accepted in keys.items()
+        if stored.get(str(s)) in accepted
         and (pool[season] == s).any()
         and (rankings["season"] == s).any()
-    ]
+    }
     return (
         pool[pool[season].isin(reuse)],
         rankings[rankings["season"].isin(reuse)],
@@ -243,22 +249,31 @@ def build(
         schema = get_sport(sport).schema
         seasons = complete_seasons(table, schema)[-backtest_seasons:]
         every = view.ranking_every
+        # the key recorded for each season: how its results were produced
         keys = {s: backtest_key(sport, s, max_epochs, code, every) for s in seasons}
-        # seasons stored under an equivalent older code's keys are reused too
-        accepted = {
-            s: [
-                keys[s],
-                *(
-                    backtest_key(sport, s, max_epochs, old, every)
-                    for old in EQUIVALENT_CODE.get(code, ())
-                ),
-            ]
+        main_keys = {
+            s: backtest_key(sport, s, max_epochs, code, every, main_model=True)
             for s in seasons
         }
+        # the keys a stored season is reused under, each with the key it is
+        # recorded as now: from a backtest model or the main model, and from
+        # an equivalent older code (stored again under the current key)
+        current = {
+            s: {keys[s]: keys[s], main_keys[s]: main_keys[s]}
+            | {
+                backtest_key(sport, s, max_epochs, old, every, main): new[s]
+                for old in EQUIVALENT_CODE.get(code, ())
+                for main, new in ((False, keys), (True, main_keys))
+            }
+            for s in seasons
+        }
+        accepted = {s: list(c) for s, c in current.items()}
         if refresh_backtest:
-            pool, rankings, reused = pd.DataFrame(), pd.DataFrame(), []
+            pool, rankings, reused = pd.DataFrame(), pd.DataFrame(), {}
         else:
             pool, rankings, reused = cached_backtest(path, accepted, schema.season)
+        for s, key in reused.items():
+            keys[s] = current[s][key]
         fetched, stored_as = [], {}
         if store is not None and not refresh_backtest:
             parts = [pool], [rankings]
@@ -274,6 +289,7 @@ def build(
                 parts[1].append(entry[1])
                 fetched.append(s)
                 stored_as[s] = key
+                keys[s] = current[s][key]
             pool = pd.concat(parts[0], ignore_index=True)
             rankings = pd.concat(parts[1], ignore_index=True)
         missing = [s for s in seasons if s not in reused and s not in fetched]
@@ -283,9 +299,25 @@ def build(
             seasons = [s for s in seasons if s not in skipped]
             keys = {s: keys[s] for s in seasons}
             print(f"{sport} backtest: leaving out {skipped} (max_new_seasons)")
+        # The main model trained on every season before the one it validated
+        # on: backtesting that season with it instead of fitting another
+        # model on the same seasons saves a training run (the longest step
+        # for college basketball). The season chose when its training
+        # stopped, so its key says so. Not for a model from the cache,
+        # whose seasons can differ from this table's.
+        predictors = {}
+        if stored_model is None:
+            split = fitted["split"]
+            seasons_played = set(played(table, schema)[schema.season].unique())
+            for s in missing:
+                before = {x for x in seasons_played if x < s}
+                if split.val == [s] and set(split.train) == before:
+                    predictors[s] = fitted["predictor"]
+                    keys[s] = main_keys[s]
         print(
-            f"{sport} backtest: reusing {reused or 'none'}, from the cache "
-            f"{fetched or 'none'}, backtesting {missing or 'none'}",
+            f"{sport} backtest: reusing {list(reused) or 'none'}, from the cache "
+            f"{fetched or 'none'}, backtesting {missing or 'none'}"
+            + (f" ({list(predictors)} with the main model)" if predictors else ""),
             flush=True,
         )
 
@@ -310,6 +342,7 @@ def build(
                 seasons=missing,
                 max_epochs=max_epochs,
                 on_date=rank,
+                predictors=predictors,
             )
             pool = pd.concat([pool, tested["results"]], ignore_index=True)
             rankings = pd.concat([rankings, pd.DataFrame(ranked)], ignore_index=True)
@@ -374,7 +407,7 @@ def push_cache(
         keys = json.loads((path / "meta.json").read_text()).get("backtest_cache", {})
         season = get_sport(sport).schema.season
         pool, rankings, reused = cached_backtest(
-            path, {int(s): k for s, k in keys.items()}, season
+            path, {int(s): [k] for s, k in keys.items()}, season
         )
         added = []
         for s in reused:

@@ -673,10 +673,16 @@ def test_build_reuses_unchanged_backtest_seasons(tmp_path, monkeypatch):
     pd.testing.assert_frame_equal(rankings2, rankings)
 
     # summarized from the stored CSV rather than in memory: equal to ~1e-8
-    def rounded(value):
-        return json.loads(json.dumps(value), parse_float=lambda f: round(float(f), 6))
+    def close(a, b):
+        if isinstance(a, dict):
+            return a.keys() == b.keys() and all(close(a[k], b[k]) for k in a)
+        if isinstance(a, list):
+            return len(a) == len(b) and all(map(close, a, b))
+        if isinstance(a, float):
+            return a == pytest.approx(b, rel=1e-6, abs=1e-9, nan_ok=True)
+        return a == b
 
-    assert rounded(again["backtest"]) == rounded(meta["backtest"])
+    assert close(again["backtest"], meta["backtest"])
 
     # one season's key no longer matches: only that season runs again
     stale = json.loads((tmp_path / "toy" / "meta.json").read_text())
@@ -733,10 +739,12 @@ def test_ranking_every_thins_backtest_and_current_rankings(
     assert sorted(pool["week"].unique()) == weeks[2023]
 
     # the setting is part of the key: not reused by a build ranking every date
+    # (2023, the main model's validation season, is backtested with it)
     meta = json.loads((tmp_path / "toy" / "meta.json").read_text())
     code = code_hash("toy")
-    assert meta["backtest_cache"]["2023"] == backtest_key("toy", 2023, 1, code, 5)
-    assert backtest_key("toy", 2023, 1, code, 5) != backtest_key("toy", 2023, 1, code)
+    key = backtest_key("toy", 2023, 1, code, 5, main_model=True)
+    assert meta["backtest_cache"]["2023"] == key
+    assert key != backtest_key("toy", 2023, 1, code, main_model=True)
 
     current = next(
         s

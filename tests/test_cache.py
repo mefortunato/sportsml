@@ -19,7 +19,7 @@ def spies(monkeypatch):
     import sportsml.backtest
     import sportsml.models.transformer
 
-    calls = {"backtest": [], "fit": 0}
+    calls = {"backtest": [], "fit": 0, "fits": 0}
     backtest, fit = (
         sportsml.backtest.backtest,
         sportsml.models.transformer.fit_transformer,
@@ -32,6 +32,7 @@ def spies(monkeypatch):
     def spy_fit(*args, **kwargs):
         # the model for upcoming games (backtest seasons fit their own)
         calls["fit"] += str(kwargs.get("save_dir", "")).endswith("model")
+        calls["fits"] += 1  # with the backtest's
         return fit(*args, **kwargs)
 
     monkeypatch.setattr(sportsml.backtest, "backtest", spy_backtest)
@@ -171,7 +172,10 @@ def test_seasons_of_an_equivalent_older_code_are_reused(tmp_path, spies, monkeyp
     spies["backtest"].clear()
     run(tmp_path / "a")
     meta = json.loads((tmp_path / "a" / "toy" / "meta.json").read_text())
-    new = {str(s): backtest_key("toy", s, 1, "new code") for s in (2022, 2023)}
+    new = {
+        "2022": backtest_key("toy", 2022, 1, "new code"),
+        "2023": backtest_key("toy", 2023, 1, "new code", main_model=True),
+    }
     assert meta["backtest_cache"] == new
     run(tmp_path / "b", cache=cache)
     assert spies["backtest"] == []
@@ -187,3 +191,35 @@ def test_seasons_of_an_equivalent_older_code_are_reused(tmp_path, spies, monkeyp
     monkeypatch.setattr(build_module, "code_hash", lambda sport=None: "other code")
     run(tmp_path / "d", cache=cache)
     assert spies["backtest"] == [[2022, 2023]]
+
+
+def test_the_main_model_backtests_the_season_it_validated_on(tmp_path, spies):
+    from sportsml.web.build import backtest_key
+
+    # 2024 is under way: the main model trains on 2020-2022 and validates on
+    # 2023, so only 2022 needs a model of its own
+    cache = str(tmp_path / "cache")
+    run(tmp_path / "a", cache=cache)
+    assert spies["backtest"] == [[2022, 2023]]
+    assert spies["fit"] == 1 and spies["fits"] == 2
+    meta = json.loads((tmp_path / "a" / "toy" / "meta.json").read_text())
+    code = code_hash("toy")
+    assert meta["backtest_cache"] == {
+        "2022": backtest_key("toy", 2022, 1, code),
+        "2023": backtest_key("toy", 2023, 1, code, main_model=True),
+    }
+    store = DirectoryStore(cache)
+    assert store.has_season("toy", 2023, meta["backtest_cache"]["2023"])
+
+    # reused like any other season, by the next build and from the cache
+    spies["backtest"].clear()
+    run(tmp_path / "a")
+    run(tmp_path / "b", cache=cache)
+    assert spies["backtest"] == []
+
+    # a model from the cache does not stand in for a backtest model
+    spies["backtest"].clear()
+    run(tmp_path / "c", cache=cache, reuse_model_days=30, refresh_backtest=True)
+    assert spies["backtest"] == [[2022, 2023]]
+    meta = json.loads((tmp_path / "c" / "toy" / "meta.json").read_text())
+    assert meta["backtest_cache"]["2023"] == backtest_key("toy", 2023, 1, code)

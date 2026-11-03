@@ -263,11 +263,14 @@ def walk_forward(
     seasons: list[int],
     verbose: bool = False,
     on_date: OnDate | None = None,
+    predictors: dict[int, Predictor] | None = None,
 ) -> pd.DataFrame:
     """Out-of-sample predictions for every played game of ``seasons``.
 
     ``on_date(predictor, season, date)`` is called once per test date, after
     the team state is refreshed and before that date's games are predicted.
+    ``predictors`` maps seasons to an already fitted predictor to use instead
+    of fitting one (it must not have been trained on that season or later).
 
     Returns one row per game (home team's perspective) with the result, the
     model's ``pred_margin`` / ``win_prob`` (and ``pred_total`` /
@@ -281,7 +284,10 @@ def walk_forward(
         start = time.time()
         history = games[games[schema.season] < season]
         split = split_seasons(history[schema.season].unique(), test=[])
-        predictor = fitter(history, split)
+        if predictors and season in predictors:
+            predictor = predictors[season]
+        else:
+            predictor = fitter(history, split)
 
         current = games[games[schema.season] == season]
         season_preds = []
@@ -570,6 +576,7 @@ def backtest(
     output_dir: str | None = None,
     print_summary: bool = True,
     on_date: OnDate | None = None,
+    predictors: dict[int, Predictor] | None = None,
 ) -> dict:
     """Walk-forward backtest of a model family against the market.
 
@@ -583,7 +590,7 @@ def backtest(
         max_epochs: Training epochs per season for ``gnn`` / ``transformer``.
         output_dir: Write ``<family>_games.csv`` (one row per game) and
             ``<family>_summary.json`` here.
-        on_date: Passed to :func:`walk_forward`.
+        on_date / predictors: Passed to :func:`walk_forward`.
 
     Returns:
         ``{"results": per-game DataFrame, "summary": dict}``
@@ -595,7 +602,13 @@ def backtest(
     fitter = family_fitter(family, sport, model=model, max_epochs=max_epochs)
 
     results = walk_forward(
-        games, sport, fitter, seasons, verbose=print_summary, on_date=on_date
+        games,
+        sport,
+        fitter,
+        seasons,
+        verbose=print_summary,
+        on_date=on_date,
+        predictors=predictors,
     )
     summary = {
         "sport": sport,

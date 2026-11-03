@@ -22,3 +22,14 @@ configs:
     model: {market_rating: true, efficiency: true}
   rating_market_eff:
     model: {market_rating: true, market_tokens: true, efficiency: true}
+  # Optuna's best (experiments/nfl/tune, tuned on 2012-2015) on top of market_eff
+  tuned:
+    model: {market_tokens: true, efficiency: true, d_model: 128, nhead: 8,
+            num_layers: 1, hidden_dim: 128, history: 14, lr: 0.00014,
+            weight_decay: 0.04, dropout: 0.273, season_decay: false}
+    fit: {batch_size: 128}
+  tuned_ens5:                   # the same, averaged over five seeds
+    model: {market_tokens: true, efficiency: true, d_model: 128, nhead: 8,
+            num_layers: 1, hidden_dim: 128, history: 14, lr: 0.00014,
+            weight_decay: 0.04, dropout: 0.273, season_decay: false}
+    fit: {batch_size: 128, ensemble: 5}

@@ -6,6 +6,6 @@ from .cbb import VIEW as MEN
 VIEW = dataclasses.replace(
     MEN,
     sport="wcbb",
-    label="NCAAW",
+    label="WCBB",
     load_teams=load_women_teams,
 )

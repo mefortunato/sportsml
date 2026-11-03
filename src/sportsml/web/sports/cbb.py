@@ -44,7 +44,7 @@ PLAYOFF_LABELS = {
 
 VIEW = SportView(
     sport="cbb",
-    label="NCAAM",
+    label="CBB",
     date_label="Day",
     load_teams=load_teams,
     score=("points", "opp_points"),

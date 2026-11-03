@@ -38,6 +38,7 @@ import pandas as pd
 from ..core.process import process
 from ..core.sport import get_sport
 from ..odds.providers import provider_for
+from .views import BUILTIN_VIEWS
 from .odds import load_previous, refresh_odds
 from .snapshot import Snapshot
 
@@ -78,7 +79,9 @@ def load_snapshots(data_dir: str | pathlib.Path) -> dict[str, Snapshot]:
             snapshot = Snapshot.load(path)
             snapshots[snapshot.view.sport] = snapshot
             logger.info("loaded %s from %s", snapshot.view.sport, path)
-    return snapshots
+    # the site's nav order: built-in sports as listed, any others after
+    order = {sport: i for i, sport in enumerate(BUILTIN_VIEWS)}
+    return dict(sorted(snapshots.items(), key=lambda kv: order.get(kv[0], len(order))))
 
 
 def _compact(value, teams: dict):

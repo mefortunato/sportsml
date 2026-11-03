@@ -2,6 +2,7 @@
 	import { links } from '$lib/links';
 	import '../app.css';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { pct, seasonsText } from '$lib/format';
 	import { effectiveTheme, otherTheme, storeTheme, storedTheme, type Theme } from '$lib/theme';
 
@@ -12,6 +13,29 @@
 	// route ids, not page.url: in the hash-routed build the URL is the frame's
 	const route = $derived(page.route.id ?? '');
 	const backtest = $derived(info?.backtest);
+
+	// the current sport's pages, shared by the desktop links and the phone dropdown
+	const pages = $derived(
+		info
+			? [
+					{ label: 'Upcoming', href: links.upcoming(info.sport), active: route.startsWith('/[sport]/[[season') },
+					{ label: 'Recent', href: links.recent(info.sport), active: route.startsWith('/[sport]/recent') },
+					{ label: 'Rankings', href: links.rankings(info.sport), active: route === '/[sport]/rankings' },
+					...(info.challenge_games
+						? [{ label: 'Performance', href: links.performance(info.sport), active: route === '/[sport]/performance' }]
+						: []),
+					...(info.challenge_games && (info.has_spread || info.markets?.length)
+						? [{ label: 'Beat the model', href: links.challenge(info.sport), active: route === '/[sport]/challenge' }]
+						: [])
+				]
+			: []
+	);
+	const activePage = $derived(pages.find((p) => p.active));
+
+	function navigate(event: Event) {
+		const href = (event.currentTarget as HTMLSelectElement).value;
+		if (href) goto(href);
+	}
 
 	// null until mounted: the prerendered artifact shell can't know the theme
 	let theme = $state<Theme | null>(null);
@@ -51,25 +75,32 @@
 				{/each}
 			</nav>
 		{/if}
-		{#if info}
+		{#if pages.length}
 			<nav class="pages">
-				<a href={links.upcoming(info.sport)} class:active={route.startsWith('/[sport]/[[season')}>Upcoming</a>
-				<a href={links.recent(info.sport)} class:active={route.startsWith('/[sport]/recent')}
-					>Recent</a
-				>
-				<a href={links.rankings(info.sport)} class:active={route === '/[sport]/rankings'}>Rankings</a>
-				{#if info.challenge_games}
-					<a href={links.performance(info.sport)} class:active={route === '/[sport]/performance'}
-						>Performance</a
-					>
-				{/if}
-				{#if info.challenge_games && (info.has_spread || info.markets?.length)}
-					<a href={links.challenge(info.sport)} class:active={route === '/[sport]/challenge'}
-						>Beat the model</a
-					>
-				{/if}
+				{#each pages as p (p.label)}
+					<a href={p.href} class:active={p.active}>{p.label}</a>
+				{/each}
 			</nav>
 		{/if}
+		<!-- phones: dropdowns instead of link rows that would scroll sideways -->
+		<div class="menus">
+			{#if data.sports.length > 1}
+				<select aria-label="Sport" value={info ? links.upcoming(info.sport) : ''} onchange={navigate}>
+					{#if !info}<option value="" disabled>Sport</option>{/if}
+					{#each data.sports as s (s.sport)}
+						<option value={links.upcoming(s.sport)}>{s.label}</option>
+					{/each}
+				</select>
+			{/if}
+			{#if pages.length}
+				<select aria-label="Page" value={activePage?.href ?? ''} onchange={navigate}>
+					{#if !activePage}<option value="" disabled>Page</option>{/if}
+					{#each pages as p (p.label)}
+						<option value={p.href}>{p.label}</option>
+					{/each}
+				</select>
+			{/if}
+		</div>
 		<button
 			class="theme"
 			type="button"
@@ -138,9 +169,11 @@
 	}
 	.bar {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 20px;
-		height: 56px;
+		gap: 4px 20px;
+		min-height: 56px;
+		padding-block: 8px;
 	}
 	.brand {
 		font-weight: 800;
@@ -165,11 +198,11 @@
 		color: var(--text);
 		background: var(--surface-2);
 	}
+	/* the sport's pages: a second row under the sports */
 	.pages {
-		margin-left: auto;
-		min-width: 0;
-		overflow-x: auto;
-		scrollbar-width: none;
+		order: 1;
+		flex-basis: 100%;
+		margin-left: -10px;
 	}
 	nav a {
 		white-space: nowrap;
@@ -201,31 +234,43 @@
 		stroke-linecap: round;
 		stroke-linejoin: round;
 	}
-	/* no page nav: keep the toggle at the far right */
-	.brand + .theme,
-	.sports + .theme {
+	.theme {
 		margin-left: auto;
 	}
-	@media (max-width: 640px) {
-		.theme {
-			order: 1;
-			margin-left: auto;
+	.menus {
+		display: none;
+	}
+	@media (max-width: 760px) {
+		nav {
+			display: none;
 		}
-		.pages {
-			order: 2;
+		.menus {
+			display: flex;
+			gap: 6px;
+			margin-left: auto;
+			min-width: 0;
+		}
+		.menus select {
+			min-width: 0;
+			padding: 6px 8px;
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			background-color: var(--surface-2);
+			color: var(--text);
+			font: inherit;
+			font-size: 0.9rem;
+			font-weight: 600;
+		}
+		/* the sport keeps its full name; a long page name gives way first */
+		.menus select:first-child {
+			flex: none;
 		}
 		.bar {
-			flex-wrap: wrap;
-			height: auto;
-			row-gap: 2px;
-			padding-block: 8px;
+			flex-wrap: nowrap;
+			gap: 8px;
 		}
-		.pages {
-			margin-left: -8px;
-			flex-basis: 100%;
-		}
-		nav a {
-			padding: 6px 8px;
+		.theme {
+			margin-left: 0;
 		}
 	}
 	main {

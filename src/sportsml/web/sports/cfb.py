@@ -48,7 +48,7 @@ def third_down_pct(rows: pd.DataFrame) -> pd.Series:
 
 VIEW = SportView(
     sport="cfb",
-    label="College football",
+    label="NCAAF",
     date_label="Week",
     load_teams=load_teams,
     score=("points", "opp_points"),

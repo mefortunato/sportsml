@@ -18,7 +18,7 @@
 		mlb: "MLB's Stats API (lines from ESPN)"
 	};
 
-	// "College football" mid-sentence; acronyms such as NFL stay as they are
+	// lowercase a label mid-sentence; acronyms such as NFL stay as they are
 	function inSentence(label: string): string {
 		return label === label.toUpperCase() ? label : label[0].toLowerCase() + label.slice(1);
 	}

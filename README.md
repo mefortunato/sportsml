@@ -474,7 +474,26 @@ every sport above:
 Every page reads JSON files built next to the site; nothing is computed on
 request. Two GitHub Actions workflows keep them current:
 
-- **Train** (`.github/workflows/train.yml`, monthly and on
+- **Training on a GPU machine** (`sportsml web train_local`, or
+  `make train-local`) does what the Train
+  workflow below does, about 5x faster, and publishes the same way: the
+  site deploys the result without any further step.
+
+  ```sh
+  gh auth login                       # once
+  echo 'CBBD_API_KEY=...' >> .env     # once: men's college basketball lines
+  uv run sportsml web train_local     # every sport, or --sports '[nfl, cbb]'
+  ```
+
+  It builds one sport at a time from a clean checkout of `origin/main` (the
+  code the site exports with; it refuses anything else), merges the sports
+  that built into the `webdata` release and starts the Site workflow. A sport
+  that fails keeps its previous build and makes the exit status non-zero.
+  After an interruption, run it again with
+  `--reuse_model_days 1` to keep the models already trained. To try
+  uncommitted code, or check the GPU, `--publish false` writes nothing
+  to GitHub; the result is in `webdata/`.
+- **Train** (`.github/workflows/train.yml`, the fallback: monthly and on
   demand) runs `sportsml web build --sports '[<sport>]'` in one job per
   sport, in parallel: download, train the transformer, backtest it and
   record power rankings before every date. It publishes the merged result
@@ -495,12 +514,14 @@ request. Two GitHub Actions workflows keep them current:
   per backtest season (its predictions and power rankings) and per trained
   model, named by its key. A build on any other machine with access to the
   repository adds to the same cache, so work done on a GPU machine is not
-  done again by the workflow:
-
-  ```sh
-  gh auth login                       # once
-  uv run sportsml web build --sports '[cbb]' --cache release:backtest-cache
-  ```
+  done again by the workflow. The monthly run uses a model trained in the
+  last 14 days (its team state is refreshed either way) and trains the
+  others, so it costs little while `make train-local` is in regular use and
+  takes over when it is not.
+- **Download cache.** Every build also saves each sport's downloads (finished
+  seasons, finished games' lines) to the `data-cache` release, and restores
+  them when it has none: on a new machine, or in a workflow whose Actions
+  cache was evicted after 7 unused days.
 
   In men's and women's college basketball the Train workflow backtests at
   most one season a run (`--max_new_seasons 1`: their ~6,000-game seasons
@@ -508,7 +529,7 @@ request. Two GitHub Actions workflows keep them current:
   has 6 hours), so their five seasons fill in over five runs, or at once
   from a build elsewhere with the cache. The next Train run downloads
   cached seasons instead of backtesting them;
-  run it with **reuse_model_days** (e.g. 7) to also use that machine's
+  run it by hand with **reuse_model_days** (e.g. 7) to also use that machine's
   model for upcoming games instead of training one. The key covers the
   model settings, epochs and code of the shared layer and that sport's own
   package, so changing one sport leaves the others' seasons valid. GPU and

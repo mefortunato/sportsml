@@ -11,3 +11,10 @@ configs:
     model: {market_tokens: false, efficiency: true}
   market_eff:                   # past-line tokens + efficiency (best on NFL)
     model: {market_tokens: true, efficiency: true}
+  # Optuna's best (experiments/cfb/tune, tuned on 2019/2021/2022) on top of
+  # efficiency
+  tuned:
+    model: {market_tokens: false, efficiency: true, d_model: 32, nhead: 2,
+            num_layers: 2, hidden_dim: 256, history: 34, lr: 0.00138,
+            weight_decay: 0.0002, dropout: 0.223, season_decay: false}
+    fit: {batch_size: 256}

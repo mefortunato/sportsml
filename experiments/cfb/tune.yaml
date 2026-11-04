@@ -1,0 +1,10 @@
+# Optuna search on seasons before the ablation's (2023-2025), from the
+# features the ablation turned on (efficiency; opponent strength is CFB's
+# default). 2020 (shortened by COVID) is left out.
+#   uv run sportsml cfb tune --config experiments/cfb/tune.yaml
+seasons: [2019, 2021, 2022]
+base:
+  model: {market_tokens: false, efficiency: true}
+n_trials: 30
+timeout_hours: 6.0
+n_jobs: 4

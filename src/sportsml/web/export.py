@@ -50,35 +50,39 @@ def download_games(sport: str) -> pd.DataFrame:
     return process(sport, get_sport(sport).download())
 
 
-def refresh_snapshots(snapshots: dict[str, Snapshot]) -> dict[str, Snapshot]:
-    """Each snapshot with freshly downloaded games.
+def load_snapshots(
+    data_dir: str | pathlib.Path, refresh: bool = False
+) -> dict[str, Snapshot]:
+    """One snapshot per sport subdirectory of ``data_dir``.
 
-    A sport whose download fails (e.g. its API's rate limit) keeps its
-    snapshot as built, so one source cannot hold back the other sports;
-    the export fails only when every download does.
+    With ``refresh``, each sport's games are downloaded first and the
+    snapshot is built once from them (building one runs the model over the
+    season, so loading the built games and then refreshing would do that
+    work twice). A sport whose download fails (e.g. its API's rate limit)
+    keeps its built games, so one source cannot hold back the other
+    sports; the export fails only when every download does.
     """
-    fresh, errors = {}, []
-    for sport, snap in snapshots.items():
-        try:
-            fresh[sport] = snap.refreshed(download_games(sport))
-        except Exception as error:
-            # a GitHub Actions annotation, plain text elsewhere
-            print(f"::warning::{sport} refresh failed, keeping the built data: {error}")
-            errors.append(error)
-            fresh[sport] = snap
+    snapshots, errors = {}, []
+    for path in sorted(pathlib.Path(data_dir).iterdir()):
+        if not (path / "meta.json").exists():
+            continue
+        games = None
+        if refresh:
+            sport = json.loads((path / "meta.json").read_text())["sport"]
+            try:
+                games = download_games(sport)
+            except Exception as error:
+                # a GitHub Actions annotation, plain text elsewhere
+                print(
+                    f"::warning::{sport} refresh failed, keeping the built data: "
+                    f"{error}"
+                )
+                errors.append(error)
+        snapshot = Snapshot.load(path, games=games)
+        snapshots[snapshot.view.sport] = snapshot
+        logger.info("loaded %s from %s", snapshot.view.sport, path)
     if errors and len(errors) == len(snapshots):
         raise errors[0]
-    return fresh
-
-
-def load_snapshots(data_dir: str | pathlib.Path) -> dict[str, Snapshot]:
-    """One snapshot per sport subdirectory of ``data_dir``."""
-    snapshots = {}
-    for path in sorted(pathlib.Path(data_dir).iterdir()):
-        if (path / "meta.json").exists():
-            snapshot = Snapshot.load(path)
-            snapshots[snapshot.view.sport] = snapshot
-            logger.info("loaded %s from %s", snapshot.view.sport, path)
     # the site's nav order: built-in sports as listed, any others after
     order = {sport: i for i, sport in enumerate(BUILTIN_VIEWS)}
     return dict(sorted(snapshots.items(), key=lambda kv: order.get(kv[0], len(order))))
@@ -155,9 +159,7 @@ def export(
         odds_history: The previous ``data/`` (a directory or the deployed
             site's URL) whose ``<sport>/odds.json`` line history to extend.
     """
-    snapshots = load_snapshots(data_dir)
-    if refresh:
-        snapshots = refresh_snapshots(snapshots)
+    snapshots = load_snapshots(data_dir, refresh=refresh)
     out = pathlib.Path(output_dir) / "data"
     out.mkdir(parents=True, exist_ok=True)
     (out / "sports.json").write_text(

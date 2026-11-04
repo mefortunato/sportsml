@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import random
+import types
 
 import numpy as np
 import pandas as pd
@@ -9,7 +10,7 @@ import pytest
 from sportsml.core.predictor import load_predictor
 from sportsml.web import export as export_module
 from sportsml.web.build import build
-from sportsml.web.export import export, load_snapshots, refresh_snapshots
+from sportsml.web.export import export, load_snapshots
 from sportsml.web.snapshot import Snapshot, cover_side
 
 from .conftest import TOY_SCHEMA, make_games
@@ -306,24 +307,30 @@ def test_export_refresh_uses_new_results_and_fails_loudly(
     assert not (tmp_path / "x").exists()
 
 
-def test_a_failed_refresh_keeps_that_sports_built_data(monkeypatch):
-    class Snap:
-        def refreshed(self, games):
-            return games
+def test_a_failed_refresh_keeps_that_sports_built_data(tmp_path, monkeypatch):
+    for sport in ("cfb", "nba"):
+        (tmp_path / sport).mkdir()
+        (tmp_path / sport / "meta.json").write_text(json.dumps({"sport": sport}))
+
+    def load(path, games=None):
+        view = types.SimpleNamespace(sport=path.name)
+        return types.SimpleNamespace(view=view, games=games or "built")
 
     def download(sport):
         if sport == "cfb":
             raise ConnectionError("429 Too Many Requests")
         return f"{sport} fresh"
 
+    monkeypatch.setattr(export_module.Snapshot, "load", load)
     monkeypatch.setattr(export_module, "download_games", download)
-    cfb, nba = Snap(), Snap()
-    assert refresh_snapshots({"cfb": cfb, "nba": nba}) == {
-        "cfb": cfb,
+    snaps = load_snapshots(tmp_path, refresh=True)
+    assert {k: v.games for k, v in snaps.items()} == {
         "nba": "nba fresh",
+        "cfb": "built",
     }
+    (tmp_path / "nba" / "meta.json").unlink()
     with pytest.raises(ConnectionError):
-        refresh_snapshots({"cfb": cfb})
+        load_snapshots(tmp_path, refresh=True)
 
 
 def _revive(path):

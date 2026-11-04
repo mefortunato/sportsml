@@ -183,7 +183,7 @@ jobs:
           # men's college basketball lines (see train.yml)
           CBBD_API_KEY: ${{ secrets.CBBD_API_KEY }}
         run: >
-          uv run sportsml web export --data_dir webdata --output_dir web/static
+          uv run --no-sync sportsml web export --data_dir webdata --output_dir web/static
           --refresh true --odds "{nfl: oddsapi, cfb: espn}"
           --odds_history "${{ steps.pages.outputs.base_url }}/data"
           && echo "$GITHUB_SHA" > web/static/data/export-sha.txt

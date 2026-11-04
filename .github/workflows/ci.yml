@@ -14,7 +14,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install
-        run: uv sync --locked --no-group notebooks
+        run: uv sync --locked --no-group notebooks --extra tune
       - name: Lint
         run: |
           uv run ruff check

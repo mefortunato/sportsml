@@ -1,0 +1,13 @@
+# wnba ablation: walk-forward over the last three complete seasons.
+#   uv run sportsml wnba ablate --config experiments/wnba/ablation.yaml
+seasons: [2024, 2025, 2026]
+baseline: base
+# configs pin the token options (the defaults now turn some on) so a rerun
+# reproduces these results
+configs:
+  base:
+    model: {market_tokens: false, efficiency: false}
+  efficiency:
+    model: {market_tokens: false, efficiency: true}
+  market_eff:                   # past-line tokens + efficiency (best on NFL)
+    model: {market_tokens: true, efficiency: true}

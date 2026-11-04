@@ -1,0 +1,156 @@
+{
+  "sport": "cfb",
+  "seasons": [
+    2023,
+    2024,
+    2025
+  ],
+  "configs": {
+    "base": {
+      "model": {
+        "market_tokens": false,
+        "efficiency": false
+      }
+    },
+    "efficiency": {
+      "model": {
+        "market_tokens": false,
+        "efficiency": true
+      }
+    },
+    "market_eff": {
+      "model": {
+        "market_tokens": true,
+        "efficiency": true
+      }
+    },
+    "tuned": {
+      "model": {
+        "market_tokens": false,
+        "efficiency": true,
+        "d_model": 32,
+        "nhead": 2,
+        "num_layers": 2,
+        "hidden_dim": 256,
+        "history": 34,
+        "lr": 0.00138,
+        "weight_decay": 0.0002,
+        "dropout": 0.223,
+        "season_decay": false
+      },
+      "fit": {
+        "batch_size": 256
+      }
+    }
+  },
+  "table": [
+    {
+      "config": "base",
+      "n": 2704,
+      "brier": 0.16864796508313043,
+      "log_loss": 0.5010663003652003,
+      "rmse": 16.224014095820632,
+      "d_brier": 0.0,
+      "d_brier_ci95": 0.0,
+      "vs_market": 0.009614251779456663,
+      "vs_market_ci95": 0.0037728001106623857,
+      "blend_w": 0.11238481973453235,
+      "blend_w_ci95": 0.14969410201724534,
+      "blend_gain": 0.00015663904446641674,
+      "edge_corr": 0.04257485262156114,
+      "ats_pct": 0.5082089552238805,
+      "ou_pct": 0.5209803193464537
+    },
+    {
+      "config": "efficiency",
+      "n": 2704,
+      "brier": 0.16663180391032664,
+      "log_loss": 0.49559892894526386,
+      "rmse": 16.100319279644594,
+      "d_brier": -0.002016161172803779,
+      "d_brier_ci95": 0.0019792547380506334,
+      "vs_market": 0.007598090606652887,
+      "vs_market_ci95": 0.003655176122959209,
+      "blend_w": 0.17850782556043654,
+      "blend_w_ci95": 0.15283576045245303,
+      "blend_gain": 0.00037654647472440406,
+      "edge_corr": 0.055745145247486534,
+      "ats_pct": 0.508955223880597,
+      "ou_pct": 0.539175640549573
+    },
+    {
+      "config": "market_eff",
+      "n": 2704,
+      "brier": 0.16722455175711373,
+      "log_loss": 0.4972910144096681,
+      "rmse": 16.120540239625665,
+      "d_brier": -0.001423413326016665,
+      "d_brier_ci95": 0.002148155665570101,
+      "vs_market": 0.008190838453439998,
+      "vs_market_ci95": 0.003557324484268441,
+      "blend_w": 0.14133273706754176,
+      "blend_w_ci95": 0.1513672852493113,
+      "blend_gain": 0.00022808260551210324,
+      "edge_corr": 0.048493201142764675,
+      "ats_pct": 0.505223880597015,
+      "ou_pct": 0.5317489788340141
+    },
+    {
+      "config": "tuned",
+      "n": 2704,
+      "brier": 0.16970724703351814,
+      "log_loss": 0.5035426574372059,
+      "rmse": 16.268093531610802,
+      "d_brier": 0.0010592819503877173,
+      "d_brier_ci95": 0.002187917673201763,
+      "vs_market": 0.010673533729844382,
+      "vs_market_ci95": 0.003674550888371356,
+      "blend_w": 0.0582870257763749,
+      "blend_w_ci95": 0.14669755567617318,
+      "blend_gain": 4.104704198079623e-05,
+      "edge_corr": 0.029058553876260863,
+      "ats_pct": 0.5197761194029851,
+      "ou_pct": 0.5339769773486818
+    },
+    {
+      "config": "vegas",
+      "n": 2704,
+      "brier": 0.15903371330367375,
+      "log_loss": 0.4752191147922077,
+      "rmse": 15.183082033289084,
+      "d_brier": NaN,
+      "d_brier_ci95": NaN,
+      "vs_market": NaN,
+      "vs_market_ci95": NaN,
+      "blend_w": NaN,
+      "blend_w_ci95": NaN,
+      "blend_gain": NaN,
+      "edge_corr": NaN,
+      "ats_pct": NaN,
+      "ou_pct": NaN
+    }
+  ],
+  "by_season": [
+    {
+      "index": 2023,
+      "base": 0.0,
+      "efficiency": -0.0009546532659015978,
+      "market_eff": -0.0016002342256072016,
+      "tuned": 0.0023397672339607913
+    },
+    {
+      "index": 2024,
+      "base": 0.0,
+      "efficiency": -0.0026234107630352345,
+      "market_eff": -0.0014444459441542389,
+      "tuned": 0.0023033983020347383
+    },
+    {
+      "index": 2025,
+      "base": 0.0,
+      "efficiency": -0.002484105077475966,
+      "market_eff": -0.0012295086657140677,
+      "tuned": -0.0013810672468920241
+    }
+  ]
+}

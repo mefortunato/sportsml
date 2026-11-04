@@ -32,6 +32,11 @@ dependencies = [
 [project.scripts]
 sportsml = "sportsml.cli:cli"
 
+[project.optional-dependencies]
+tune = [
+    "optuna>=5.0.0",
+]
+
 [dependency-groups]
 dev = ["pytest", "ruff"]
 # exploration / notebook tooling; not needed by the package itself

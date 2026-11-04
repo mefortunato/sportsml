@@ -1,0 +1,31 @@
+{
+  "n_trials": 43,
+  "n_complete": 26,
+  "best_params": {
+    "d_model": 128,
+    "lr": 0.00014014707432552636,
+    "weight_decay": 0.03999577441856073,
+    "dropout": 0.2730455230714756,
+    "nhead": 8,
+    "num_layers": 1,
+    "hidden_dim": 128,
+    "history": 14,
+    "season_decay": false,
+    "batch_size": 128
+  },
+  "best_value": 0.22102387632846993,
+  "best_trial": 14,
+  "default_value": 0.22609266754740642,
+  "default_params": {
+    "d_model": 64,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "dropout": 0.1,
+    "nhead": 4,
+    "num_layers": 2,
+    "hidden_dim": 64,
+    "history": 20,
+    "season_decay": false,
+    "batch_size": 256
+  }
+}

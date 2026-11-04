@@ -510,7 +510,27 @@ ensemble) is now the NFL default. The model still trails the market by
 0.0074 Brier, and the blend weight on the model (0.14 ± 0.17) does not
 exclude zero.
 
-<!-- OTHER SPORTS -->
+### Other sports, last three seasons
+
+The same comparison on each sport's last three complete seasons (each sport
+keeps its own history length and settings):
+
+| sport | games | efficiency | past-line tokens + efficiency | default vs market |
+|---|---|---|---|---|
+| NBA | 3,961 | +0.0003 ± 0.0011 | **-0.0028 ± 0.0017** | +0.0116 ± 0.0030 |
+| WNBA | 922 | -0.0020 ± 0.0036 | -0.0019 ± 0.0041 | +0.0128 ± 0.0074 |
+| NHL | 4,190 | -0.0006 ± 0.0009 | -0.0010 ± 0.0010 | +0.0036 ± 0.0018 |
+| MLB | 7,386 | +0.0001 ± 0.0006 | -0.0006 ± 0.0008 | +0.0026 ± 0.0012 |
+| college football | 2,704 | -0.0020 ± 0.0020 | -0.0014 ± 0.0021 | +0.0096 ± 0.0038 |
+
+(Brier difference from the sport's previous default, 95% CI; reports in
+`experiments/<sport>/ablation/ablation.md`.) As in the NFL, efficiency
+rates alone rarely help but the past lines with them do, most clearly in the
+NBA (a quarter of its gap to the market); in college football the rates
+alone are best (better in each season). None of the options hurt any
+sport, so the NBA, WNBA, NHL and MLB defaults now turn on past-line tokens
+and efficiency, and college football's turns on efficiency. Men's and
+women's college basketball were not tested and are unchanged.
 
 ## Web app
 

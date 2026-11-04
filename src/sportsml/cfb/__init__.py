@@ -14,5 +14,12 @@ SPORT = Sport(
     # walk-forward backtests (Brier, paired 95% CI) opponent strength gained
     # -0.0055 +/- 0.0026 over history 16 alone and history 28 another
     # -0.0008 +/- 0.0015; d_model 128 changed nothing (+0.0002)
-    transformer={"history": 28, "total_weight": 1.0, "opponent_strength": True},
+    # efficiency: -0.0020 +/- 0.0020 Brier on 2023-2025, better in each season
+    # (experiments/cfb; past-line tokens on top: -0.0014 +/- 0.0021)
+    transformer={
+        "history": 28,
+        "total_weight": 1.0,
+        "opponent_strength": True,
+        "efficiency": True,
+    },
 )

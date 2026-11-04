@@ -103,6 +103,10 @@
 	.head > div {
 		min-width: 0;
 	}
+	/* long team names truncate rather than run into the middle column */
+	.head :global(.badge) {
+		max-width: 100%;
+	}
 	.head .right {
 		text-align: right;
 		display: flex;

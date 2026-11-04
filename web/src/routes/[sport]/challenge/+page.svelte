@@ -8,7 +8,16 @@
 	import SpreadChart from '$lib/components/SpreadChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import TotalChart from '$lib/components/TotalChart.svelte';
-	import { dateText, handicap, seasonText, marginLabel, pct, spreadLabel } from '$lib/format';
+	import {
+		atsRecord,
+		dateText,
+		handicap,
+		seasonText,
+		marginLabel,
+		pct,
+		spreadLabel,
+		winLoss
+	} from '$lib/format';
 	import {
 		americanOdds,
 		MARKET_LABELS,
@@ -22,6 +31,7 @@
 		ChallengeGame,
 		Market,
 		Pick,
+		StatDef,
 		Team,
 		TeamSummary
 	} from '$lib/types';
@@ -50,6 +60,9 @@
 	let pick = $state<Pick | null>(null);
 	let busy = $state(false);
 	let failure = $state<string | null>(null);
+	let pickCard = $state<HTMLElement>();
+	// the advanced stats stay open or closed from game to game
+	let advancedOpen = $state(false);
 
 	async function next() {
 		if (!store) return;
@@ -60,7 +73,10 @@
 			game = await api.challengeNext(sport, seen, market);
 			answer = null;
 			pick = null;
-			window.scrollTo({ top: 0 });
+			// the buttons stay where they are from game to game, so only scroll
+			// when the pick card's top has gone off screen
+			const top = pickCard?.getBoundingClientRect().top;
+			if (top !== undefined && top < 0) window.scrollBy({ top: top - 12 });
 		} catch (error) {
 			failure = String(error);
 		} finally {
@@ -146,6 +162,40 @@
 		note: string;
 	}
 
+	// a team's season at a glance, for its card: record, ATS, scoring, last 5
+	interface Glance {
+		record: string;
+		ats: string;
+		scored: string;
+		allowed: string;
+		form: ('W' | 'L' | 'T')[];
+		games: string;
+	}
+
+	function glance(g: ChallengeGame, side: 'home' | 'away'): Glance {
+		const s = g.summaries[side];
+		const [scored, allowed] = g.stats;
+		const fmt = (stat: StatDef | undefined) => {
+			const v = stat ? s.averages[stat.key] : null;
+			return v === null || v === undefined ? '—' : v.toFixed(stat?.decimals ?? 1);
+		};
+		return {
+			record: winLoss(s.record),
+			ats: atsRecord(s.ats),
+			scored: fmt(scored),
+			allowed: fmt(allowed),
+			// oldest first, so the newest result is on the right
+			form: s.recent
+				.slice(0, 5)
+				.reverse()
+				.map((r) => (r.margin > 0 ? 'W' : r.margin < 0 ? 'L' : 'T')),
+			// the season the numbers cover: this one, or last season before an opener
+			games: s.current_season
+				? `${s.games} game${s.games === 1 ? '' : 's'}`
+				: `${seasonText(s.season, info.split_season)} season`
+		};
+	}
+
 	const choices = $derived.by<Choice[]>(() => {
 		const g = shown;
 		if (!g) return [];
@@ -186,7 +236,7 @@
 	const prompt: Record<Market, string> = {
 		spread: 'Pick the side that covers the spread',
 		moneyline: 'Pick the winner, at the posted moneyline odds',
-		total: 'Pick whether the combined score goes over or under the line'
+		total: 'Pick whether the combined score goes over or under'
 	};
 
 	function outcomeText(a: ChallengeAnswer, g: ChallengeGame): string {
@@ -251,13 +301,54 @@
 
 	{#if shown}
 		{@const g = shown}
-		<div class="card section pick">
-			<div class="muted small">
+		{@const teams = { away: glance(g, 'away'), home: glance(g, 'home') }}
+		<div class="card section pick" bind:this={pickCard}>
+			<div class="context muted small">
 				{dateText(info.date_label, g.date, g.date_name)}, {seasonText(g.season, info.split_season)}{g.neutral ? ' · neutral site' : ''} · {lineText}
 			</div>
-			<div class="small">{prompt[market]}</div>
+			<div class="small prompt">{prompt[market]}</div>
 
-			<div class="choices">
+			{#snippet panel(side: 'away' | 'home', choice: Choice | null)}
+				{@const t = teams[side]}
+				{@const team = side === 'home' ? g.home : g.away}
+				<span class="head">
+					<TeamBadge {team} size={28} label="none" />
+					<span class="names">
+						<span class="team-name">{team.name}</span>
+						<span class="where muted">{side === 'home' ? 'Home' : 'Away'} · {t.games}</span>
+					</span>
+					{#if choice}
+						<span class="line-box">
+							<span class="line tabular">{choice.line.replace(/^(home|away) /, '')}</span>
+							<span class="covers">{choice.note}</span>
+						</span>
+					{/if}
+				</span>
+				<span class="glance tabular">
+					<span><b>{t.record}</b><small>Record</small></span>
+					<span><b>{t.ats}</b><small>ATS</small></span>
+					<span><b>{t.scored}</b><small>Scored</small></span>
+					<span><b>{t.allowed}</b><small>Allowed</small></span>
+				</span>
+				<span class="form">
+					<small class="muted">Last {t.form.length || 5}</small>
+					{#each t.form as r, i (i)}
+						<span class="dot" class:w={r === 'W'} class:l={r === 'L'}>{r}</span>
+					{:else}
+						<small class="muted">no games yet</small>
+					{/each}
+				</span>
+			{/snippet}
+
+			{#if market === 'total'}
+				<div class="choices teams-row">
+					{#each ['away', 'home'] as const as side (side)}
+						<div class="choice static">{@render panel(side, null)}</div>
+					{/each}
+				</div>
+			{/if}
+
+			<div class="choices" class:totals={market === 'total'} role="group" aria-label={prompt[market]}>
 				{#each choices as choice (choice.pick)}
 					{@const chosen = pick === choice.pick}
 					{@const won = answer && answer.outcome === choice.pick}
@@ -270,22 +361,29 @@
 						onclick={() => (pick = choice.pick)}
 					>
 						{#if choice.pick === 'home' || choice.pick === 'away'}
-							<TeamBadge team={choice.pick === 'home' ? g.home : g.away} size={48} label="none" />
+							{@render panel(choice.pick, choice)}
 						{:else}
-							<span class="total-icon" aria-hidden="true">{choice.pick === 'over' ? '▲' : '▼'}</span>
+							<span class="total-choice">
+								<span class="total-icon" aria-hidden="true">{choice.pick === 'over' ? '▲' : '▼'}</span>
+								<span class="team-name">{choice.title}</span>
+								<span class="line tabular">{choice.line}</span>
+								<span class="covers">{choice.note}</span>
+							</span>
 						{/if}
-						<span class="team-name">{choice.title}</span>
-						<span class="line tabular">{choice.line}</span>
-						<span class="covers">{choice.note}</span>
 					</button>
 				{/each}
 			</div>
 
+			<!-- one slot for both actions, so the button never moves -->
 			{#if !answer}
-				<button class="primary submit" disabled={!pick || busy} onclick={submit}>
+				<button class="primary action" disabled={!pick || busy} onclick={submit}>
 					{pick ? `Lock in ${pickLabel(pick, g.home, g.away)}` : 'Make a pick'}
 				</button>
 			{:else}
+				<button class="primary action" onclick={next} disabled={busy}>Next game →</button>
+			{/if}
+
+			{#if answer}
 				<div class="reveal">
 					<div class="final">
 						Final: {g.away.team}
@@ -333,12 +431,20 @@
 							/>
 						{/if}
 					</div>
-					<button class="primary" onclick={next} disabled={busy}>Next game →</button>
 				</div>
 			{/if}
 		</div>
 
-		<MatchupDetails matchup={g} dateLabel={info.date_label} splitSeason={info.split_season} />
+		<details class="advanced section" bind:open={advancedOpen}>
+			<summary class="card">
+				<span>
+					<strong>Advanced stats</strong>
+					<span class="muted small">· {g.stats.length} stats &amp; recent games</span>
+				</span>
+				<span class="chevron" aria-hidden="true">▾</span>
+			</summary>
+			<MatchupDetails matchup={g} dateLabel={info.date_label} splitSeason={info.split_season} />
+		</details>
 	{:else if busy}
 		<p class="muted section">Loading a game…</p>
 	{/if}
@@ -366,24 +472,40 @@
 	.pick {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: 12px;
 		align-items: center;
 		text-align: center;
+	}
+	/* one line, so revealing the team names never rewraps it */
+	.context {
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.prompt {
+		margin-top: -6px;
 	}
 	.choices {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 16px;
+		gap: 12px;
 		width: 100%;
-		max-width: 640px;
+		max-width: 720px;
 	}
 	.choice {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 6px;
-		padding: 16px;
+		align-items: stretch;
+		gap: 10px;
+		padding: 12px;
 		border-width: 2px;
+		text-align: left;
+		min-width: 0;
+	}
+	.choice.static {
+		border: 1px solid var(--border);
+		border-radius: var(--radius, 10px);
 	}
 	.choice.chosen {
 		border-color: var(--accent);
@@ -401,25 +523,119 @@
 		opacity: 1;
 		cursor: default;
 	}
-	.total-icon {
-		font-size: 2rem;
-		line-height: 48px;
-		height: 48px;
-		color: var(--accent);
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.names {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1;
+		line-height: 1.2;
 	}
 	.team-name {
 		font-weight: 700;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.where {
+		font-size: 0.75rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.line-box {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		line-height: 1.15;
+		flex: none;
 	}
 	.line {
-		font-size: 1.2rem;
+		font-size: 1.15rem;
 		font-weight: 800;
 	}
 	.covers {
 		color: var(--muted);
-		font-size: 0.85rem;
+		font-size: 0.75rem;
 	}
-	.submit {
-		min-width: 220px;
+	.glance {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 4px;
+		padding: 8px 0;
+		border-top: 1px solid var(--border);
+		border-bottom: 1px solid var(--border);
+	}
+	.glance > span {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		min-width: 0;
+		line-height: 1.2;
+	}
+	.glance b {
+		font-size: 0.95rem;
+		white-space: nowrap;
+	}
+	.glance small {
+		color: var(--muted);
+		font-size: 0.7rem;
+	}
+	.form {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
+	}
+	.form small {
+		font-size: 0.7rem;
+		margin-right: 2px;
+	}
+	.dot {
+		display: inline-grid;
+		place-items: center;
+		width: 18px;
+		height: 18px;
+		border-radius: 4px;
+		font-size: 0.65rem;
+		font-weight: 700;
+		background: var(--border);
+		color: var(--muted);
+		flex: none;
+	}
+	.dot.w {
+		background: var(--good-soft);
+		color: var(--good);
+	}
+	.dot.l {
+		background: var(--bad-soft);
+		color: var(--bad);
+	}
+	.totals .choice {
+		align-items: center;
+	}
+	.total-choice {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.total-icon {
+		font-size: 1.1rem;
+		color: var(--accent);
+	}
+	.action {
+		min-width: 240px;
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.reveal {
 		display: flex;
@@ -444,5 +660,56 @@
 	.chart {
 		width: 100%;
 		max-width: 640px;
+	}
+	.advanced > summary {
+		list-style: none;
+		cursor: pointer;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 12px;
+	}
+	.advanced > summary::-webkit-details-marker {
+		display: none;
+	}
+	.advanced > summary:hover {
+		border-color: var(--accent);
+	}
+	.chevron {
+		transition: transform 0.15s;
+		color: var(--muted);
+	}
+	.advanced[open] .chevron {
+		transform: rotate(180deg);
+	}
+	@media (max-width: 520px) {
+		.choices {
+			gap: 8px;
+		}
+		.choice {
+			padding: 10px 8px;
+			gap: 8px;
+		}
+		.head {
+			flex-wrap: wrap;
+			gap: 6px;
+		}
+		.line-box {
+			flex-direction: row;
+			align-items: baseline;
+			gap: 4px;
+			width: 100%;
+		}
+		.glance {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			row-gap: 6px;
+		}
+		.form small:first-child {
+			display: none;
+		}
+		.dot {
+			width: 16px;
+			height: 16px;
+		}
 	}
 </style>

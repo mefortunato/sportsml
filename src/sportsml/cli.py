@@ -20,6 +20,7 @@ from .staking import staking
 from .web.build import build as web_build
 from .web.build import push_cache
 from .web.export import export as web_export
+from .web.release import publish_webdata, pull_data, push_data, train_local
 
 # Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
 # and are read by the command itself. Without this, jsonargparse would read an
@@ -147,6 +148,10 @@ def run(args=None):
         "build": web_build,
         "export": web_export,
         "push_cache": push_cache,
+        "publish": publish_webdata,
+        "pull_data": pull_data,
+        "push_data": push_data,
+        "train_local": train_local,
     }
     components["version"] = version
     defaults = {}

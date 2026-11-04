@@ -1,12 +1,14 @@
 # Train the transformer, run the walk-forward backtest (challenge games,
 # performance page, past power rankings) and publish the result as the
 # `webdata` release asset that the daily Site workflow builds from.
-# Runs monthly during the seasons and on demand, e.g. after changing the
-# model. Each sport builds in its own job, in parallel. Backtest seasons are
+# Builds are usually run on a GPU machine with `make train-local` (see
+# sportsml.web.release), which publishes the same way; this workflow is the
+# fallback: monthly, it reuses models that machine trained in the last 14 days
+# and trains the rest, and it runs on demand, e.g. after changing the model.
+# Each sport builds in its own job, in parallel. Backtest seasons are
 # reused from the previous `webdata` release, or from the `backtest-cache`
-# release that every build (here or on any machine, e.g. one with a GPU:
-# `sportsml web build --cache release:backtest-cache`) adds its seasons and
-# models to, while the model and that sport's code are unchanged, so a
+# release that every build adds its seasons and models to, while the model
+# and that sport's code are unchanged, so a
 # routine run only trains the model for upcoming games
 # (~15 min for the NFL or college football, ~20 for the NBA); a full
 # backtest (after a model change, or with refresh_backtest) takes ~1 hour
@@ -79,6 +81,11 @@ jobs:
             data/${{ matrix.sport }}/mlb_cache
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
           restore-keys: ${{ env.CACHE_PREFIX }}
+      - name: Restore the download cache from its release if the Actions cache was evicted
+        if: matrix.sport != 'nfl'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-default-groups sportsml web pull_data --sports '[${{ matrix.sport }}]'
       - name: Fetch the previous build (its backtest seasons can be reused)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -102,7 +109,7 @@ jobs:
           --output_dir webdata --cache release:backtest-cache
           ${{ contains(fromJSON('["cbb", "wcbb"]'), matrix.sport) && '--max_new_seasons 1' || '' }}
           --refresh_backtest ${{ inputs.refresh_backtest || false }}
-          --reuse_model_days ${{ inputs.reuse_model_days || 0 }}
+          --reuse_model_days ${{ inputs.reuse_model_days || (github.event_name == 'schedule' && 14 || 0) }}
       - name: Save the ESPN files and lines fetched so far
         if: ${{ !cancelled() && matrix.sport != 'nfl' }}
         uses: actions/cache/save@v4
@@ -112,6 +119,12 @@ jobs:
             data/${{ matrix.sport }}/nhl_cache
             data/${{ matrix.sport }}/mlb_cache
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
+      - name: Share the download cache with other machines
+        if: ${{ !cancelled() && matrix.sport != 'nfl' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-default-groups sportsml web push_data --sports '[${{ matrix.sport }}]'
       - name: Pack this sport's build
         run: tar -czf webdata-${{ matrix.sport }}.tar.gz -C webdata ${{ matrix.sport }}
       - uses: actions/upload-artifact@v4
@@ -129,38 +142,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
       - uses: actions/download-artifact@v4
         with:
           pattern: webdata-*
           merge-multiple: true
           path: built
-      - name: Merge with the previous build
+      - name: Unpack the sports that built
         run: |
           shopt -s nullglob
-          built=(built/webdata-*.tar.gz)
-          if [ ${#built[@]} -eq 0 ]; then
-            echo "::error::no sport built"; exit 1
-          fi
-          mkdir webdata
-          if gh release download webdata --pattern webdata.tar.gz; then
-            tar -xzf webdata.tar.gz -C webdata && rm webdata.tar.gz
-          fi
-          for file in "${built[@]}"; do
-            sport="$(basename "$file" .tar.gz)"; sport="${sport#webdata-}"
-            rm -rf "webdata/$sport"
-            tar -xzf "$file" -C webdata
-            echo "published a new build of $sport"
+          mkdir -p built/sports
+          for file in built/webdata-*.tar.gz; do
+            tar -xzf "$file" -C built/sports
           done
-      - name: Publish webdata release asset
-        run: |
-          tar -czf webdata.tar.gz -C webdata .
-          gh release view webdata >/dev/null 2>&1 || gh release create webdata \
-            --title "Web data (trained model and backtest)" --latest=false \
-            --notes "Written by the Train workflow; the Site workflow builds from it."
-          gh release upload webdata webdata.tar.gz --clobber
-      - name: Rebuild the site
-        # Site waits for this exact asset: a download right after the upload
-        # can still be served the previous one
+      - name: Publish the webdata release asset and rebuild the site
+        # the same as `make train-local`; a sport that failed keeps its build
         run: >
-          gh workflow run site.yml --ref "${{ github.ref_name }}"
-          -f webdata_sha256="$(sha256sum webdata.tar.gz | cut -d' ' -f1)"
+          uv run --no-default-groups sportsml web publish
+          --data_dir built/sports --ref "${{ github.ref_name }}"

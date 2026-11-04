@@ -157,13 +157,22 @@ class DirectoryStore(Store):
 class ReleaseStore(Store):
     """Entries as the assets of a GitHub release, through the ``gh`` CLI
     (authenticated by ``GH_TOKEN`` in Actions, ``gh auth login`` elsewhere).
-    The release is created on the first upload."""
+    The release is created on the first upload, with ``title`` and ``notes``."""
 
-    def __init__(self, tag: str, repo: str | None = None, run=subprocess.run):
+    def __init__(
+        self,
+        tag: str,
+        repo: str | None = None,
+        run=subprocess.run,
+        title: str = "Backtest cache",
+        notes: str = "Backtest seasons and trained models by key "
+        "(sportsml.web.cache); any build can reuse them.",
+    ):
         self.tag, self.repo, self._run = tag, repo, run
+        self.title, self.notes = title, notes
         self._names: set[str] | None = None
 
-    def _gh(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def gh(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         repo = ("--repo", self.repo) if self.repo else ()
         return self._run(
             ["gh", *args, *repo], check=check, capture_output=True, text=False
@@ -171,7 +180,7 @@ class ReleaseStore(Store):
 
     def names(self) -> set[str]:
         if self._names is None:
-            done = self._gh("release", "view", self.tag, "--json", "assets",
+            done = self.gh("release", "view", self.tag, "--json", "assets",
                             check=False)  # fmt: skip
             if done.returncode:
                 self._names = set()  # no release yet
@@ -182,23 +191,21 @@ class ReleaseStore(Store):
 
     def get(self, name: str) -> bytes | None:
         with tempfile.TemporaryDirectory() as tmp:
-            done = self._gh("release", "download", self.tag, "--pattern", name,
+            done = self.gh("release", "download", self.tag, "--pattern", name,
                             "--dir", tmp, check=False)  # fmt: skip
             path = pathlib.Path(tmp) / name
             return path.read_bytes() if not done.returncode and path.exists() else None
 
     def put(self, name: str, data: bytes) -> None:
-        if self._gh("release", "view", self.tag, check=False).returncode:
+        if self.gh("release", "view", self.tag, check=False).returncode:
             # another machine may create it at the same time: that is fine
-            self._gh("release", "create", self.tag, "--latest=false",
-                     "--title", "Backtest cache",
-                     "--notes", "Backtest seasons and trained models by key "
-                     "(sportsml.web.cache); any build can reuse them.",
+            self.gh("release", "create", self.tag, "--latest=false",
+                     "--title", self.title, "--notes", self.notes,
                      check=False)  # fmt: skip
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / name
             path.write_bytes(data)
-            self._gh("release", "upload", self.tag, str(path), "--clobber")
+            self.gh("release", "upload", self.tag, str(path), "--clobber")
         self.names().add(name)
 
 

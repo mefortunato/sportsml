@@ -2,7 +2,7 @@ VERSION ?= $(shell uv version --short)
 REGISTRY ?= ghcr.io/mefortunato/sportsml
 IMAGE ?= $(REGISTRY):$(VERSION)
 
-.PHONY: build push pull cli webdata site-data site web-dev artifact test lint format
+.PHONY: build push pull cli webdata train-local site-data site web-dev artifact test lint format
 
 # --- Docker: the CLI / training image ------------------------------------------
 build:
@@ -23,6 +23,11 @@ cli:
 # train, backtest and rank (slow; the Train workflow does this on GitHub)
 webdata:
 	uv run sportsml web build --sports '[nfl, cfb, nba, cbb, wcbb, wnba, nhl, mlb]' --output_dir webdata
+
+# the Train workflow on this machine's GPU, publishing the models and web data
+# for the site, e.g. make train-local SPORTS=nfl,cbb ARGS="--reuse_model_days 1".
+train-local:
+	uv run sportsml web train_local $(if $(SPORTS),--sports '[$(SPORTS)]') $(ARGS)
 
 # re-download results and export every page's data to web/static/data (fast;
 # the daily Site workflow does this)

@@ -532,6 +532,15 @@ sport, so the NBA, WNBA, NHL and MLB defaults now turn on past-line tokens
 and efficiency, and college football's turns on efficiency. Men's and
 women's college basketball were not tested and are unchanged.
 
+A college football Optuna search (27 trials on 2019, 2021 and 2022,
+[`experiments/cfb/tune`](experiments/cfb/tune/best.json)) preferred a
+narrower model (d_model 32, 2 heads, a 256-wide head, 34 games, lr 1.4e-3):
+0.1669 vs 0.1690 for the default on the tuning seasons, but on 2023-2025 it
+was worse than the default with efficiency (+0.0011 ± 0.0022 vs the old
+default, against -0.0020 ± 0.0020), so the CFB architecture is unchanged.
+In both sports the search's gain on its own seasons did not carry over:
+treat a tuning result as a candidate for a held-out ablation, not a default.
+
 ## Web app
 
 A static site (SvelteKit) with no server, rebuilt daily on GitHub Pages, with

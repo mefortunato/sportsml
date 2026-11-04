@@ -6,9 +6,15 @@
     2025
   ],
   "configs": {
-    "base": {},
+    "base": {
+      "model": {
+        "market_tokens": false,
+        "efficiency": false
+      }
+    },
     "efficiency": {
       "model": {
+        "market_tokens": false,
         "efficiency": true
       }
     },
@@ -16,6 +22,24 @@
       "model": {
         "market_tokens": true,
         "efficiency": true
+      }
+    },
+    "tuned": {
+      "model": {
+        "market_tokens": false,
+        "efficiency": true,
+        "d_model": 32,
+        "nhead": 2,
+        "num_layers": 2,
+        "hidden_dim": 256,
+        "history": 34,
+        "lr": 0.00138,
+        "weight_decay": 0.0002,
+        "dropout": 0.223,
+        "season_decay": false
+      },
+      "fit": {
+        "batch_size": 256
       }
     }
   },
@@ -72,6 +96,23 @@
       "ou_pct": 0.5317489788340141
     },
     {
+      "config": "tuned",
+      "n": 2704,
+      "brier": 0.16970724703351814,
+      "log_loss": 0.5035426574372059,
+      "rmse": 16.268093531610802,
+      "d_brier": 0.0010592819503877173,
+      "d_brier_ci95": 0.002187917673201763,
+      "vs_market": 0.010673533729844382,
+      "vs_market_ci95": 0.003674550888371356,
+      "blend_w": 0.0582870257763749,
+      "blend_w_ci95": 0.14669755567617318,
+      "blend_gain": 4.104704198079623e-05,
+      "edge_corr": 0.029058553876260863,
+      "ats_pct": 0.5197761194029851,
+      "ou_pct": 0.5339769773486818
+    },
+    {
       "config": "vegas",
       "n": 2704,
       "brier": 0.15903371330367375,
@@ -94,19 +135,22 @@
       "index": 2023,
       "base": 0.0,
       "efficiency": -0.0009546532659015978,
-      "market_eff": -0.0016002342256072016
+      "market_eff": -0.0016002342256072016,
+      "tuned": 0.0023397672339607913
     },
     {
       "index": 2024,
       "base": 0.0,
       "efficiency": -0.0026234107630352345,
-      "market_eff": -0.0014444459441542389
+      "market_eff": -0.0014444459441542389,
+      "tuned": 0.0023033983020347383
     },
     {
       "index": 2025,
       "base": 0.0,
       "efficiency": -0.002484105077475966,
-      "market_eff": -0.0012295086657140677
+      "market_eff": -0.0012295086657140677,
+      "tuned": -0.0013810672468920241
     }
   ]
 }

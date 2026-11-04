@@ -12,5 +12,13 @@ SPORT = Sport(
     # about a season of games, and each game's pre-game Elo of both teams:
     # like college football's, 360+ Division I schedules differ far more in
     # strength than a pro league's
-    transformer={"history": 32, "total_weight": 1.0, "opponent_strength": True},
+    # past-line tokens + efficiency as in the other sports (not backtested
+    # here: they helped the NBA and WNBA, which share the basketball stats)
+    transformer={
+        "history": 32,
+        "total_weight": 1.0,
+        "opponent_strength": True,
+        "market_tokens": True,
+        "efficiency": True,
+    },
 )

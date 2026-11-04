@@ -528,9 +528,11 @@ keeps its own history length and settings):
 rates alone rarely help but the past lines with them do, most clearly in the
 NBA (a quarter of its gap to the market); in college football the rates
 alone are best (better in each season). None of the options hurt any
-sport, so the NBA, WNBA, NHL and MLB defaults now turn on past-line tokens
-and efficiency, and college football's turns on efficiency. Men's and
-women's college basketball were not tested and are unchanged.
+sport, so every sport's default now turns on past-line tokens and
+efficiency (in college football, where the rates alone scored slightly
+better, the difference is well within noise). Men's and women's college
+basketball were not backtested here; they share the basketball efficiency
+stats with the NBA and WNBA.
 
 A college football Optuna search (27 trials on 2019, 2021 and 2022,
 [`experiments/cfb/tune`](experiments/cfb/tune/best.json)) preferred a

@@ -17,7 +17,14 @@
 		totalLabel,
 		unitsLabel
 	} from '$lib/markets';
-	import type { ChallengeAnswer, ChallengeGame, Market, Pick } from '$lib/types';
+	import type {
+		ChallengeAnswer,
+		ChallengeGame,
+		Market,
+		Pick,
+		Team,
+		TeamSummary
+	} from '$lib/types';
 	import { untrack } from 'svelte';
 	import { get } from 'svelte/store';
 
@@ -106,6 +113,32 @@
 		return unsubscribe;
 	});
 
+	// Blind resumes: until the pick is locked in, the two teams show only as
+	// "Away" and "Home". Their opponents stay named, so recent form still has
+	// context. Answering reveals the real teams.
+	const BLIND: Record<'home' | 'away', Team> = {
+		away: { team: 'Away', name: 'Away team', abbr: 'A' },
+		home: { team: 'Home', name: 'Home team', abbr: 'H' }
+	};
+
+	function blindSummary(summary: TeamSummary, side: 'home' | 'away'): TeamSummary {
+		return { ...summary, team: BLIND[side] };
+	}
+
+	const shown = $derived.by<ChallengeGame | null>(() => {
+		const g = game;
+		if (!g || answer) return g;
+		return {
+			...g,
+			home: BLIND.home,
+			away: BLIND.away,
+			summaries: {
+				home: blindSummary(g.summaries.home, 'home'),
+				away: blindSummary(g.summaries.away, 'away')
+			}
+		};
+	});
+
 	interface Choice {
 		pick: Pick;
 		title: string;
@@ -114,7 +147,7 @@
 	}
 
 	const choices = $derived.by<Choice[]>(() => {
-		const g = game;
+		const g = shown;
 		if (!g) return [];
 		if (market === 'moneyline' && g.moneyline) {
 			return (['away', 'home'] as const).map((side) => ({
@@ -142,7 +175,7 @@
 	});
 
 	const lineText = $derived.by(() => {
-		const g = game;
+		const g = shown;
 		if (!g) return '';
 		if (market === 'moneyline' && g.moneyline)
 			return `Moneyline ${g.away.team} ${americanOdds(g.moneyline.away)} · ${g.home.team} ${americanOdds(g.moneyline.home)}`;
@@ -182,8 +215,10 @@
 		<div>
 			<h1>Beat the model</h1>
 			<p class="muted">
-				A past game, its Vegas lines, and what both teams had done before kickoff. Choose a market,
-				make your pick, then see the result and what the model picked.
+				A past game, its Vegas lines, and what both teams had done before kickoff, with the two
+				teams kept anonymous: you see their stats, records and recent opponents, but not who they
+				are. Choose a market, make your pick, then see the teams, the result and what the model
+				picked.
 			</p>
 			<p class="muted small">
 				The model never saw these games: its pick for a game from a given season comes from a
@@ -214,8 +249,8 @@
 		<p class="error">{failure}</p>
 	{/if}
 
-	{#if game}
-		{@const g = game}
+	{#if shown}
+		{@const g = shown}
 		<div class="card section pick">
 			<div class="muted small">
 				{dateText(info.date_label, g.date, g.date_name)}, {seasonText(g.season, info.split_season)}{g.neutral ? ' · neutral site' : ''} · {lineText}

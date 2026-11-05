@@ -27,6 +27,7 @@ dependencies = [
     "torch_geometric",
     "torchmetrics",
     "tqdm",
+    "umap-learn",
 ]
 
 [project.scripts]
@@ -46,7 +47,6 @@ notebooks = [
     "jupyter",
     "sbrscrape>=0.0.12",
     "seaborn",
-    "umap-learn",
     "wandb>=0.25.1",
     "weave>=0.52.36",
 ]

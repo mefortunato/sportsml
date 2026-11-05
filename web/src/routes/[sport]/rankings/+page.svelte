@@ -1,6 +1,7 @@
 <script lang="ts">
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
+	import TeamMap from '$lib/components/TeamMap.svelte';
 	import { dateText, seasonText, signed } from '$lib/format';
 	import {
 		filterOptions,
@@ -79,6 +80,10 @@
 			: []
 	);
 	const toggle = (team: string) => (pins = togglePin(pins, team));
+	// the team map is of the latest season only (the served model's embeddings)
+	const teamMap = $derived(
+		rankings.map && season && rankings.map.season === season.season ? rankings.map : null
+	);
 </script>
 
 <div class="container section">
@@ -164,6 +169,24 @@
 			</div>
 			<RankingsChart {season} {visible} dateLabel={info.date_label} {pins} bind:index ontoggle={toggle} />
 		</div>
+
+		{#if teamMap}
+			<div class="card section">
+				<h2>
+					Team map
+					<span class="muted small"
+						>before {dateText(info.date_label, teamMap.date, teamMap.date_name)}</span
+					>
+				</h2>
+				<p class="muted small map-intro">
+					Each dot is a team, placed by the model's internal picture of it (its learned embedding,
+					reduced to two dimensions with UMAP): teams close together are ones the model sees as
+					alike. The axes have no units. Color is the team's average predicted margin, red below
+					zero and blue above. Click a dot to highlight the team.
+				</p>
+				<TeamMap map={teamMap} {pins} {visible} ontoggle={toggle} />
+			</div>
+		{/if}
 
 		<div class="card section">
 			<h2>
@@ -320,6 +343,10 @@
 		background: var(--accent-soft);
 	}
 	.check {
+		margin: 0 0 8px;
+	}
+	.map-intro {
+		max-width: 68ch;
 		margin: 0 0 8px;
 	}
 	.finalist {

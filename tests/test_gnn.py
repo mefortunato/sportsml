@@ -136,3 +136,11 @@ def test_refresh_skips_teams_unseen_in_training(fitted, toy_games):
     assert "NEW" not in predictor.model.teams and "T00" in predictor.model.teams
     with pytest.raises(ValueError, match="no state"):
         predictor.predict(pd.DataFrame({"team": ["NEW"], "opp": ["T01"]}))
+
+
+def test_team_embeddings_are_the_current_teams_node_states(fitted, toy_games):
+    loaded = load_predictor(str(fitted[1]))
+    loaded.update_state(toy_games)
+    embeddings = loaded.model.team_embeddings()
+    assert list(embeddings.index) == loaded.model.teams
+    assert np.isfinite(embeddings.to_numpy()).all()

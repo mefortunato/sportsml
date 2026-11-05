@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	defaultPins,
+	divergeColor,
+	divergeMax,
 	filterOptions,
 	matchesFilter,
 	playoffRanks,
@@ -116,5 +118,18 @@ describe('playoff marks', () => {
 			['A', 2, 'semifinal']
 		]);
 		expect(playoffRanks(season, 2)).toEqual([]);
+	});
+});
+
+describe('diverging color scale', () => {
+	it('is gray at zero and a full pole at the ends', () => {
+		expect(divergeColor(0, 10)).toContain('var(--diverge-pos) 0%');
+		expect(divergeColor(10, 10)).toContain('var(--diverge-pos) 100%');
+		expect(divergeColor(-5, 10)).toContain('var(--diverge-neg) 50%');
+		expect(divergeColor(-50, 10)).toContain('var(--diverge-neg) 100%');
+	});
+	it('rounds the half-width up to a whole point', () => {
+		expect(divergeMax([3.2, -7.4])).toBe(8);
+		expect(divergeMax([])).toBe(1);
 	});
 });

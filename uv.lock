@@ -5020,6 +5020,7 @@ dependencies = [
     { name = "torch-geometric" },
     { name = "torchmetrics" },
     { name = "tqdm" },
+    { name = "umap-learn" },
 ]
 
 [package.optional-dependencies]
@@ -5038,7 +5039,6 @@ notebooks = [
     { name = "jupyter" },
     { name = "sbrscrape" },
     { name = "seaborn" },
-    { name = "umap-learn" },
     { name = "wandb" },
     { name = "weave" },
 ]
@@ -5063,6 +5063,7 @@ requires-dist = [
     { name = "torch-geometric" },
     { name = "torchmetrics" },
     { name = "tqdm" },
+    { name = "umap-learn" },
 ]
 provides-extras = ["tune"]
 
@@ -5077,7 +5078,6 @@ notebooks = [
     { name = "jupyter" },
     { name = "sbrscrape", specifier = ">=0.0.12" },
     { name = "seaborn" },
-    { name = "umap-learn" },
     { name = "wandb", specifier = ">=0.25.1" },
     { name = "weave", specifier = ">=0.52.36" },
 ]

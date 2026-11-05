@@ -338,6 +338,18 @@ class TransformerMatchupModel(MatchupModel):
     def teams(self) -> list:
         return list(self.team_index)
 
+    @torch.no_grad()
+    def team_embeddings(self) -> pd.DataFrame | None:
+        """Each team's encoded history as of the state's season (an
+        ensemble's members side by side: their spaces differ)."""
+        if not self.team_index:
+            return None
+        season = torch.full((len(self.history),), float(self.state_season))
+        batch = sequence(self.tokens, self.seasons, self.history, season)
+        members = getattr(self.module, "members", [self.module])
+        parts = [member.encoder(**batch).numpy() for member in members]
+        return pd.DataFrame(np.concatenate(parts, axis=1), index=self.teams)
+
     def predict_margin(self, matchups: pd.DataFrame) -> np.ndarray:
         return self.predict_outputs(matchups)["margin"]
 

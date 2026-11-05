@@ -472,6 +472,25 @@ def test_rankings_cover_backtest_and_current_season(snapshot, games):
     assert current["dates"][-1] == upcoming_date
 
 
+def test_team_map_lays_out_the_latest_seasons_teams(snapshot, games):
+    team_map = snapshot.rankings()["map"]
+    current = next(
+        s for s in snapshot.rankings()["seasons"] if s["source"] == "current"
+    )
+    assert (team_map["season"], team_map["date"]) == (2024, current["dates"][-1])
+    playing = set(games.loc[games["season"] == 2024, "team"])
+    assert {p["team"]["team"] for p in team_map["points"]} == playing
+    latest = {t["team"]["team"]: t["ratings"][-1] for t in current["teams"]}
+    for point in team_map["points"]:
+        assert -1 <= point["x"] <= 1 and -1 <= point["y"] <= 1
+        assert point["rating"] == pytest.approx(latest[point["team"]["team"]])
+    # a fixed seed: the same layout on every export
+    from sportsml.web.snapshot import umap_2d
+
+    vectors = np.random.default_rng(0).normal(size=(12, 8)).astype(np.float32)
+    np.testing.assert_allclose(umap_2d(vectors), umap_2d(vectors))
+
+
 def test_performance_summarizes_the_walk_forward_pool(snapshot):
     from sportsml.backtest import summarize
 

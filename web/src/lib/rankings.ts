@@ -132,3 +132,17 @@ export function reconcilePins(pins: Pins, rows: RankRow[], count = MAX_PINS): Pi
 	}
 	return kept;
 }
+
+/** A fill on the diverging scale: gray at zero, toward red below and blue
+ * above, fully saturated at ±`max`. */
+export function divergeColor(value: number, max: number): string {
+	const t = max > 0 ? Math.min(1, Math.abs(value) / max) : 0;
+	const pole = value < 0 ? 'var(--diverge-neg)' : 'var(--diverge-pos)';
+	return `color-mix(in oklab, ${pole} ${Math.round(t * 100)}%, var(--diverge-mid))`;
+}
+
+/** The color scale's half-width: the largest |rating|, rounded up to a whole
+ * point so the legend's end labels are round. */
+export function divergeMax(values: number[]): number {
+	return Math.max(1, Math.ceil(Math.max(0, ...values.map(Math.abs))));
+}

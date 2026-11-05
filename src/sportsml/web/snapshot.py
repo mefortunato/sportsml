@@ -143,6 +143,7 @@ class Snapshot:
 
         self.baked_rankings = rankings if rankings is not None else pd.DataFrame()
         self.rankings_table = self._with_current_rankings(predictor)
+        self.team_map = self._team_map(predictor)
         self.recent_games = self._predict_recent(predictor)
         self._recent_rows = {
             g: i for i, g in enumerate(self.recent_games.get(schema.game_id, []))
@@ -360,6 +361,42 @@ class Snapshot:
                     {"season": season, "date": date, "team": team, "rating": rating}
                 )
         return pd.concat([baked, pd.DataFrame(rows)], ignore_index=True)
+
+    def _team_map(self, predictor: Predictor) -> dict | None:
+        """The latest ranked season's teams laid out in 2-D: the served
+        model's team embeddings (from every game played) reduced with UMAP,
+        each point with the team's latest rating. ``None`` for a model
+        without embeddings or too few teams to lay out."""
+        table = self.rankings_table
+        if not len(table):
+            return None
+        s = self.schema
+        season = table["season"].max()
+        frame = table[table["season"] == season]
+        date = frame["date"].max()
+        ratings = frame[frame["date"] == date].set_index("team")["rating"]
+        predictor.update_state(self.played[self.played[s.season] <= season])
+        embeddings = predictor.model.team_embeddings()
+        if embeddings is None:
+            return None
+        embeddings = embeddings.loc[embeddings.index.isin(ratings.index)]
+        if len(embeddings) < MIN_MAP_TEAMS:
+            return None
+        xy = umap_2d(embeddings.to_numpy(dtype=np.float32))
+        return {
+            "season": season,
+            "date": date,
+            "date_name": self.date_name(season, date) if self.date_names else None,
+            "points": [
+                {
+                    "team": team,
+                    "x": round(float(x), 4),
+                    "y": round(float(y), 4),
+                    "rating": round(float(ratings[team]), 2),
+                }
+                for team, (x, y) in zip(embeddings.index, xy)
+            ],
+        }
 
     def _performance(self) -> dict:
         """Walk-forward backtest metrics: overall, by season, each market's
@@ -882,6 +919,14 @@ class Snapshot:
         return py(
             {
                 "seasons": seasons,
+                "map": self.team_map
+                and {
+                    **self.team_map,
+                    "points": [
+                        {**p, "team": self.team(p["team"])}
+                        for p in self.team_map["points"]
+                    ],
+                },
                 "date_label": self.view.date_label,
                 "playoff_labels": dict(self.view.playoff_labels),
             }
@@ -910,6 +955,31 @@ class Snapshot:
                 "backtest": self.meta.get("backtest"),
             }
         )
+
+
+# UMAP needs a few neighbours per point to find any structure.
+MIN_MAP_TEAMS = 5
+
+
+def umap_2d(vectors: np.ndarray, seed: int = 0) -> np.ndarray:
+    """``[n, d]`` vectors laid out in 2-D with UMAP (cosine distance, a
+    fixed seed so a re-export keeps the layout), scaled into [-1, 1]."""
+    import umap
+
+    neighbors = max(2, min(15, len(vectors) - 1))
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=neighbors,
+        min_dist=0.3,
+        metric="cosine",
+        # spectral initialization needs more points than a small league has
+        init="spectral" if len(vectors) > 30 else "random",
+        random_state=seed,
+    )
+    xy = reducer.fit_transform(vectors)
+    xy = xy - xy.mean(axis=0)
+    scale = np.abs(xy).max()
+    return xy / scale if scale > 0 else xy
 
 
 def _calibration(prob: pd.Series, happened: pd.Series) -> list[dict]:

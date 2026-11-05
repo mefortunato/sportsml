@@ -288,8 +288,30 @@ export interface RankingSeason {
 	playoffs?: Record<string, PlayoffStage>;
 }
 
+/** A team placed on the team map. */
+export interface TeamMapPoint {
+	team: Team;
+	/** UMAP coordinates of the team's embedding, scaled into [-1, 1]; only
+	 * distances between teams mean anything. */
+	x: number;
+	y: number;
+	/** Average predicted margin at the map's date. */
+	rating: number;
+}
+
+/** The latest season's teams laid out by how alike the model sees them. */
+export interface TeamMap {
+	season: number;
+	/** The ranking date the ratings are from (before that date's games). */
+	date: number;
+	date_name?: string | null;
+	points: TeamMapPoint[];
+}
+
 export interface Rankings {
 	seasons: RankingSeason[];
+	/** Absent for models without team embeddings. */
+	map?: TeamMap | null;
 	date_label: string;
 	/** Display label per playoff stage, e.g. "Won Super Bowl". */
 	playoff_labels?: Partial<Record<PlayoffStage, string>>;

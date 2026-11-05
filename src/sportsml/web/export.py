@@ -59,24 +59,32 @@ def download_games(sport: str) -> pd.DataFrame:
 
 
 def load_snapshots(
-    data_dir: str | pathlib.Path, refresh: bool = False
+    data_dir: str | pathlib.Path,
+    refresh: bool = False,
+    sports: list[str] | None = None,
+    require_refresh: bool = True,
 ) -> dict[str, Snapshot]:
-    """One snapshot per sport subdirectory of ``data_dir``.
+    """One snapshot per sport subdirectory of ``data_dir`` (only ``sports``
+    when given).
 
     With ``refresh``, each sport's games are downloaded first and the
     snapshot is built once from them (building one runs the model over the
     season, so loading the built games and then refreshing would do that
     work twice). A sport whose download fails (e.g. its API's rate limit)
     keeps its built games, so one source cannot hold back the other
-    sports; the export fails only when every download does.
+    sports; with ``require_refresh``, loading fails when every download
+    does (an export of a single sport turns it off, and :func:`merge`
+    checks the sports together).
     """
     snapshots, errors = {}, []
     for path in sorted(pathlib.Path(data_dir).iterdir()):
         if not (path / "meta.json").exists():
             continue
+        sport = json.loads((path / "meta.json").read_text())["sport"]
+        if sports is not None and sport not in sports:
+            continue
         games = None
         if refresh:
-            sport = json.loads((path / "meta.json").read_text())["sport"]
             try:
                 games = download_games(sport)
             except Exception as error:
@@ -89,11 +97,15 @@ def load_snapshots(
         snapshot = Snapshot.load(path, games=games)
         snapshots[snapshot.view.sport] = snapshot
         logger.info("loaded %s from %s", snapshot.view.sport, path)
-    if errors and len(errors) == len(snapshots):
+    if require_refresh and errors and len(errors) == len(snapshots):
         raise errors[0]
-    # the site's nav order: built-in sports as listed, any others after
+    return dict(sorted(snapshots.items(), key=lambda kv: _nav_order(kv[0])))
+
+
+def _nav_order(sport: str) -> int:
+    """The site's nav order: built-in sports as listed, any others after."""
     order = {sport: i for i, sport in enumerate(BUILTIN_VIEWS)}
-    return dict(sorted(snapshots.items(), key=lambda kv: order.get(kv[0], len(order))))
+    return order.get(sport, len(order))
 
 
 def _compact(value, teams: dict):
@@ -230,6 +242,8 @@ def export(
     odds: dict[str, str] | None = None,
     odds_history: str | None = None,
     challenge_from: str | None = None,
+    sports: list[str] | None = None,
+    require_refresh: bool = True,
 ) -> None:
     """Write every sport's page data as static JSON.
 
@@ -250,14 +264,21 @@ def export(
             site's URL) whose challenge files to copy for each sport whose
             :func:`challenge_key` is unchanged, instead of exporting them
             again (the slowest part of an export).
+        sports: Export only these sports (e.g. one per CI job, combined
+            with :func:`merge`); default every sport in ``data_dir``.
+        require_refresh: With ``refresh``, fail when every sport's download
+            fails (off for a single sport's export: :func:`merge` checks).
     """
-    keys = {
-        json.loads((path / "meta.json").read_text())["sport"]: challenge_key(path)
-        for path in pathlib.Path(data_dir).iterdir()
-        if (path / "meta.json").exists()
-    }
+    keys = {}
+    for path in pathlib.Path(data_dir).iterdir():
+        if (path / "meta.json").exists():
+            sport = json.loads((path / "meta.json").read_text())["sport"]
+            if sports is None or sport in sports:
+                keys[sport] = challenge_key(path)
     previous_keys = previous_challenge_keys(challenge_from)
-    snapshots = load_snapshots(data_dir, refresh=refresh)
+    snapshots = load_snapshots(
+        data_dir, refresh=refresh, sports=sports, require_refresh=require_refresh
+    )
     out = pathlib.Path(output_dir) / "data"
     out.mkdir(parents=True, exist_ok=True)
     (out / "sports.json").write_text(
@@ -339,3 +360,42 @@ def export(
     (out / CHALLENGE_KEYS).write_text(
         json.dumps({sport: keys[sport] for sport in snapshots if sport in keys})
     )
+
+
+def merge(
+    parts_dir: str = "parts",
+    output_dir: str = "web/static",
+    require_refresh: bool = False,
+) -> None:
+    """Combine exports of some sports each (``export --sports``) into one.
+
+    Args:
+        parts_dir: Holds one exported ``data/`` directory per subdirectory.
+        output_dir: Writes ``<output_dir>/data/``: each sport's files, and
+            ``sports.json`` and ``challenge-keys.json`` across the parts.
+        require_refresh: Fail unless some sport was refreshed (``export
+            --refresh``), as an export of every sport at once does: a part
+            whose download failed kept its built data.
+    """
+    out = pathlib.Path(output_dir) / "data"
+    out.mkdir(parents=True, exist_ok=True)
+    infos, keys = {}, {}
+    for part in sorted(p for p in pathlib.Path(parts_dir).iterdir() if p.is_dir()):
+        for info in json.loads((part / "sports.json").read_text()):
+            sport = info["sport"]
+            if sport in infos:
+                raise ValueError(f"{sport} is in more than one part ({part})")
+            infos[sport] = info
+            shutil.copytree(part / sport, out / sport, dirs_exist_ok=True)
+        if (part / CHALLENGE_KEYS).exists():
+            keys |= json.loads((part / CHALLENGE_KEYS).read_text())
+    if not infos:
+        raise ValueError(f"no exported sports under {parts_dir}")
+    if require_refresh and not any(i.get("refreshed_at") for i in infos.values()):
+        raise RuntimeError("no sport was refreshed: every download failed")
+    order = sorted(infos, key=_nav_order)
+    (out / "sports.json").write_text(json.dumps([infos[s] for s in order]))
+    (out / CHALLENGE_KEYS).write_text(
+        json.dumps({s: keys[s] for s in order if s in keys})
+    )
+    print(f"merged {', '.join(order)} -> {out}")

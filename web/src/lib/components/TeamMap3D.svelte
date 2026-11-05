@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { dateText, signed } from '$lib/format';
 	import { divergeColor, divergeMax, type Pins } from '$lib/rankings';
-	import { CUBE_EDGES, positionAt, project, ranksAt, ratingAt, rotate } from '$lib/teammap';
+	import { extent, positionAt, project, ranksAt, ratingAt, rotate } from '$lib/teammap';
 	import type { TeamMap } from '$lib/types';
 	import { onDestroy } from 'svelte';
 
@@ -32,7 +32,9 @@
 	const narrow = $derived(W < 560);
 	const H = $derived(narrow ? 380 : 520);
 	let zoom = $state(1);
-	const size = $derived((Math.min(W, H) / 2) * 0.62 * zoom);
+	// the box around every team's every position fills the view at any angle
+	const box = $derived(extent(map.teams));
+	const size = $derived(((Math.min(W, H) / 2) * 0.86 * zoom) / box.radius);
 	const R = $derived((map.teams.length > 100 ? 3.6 : 6) * Math.min(1.4, Math.max(0.8, zoom)));
 
 	// the camera: a slow turn until the reader takes over
@@ -52,8 +54,12 @@
 
 	const cx = $derived(W / 2);
 	const cy = $derived(H / 2);
-	function screen(p: [number, number, number]) {
-		const q = project(rotate(p, yaw, pitch), size);
+	// camera units: the box's radius is 1, so perspective is the same for any spread
+	function screen(p: [number, number, number], centered = false) {
+		const c = centered ? [0, 0, 0] : box.center;
+		const r = box.radius;
+		const v: [number, number, number] = [(p[0] - c[0]) / r, (p[1] - c[1]) / r, (p[2] - c[2]) / r];
+		const q = project(rotate(v, yaw, pitch), size * r);
 		return { x: cx + q.x, y: cy + q.y, scale: q.scale, depth: q.depth };
 	}
 
@@ -77,8 +83,8 @@
 			.sort((a, b) => a.depth - b.depth)
 	);
 	const edges = $derived(
-		CUBE_EDGES.map(([a, b]) => {
-			const [p, q] = [screen(a), screen(b)];
+		box.edges.map(([a, b]) => {
+			const [p, q] = [screen(a, true), screen(b, true)];
 			return { d: `M${p.x.toFixed(1)},${p.y.toFixed(1)}L${q.x.toFixed(1)},${q.y.toFixed(1)}`, back: p.depth + q.depth < 0 };
 		})
 	);

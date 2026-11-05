@@ -265,3 +265,12 @@ def test_team_waiting_for_its_first_game_keeps_state(toy_games):
     )
     model.update_state(known)
     assert resting in model.teams
+
+
+def test_team_embeddings_encode_each_teams_history(fitted, toy_games):
+    loaded = load_predictor(str(fitted[1]))
+    loaded.update_state(toy_games)
+    embeddings = loaded.model.team_embeddings()
+    assert list(embeddings.index) == loaded.model.teams
+    assert embeddings.shape[1] == loaded.model.module.encoder.out_dim
+    assert np.isfinite(embeddings.to_numpy()).all()

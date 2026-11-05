@@ -529,6 +529,7 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
                 assert _as_exported(scored) == _exported(expected)
     assert "logo.png" not in (data / "toy" / "challenge" / "0.json").read_text()
     assert _revive(data / "toy" / "rankings.json") == _exported(snapshot.rankings())
+    assert _revive(data / "toy" / "map.json") == _exported(snapshot.team_map_view())
     assert _revive(data / "toy" / "performance.json") == _exported(
         snapshot.performance()
     )
@@ -578,6 +579,48 @@ def test_rankings_cover_backtest_and_current_season(snapshot, games):
     current = next(s for s in rankings["seasons"] if s["source"] == "current")
     upcoming_date = snapshot.upcoming()["date"]
     assert current["dates"][-1] == upcoming_date
+
+
+def test_team_map_follows_the_latest_season_date_by_date(snapshot, games):
+    team_map = snapshot.team_map_view()
+    current = next(
+        s for s in snapshot.rankings()["seasons"] if s["source"] == "current"
+    )
+    assert team_map["season"] == 2024 and team_map["dates"] == current["dates"]
+    playing = set(games.loc[games["season"] == 2024, "team"])
+    assert {t["team"]["team"] for t in team_map["teams"]} == playing
+    keys = [m["key"] for m in team_map["metrics"]]
+    assert keys[:3] == ["rating", "margin", "win_pct"]
+    assert set(keys[3:]) == {st.key for st in snapshot.view.stats}
+    ratings = {t["team"]["team"]: t["ratings"] for t in current["teams"]}
+    for team in team_map["teams"]:
+        assert len(team["positions"]) == len(team_map["dates"])
+        for point in team["positions"]:
+            assert len(point) == 2 and all(-1 <= v <= 1 for v in point)
+        assert team["values"]["rating"] == pytest.approx(ratings[team["team"]["team"]])
+        assert set(team["values"]) == set(keys)
+
+    # season-to-date before each date: nothing before the first, then the
+    # games played so far
+    i = len(team_map["dates"]) - 1
+    date = team_map["dates"][i]
+    played = games[(games["season"] == 2024) & games["margin"].notna()]
+    before = played[played["week"] < date]
+    team = team_map["teams"][0]
+    rows = before[before["team"] == team["team"]["team"]]
+    assert team["values"]["win_pct"][0] is None
+    assert team["values"]["margin"][i] == pytest.approx(rows["margin"].mean(), abs=0.01)
+    wins = int((rows["margin"] > 0).sum())
+    assert team["records"][i][0] == wins
+    assert team["values"]["win_pct"][i] == pytest.approx(
+        (wins + 0.5 * (rows["margin"] == 0).sum()) / len(rows), abs=1e-3
+    )
+
+    # a fixed seed: the same layout on every export
+    from sportsml.web.snapshot import umap_layout
+
+    vectors = np.random.default_rng(0).normal(size=(12, 8)).astype(np.float32)
+    np.testing.assert_allclose(umap_layout(vectors), umap_layout(vectors))
 
 
 def test_performance_summarizes_the_walk_forward_pool(snapshot):

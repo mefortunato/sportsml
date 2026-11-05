@@ -59,6 +59,11 @@ class MatchupModel(abc.ABC):
     def teams(self) -> list:
         """Teams that currently have state, i.e. can be predicted."""
 
+    def team_embeddings(self) -> pd.DataFrame | None:
+        """Each team's learned representation in the current state, one row
+        per team (indexed by team), or ``None`` for models without one."""
+        return None
+
 
 class Predictor(mlflow.pyfunc.PythonModel):
     """MLflow pyfunc model that serves any :class:`MatchupModel`.

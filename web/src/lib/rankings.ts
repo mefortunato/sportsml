@@ -132,3 +132,20 @@ export function reconcilePins(pins: Pins, rows: RankRow[], count = MAX_PINS): Pi
 	}
 	return kept;
 }
+
+/** A fill on the diverging scale: gray at zero, toward red below and blue
+ * above, fully saturated at ±`max`. */
+export function divergeColor(value: number, max: number): string {
+	const t = max > 0 ? Math.min(1, Math.abs(value) / max) : 0;
+	const pole = value < 0 ? 'var(--diverge-neg)' : 'var(--diverge-pos)';
+	return `color-mix(in oklab, ${pole} ${Math.round(t * 100)}%, var(--diverge-mid))`;
+}
+
+/** The color scale's half-width: the 90th percentile of |rating| (a few
+ * outliers, like a college league's weakest teams, would otherwise wash
+ * everyone else out to gray), rounded up to a whole point. */
+export function divergeMax(values: number[]): number {
+	const sorted = values.map(Math.abs).sort((a, b) => a - b);
+	const at = sorted[Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))] ?? 0;
+	return Math.max(1, Math.ceil(at));
+}

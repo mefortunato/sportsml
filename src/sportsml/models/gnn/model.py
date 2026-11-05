@@ -96,6 +96,11 @@ class GraphMatchupModel(MatchupModel):
     def teams(self) -> list:
         return [t for t, active in zip(self.features.teams, self.active) if active]
 
+    def team_embeddings(self) -> pd.DataFrame | None:
+        if self.embeddings is None:
+            return None
+        return pd.DataFrame(self.embeddings[self.active].numpy(), index=self.teams)
+
     def predict_margin(self, matchups: pd.DataFrame) -> np.ndarray:
         return self.predict_outputs(matchups)["margin"]
 

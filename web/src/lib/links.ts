@@ -19,5 +19,6 @@ export const links = {
 	game: (sport: string, gameId: string) => resolve('/[sport]/games/[gameId]', { sport, gameId }),
 	challenge: (sport: string) => resolve('/[sport]/challenge', { sport }),
 	rankings: (sport: string) => resolve('/[sport]/rankings', { sport }),
+	teamMap: (sport: string) => resolve('/[sport]/map', { sport }),
 	performance: (sport: string) => resolve('/[sport]/performance', { sport })
 };

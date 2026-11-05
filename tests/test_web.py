@@ -1,6 +1,8 @@
 import dataclasses
 import json
 import random
+import shutil
+import types
 
 import numpy as np
 import pandas as pd
@@ -9,7 +11,7 @@ import pytest
 from sportsml.core.predictor import load_predictor
 from sportsml.web import export as export_module
 from sportsml.web.build import build
-from sportsml.web.export import export, load_snapshots, refresh_snapshots
+from sportsml.web.export import export, load_snapshots, merge
 from sportsml.web.snapshot import Snapshot, cover_side
 
 from .conftest import TOY_SCHEMA, make_games
@@ -306,24 +308,30 @@ def test_export_refresh_uses_new_results_and_fails_loudly(
     assert not (tmp_path / "x").exists()
 
 
-def test_a_failed_refresh_keeps_that_sports_built_data(monkeypatch):
-    class Snap:
-        def refreshed(self, games):
-            return games
+def test_a_failed_refresh_keeps_that_sports_built_data(tmp_path, monkeypatch):
+    for sport in ("cfb", "nba"):
+        (tmp_path / sport).mkdir()
+        (tmp_path / sport / "meta.json").write_text(json.dumps({"sport": sport}))
+
+    def load(path, games=None):
+        view = types.SimpleNamespace(sport=path.name)
+        return types.SimpleNamespace(view=view, games=games or "built")
 
     def download(sport):
         if sport == "cfb":
             raise ConnectionError("429 Too Many Requests")
         return f"{sport} fresh"
 
+    monkeypatch.setattr(export_module.Snapshot, "load", load)
     monkeypatch.setattr(export_module, "download_games", download)
-    cfb, nba = Snap(), Snap()
-    assert refresh_snapshots({"cfb": cfb, "nba": nba}) == {
-        "cfb": cfb,
+    snaps = load_snapshots(tmp_path, refresh=True)
+    assert {k: v.games for k, v in snaps.items()} == {
         "nba": "nba fresh",
+        "cfb": "built",
     }
+    (tmp_path / "nba" / "meta.json").unlink()
     with pytest.raises(ConnectionError):
-        refresh_snapshots({"cfb": cfb})
+        load_snapshots(tmp_path, refresh=True)
 
 
 def _revive(path):
@@ -355,6 +363,106 @@ def _as_exported(value):
 def _exported(value):
     """Through JSON first: integer keys (seasons) become strings."""
     return _as_exported(json.loads(json.dumps(value)))
+
+
+def test_export_reuses_unchanged_challenge_files(webdata, tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    export(data_dir=str(webdata), output_dir=str(first))
+    keys = json.loads((first / "data" / "challenge-keys.json").read_text())
+    assert set(keys) == {"toy"}
+    built = {p.name: p.read_bytes() for p in (first / "data/toy/challenge").iterdir()}
+    assert len(built) > 1
+
+    exported = []
+    original = Snapshot.challenge_game
+    monkeypatch.setattr(
+        Snapshot,
+        "challenge_game",
+        lambda self, game_id: exported.append(game_id) or original(self, game_id),
+    )
+    # an unchanged build and exporter: the files are copied, not exported
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "second"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    copied = tmp_path / "second" / "data" / "toy" / "challenge"
+    assert {p.name: p.read_bytes() for p in copied.iterdir()} == built
+    assert not exported
+
+    # a missing shard: exported again
+    (first / "data" / "toy" / "challenge" / "0.json").unlink()
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "third"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    assert exported
+    redone = tmp_path / "third" / "data" / "toy" / "challenge"
+    assert {p.name: p.read_bytes() for p in redone.iterdir()} == built
+
+    # another build (here: a different key): exported again
+    exported.clear()
+    (first / "data" / "challenge-keys.json").write_text('{"toy": "other"}')
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "fourth"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    assert exported
+
+
+def test_challenge_key_follows_the_build(webdata, tmp_path):
+    from sportsml.web.export import challenge_key
+
+    copy = tmp_path / "toy"
+    shutil.copytree(webdata / "toy", copy)
+    assert challenge_key(copy) == challenge_key(webdata / "toy")
+    with open(copy / "pool.csv", "a") as pool:
+        pool.write("\n")
+    assert challenge_key(copy) != challenge_key(webdata / "toy")
+
+
+def test_per_sport_exports_merge_into_one(webdata, tmp_path):
+    parts = tmp_path / "parts"
+    export(data_dir=str(webdata), output_dir=str(parts / "toy"), sports=["toy"])
+    export(data_dir=str(webdata), output_dir=str(parts / "none"), sports=["nfl"])
+    assert json.loads((parts / "none/data/sports.json").read_text()) == []
+    # another sport's part (a stand-in: the toy webdata has one sport)
+    other = parts / "nfl" / "data"
+    (other / "nfl").mkdir(parents=True)
+    (other / "nfl" / "upcoming.json").write_text("{}")
+    (other / "sports.json").write_text(json.dumps([{"sport": "nfl"}]))
+    (other / "challenge-keys.json").write_text('{"nfl": "k"}')
+    for part in parts.iterdir():  # the CI jobs' artifacts: data/ only
+        shutil.move(part / "data", tmp_path / "flat" / part.name)
+
+    merge(parts_dir=str(tmp_path / "flat"), output_dir=str(tmp_path / "site"))
+    data = tmp_path / "site" / "data"
+    assert [i["sport"] for i in json.loads((data / "sports.json").read_text())] == [
+        "nfl",
+        "toy",
+    ]  # nav order
+    keys = json.loads((data / "challenge-keys.json").read_text())
+    assert keys["nfl"] == "k" and len(keys["toy"]) == 64
+    whole = tmp_path / "whole"
+    export(data_dir=str(webdata), output_dir=str(whole))
+    for path in (whole / "data" / "toy").rglob("*.json"):
+        relative = path.relative_to(whole / "data")
+        assert (data / relative).read_bytes() == path.read_bytes(), relative
+    assert (data / "nfl" / "upcoming.json").exists()
+
+    # nothing refreshed: like an export of every sport, the merge fails
+    with pytest.raises(RuntimeError):
+        merge(parts_dir=str(tmp_path / "flat"), output_dir=str(tmp_path / "x"),
+              require_refresh=True)  # fmt: skip
+    shutil.copytree(tmp_path / "flat" / "toy", tmp_path / "flat" / "toy2")
+    with pytest.raises(ValueError, match="more than one part"):
+        merge(parts_dir=str(tmp_path / "flat"), output_dir=str(tmp_path / "y"))
+
+
+def test_a_single_sport_export_keeps_its_data_when_its_download_fails(
+    webdata, tmp_path, monkeypatch
+):
+    def broken(sport):
+        raise ConnectionError("offline")
+
+    monkeypatch.setattr(export_module, "download_games", broken)
+    export(data_dir=str(webdata), output_dir=str(tmp_path), refresh=True,
+           sports=["toy"], require_refresh=False)  # fmt: skip
+    (info,) = json.loads((tmp_path / "data" / "sports.json").read_text())
+    assert info["sport"] == "toy" and info["refreshed_at"] is None
 
 
 def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):

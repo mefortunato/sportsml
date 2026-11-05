@@ -25,6 +25,11 @@
 # own run was cancelled is still picked up. Other changes, or a failed
 # download, run the full export, which keeps the deployed NFL lines
 # instead of spending The Odds API quota (see "Export fresh data and lines").
+#
+# The challenge files (the slowest part of an export) only change with a
+# new trained build or an exporter change: each export copies a sport's
+# from the deployed site when its challenge-keys.json entry still matches
+# (sportsml.web.export.challenge_key), and exports them again otherwise.
 name: Site
 
 on:
@@ -99,6 +104,9 @@ jobs:
           get() { curl -fsSL --retry 3 --create-dirs "$BASE/$1" -o "$out/$1"; }
           get sports.json
           get export-sha.txt
+          # optional: lets the next full export reuse the challenge files
+          curl -fsL --retry 3 "$BASE/challenge-keys.json" -o "$out/challenge-keys.json" \
+            || { rm -f "$out/challenge-keys.json"; echo "no challenge-keys.json"; }
           list="$RUNNER_TEMP/data-urls"
           : > "$list"
           for sport in $(jq -r '.[].sport' "$out/sports.json"); do
@@ -186,6 +194,7 @@ jobs:
           uv run --no-sync sportsml web export --data_dir webdata --output_dir web/static
           --refresh true --odds "{nfl: oddsapi, cfb: espn}"
           --odds_history "${{ steps.pages.outputs.base_url }}/data"
+          --challenge_from "${{ steps.pages.outputs.base_url }}/data"
           && echo "$GITHUB_SHA" > web/static/data/export-sha.txt
       - uses: actions/setup-node@v6
         with:

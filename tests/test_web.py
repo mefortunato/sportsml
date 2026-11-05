@@ -364,6 +364,57 @@ def _exported(value):
     return _as_exported(json.loads(json.dumps(value)))
 
 
+def test_export_reuses_unchanged_challenge_files(webdata, tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    export(data_dir=str(webdata), output_dir=str(first))
+    keys = json.loads((first / "data" / "challenge-keys.json").read_text())
+    assert set(keys) == {"toy"}
+    built = {p.name: p.read_bytes() for p in (first / "data/toy/challenge").iterdir()}
+    assert len(built) > 1
+
+    exported = []
+    original = Snapshot.challenge_game
+    monkeypatch.setattr(
+        Snapshot,
+        "challenge_game",
+        lambda self, game_id: exported.append(game_id) or original(self, game_id),
+    )
+    # an unchanged build and exporter: the files are copied, not exported
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "second"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    copied = tmp_path / "second" / "data" / "toy" / "challenge"
+    assert {p.name: p.read_bytes() for p in copied.iterdir()} == built
+    assert not exported
+
+    # a missing shard: exported again
+    (first / "data" / "toy" / "challenge" / "0.json").unlink()
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "third"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    assert exported
+    redone = tmp_path / "third" / "data" / "toy" / "challenge"
+    assert {p.name: p.read_bytes() for p in redone.iterdir()} == built
+
+    # another build (here: a different key): exported again
+    exported.clear()
+    (first / "data" / "challenge-keys.json").write_text('{"toy": "other"}')
+    export(data_dir=str(webdata), output_dir=str(tmp_path / "fourth"),
+           challenge_from=str(first / "data"))  # fmt: skip
+    assert exported
+
+
+def test_challenge_key_follows_the_build(webdata, tmp_path):
+    import shutil
+
+    from sportsml.web.export import challenge_key
+
+    copy = tmp_path / "toy"
+    shutil.copytree(webdata / "toy", copy)
+    assert challenge_key(copy) == challenge_key(webdata / "toy")
+    with open(copy / "pool.csv", "a") as pool:
+        pool.write("\n")
+    assert challenge_key(copy) != challenge_key(webdata / "toy")
+
+
 def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
     export(data_dir=str(webdata), output_dir=str(tmp_path))
     data = tmp_path / "data"

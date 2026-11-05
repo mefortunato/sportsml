@@ -141,8 +141,11 @@ export function divergeColor(value: number, max: number): string {
 	return `color-mix(in oklab, ${pole} ${Math.round(t * 100)}%, var(--diverge-mid))`;
 }
 
-/** The color scale's half-width: the largest |rating|, rounded up to a whole
- * point so the legend's end labels are round. */
+/** The color scale's half-width: the 90th percentile of |rating| (a few
+ * outliers, like a college league's weakest teams, would otherwise wash
+ * everyone else out to gray), rounded up to a whole point. */
 export function divergeMax(values: number[]): number {
-	return Math.max(1, Math.ceil(Math.max(0, ...values.map(Math.abs))));
+	const sorted = values.map(Math.abs).sort((a, b) => a - b);
+	const at = sorted[Math.min(sorted.length - 1, Math.floor(0.9 * sorted.length))] ?? 0;
+	return Math.max(1, Math.ceil(at));
 }

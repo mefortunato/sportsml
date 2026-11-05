@@ -27,10 +27,21 @@
 	const PAD = 28;
 	const R = $derived(map.points.length > 100 ? 4.5 : 6);
 
-	// equal scale on both axes (UMAP distances mean the same either way)
-	const scale = $derived(Math.min(W - 2 * PAD, H - 2 * PAD) / 2);
-	const px = (x: number) => W / 2 + x * scale;
-	const py = (y: number) => H / 2 - y * scale;
+	// the points' extent fitted to the plot, with equal scale on both axes
+	// (UMAP distances mean the same either way); room on the sides for labels
+	const SIDE = $derived(narrow ? 16 : 44);
+	const box = $derived.by(() => {
+		const xs = map.points.map((p) => p.x);
+		const ys = map.points.map((p) => p.y);
+		const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+		const scale = Math.min(
+			(W - 2 * PAD - 2 * SIDE) / Math.max(x1 - x0, 1e-6),
+			(H - 2 * PAD) / Math.max(y1 - y0, 1e-6)
+		);
+		return { scale, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+	});
+	const px = (x: number) => W / 2 + (x - box.cx) * box.scale;
+	const py = (y: number) => H / 2 - (y - box.cy) * box.scale;
 
 	const max = $derived(divergeMax(map.points.map((p) => p.rating)));
 	const ranks = $derived(
@@ -50,16 +61,39 @@
 
 	// labels for highlighted teams, or every team when only a few are shown
 	const LABEL_ALL = 12;
+	const CHAR_W = 7; // px per character of a 12px label, a little generous
 	const labelled = $derived.by(() => {
 		const shown = map.points.filter((p) => isVisible(p.team.team));
 		const pick = shown.length <= LABEL_ALL ? shown : shown.filter((p) => p.team.team in pins);
-		return pick.map((p) => ({
-			key: p.team.team,
-			text: p.team.abbr ?? p.team.team,
-			x: px(p.x),
-			y: py(p.y),
-			right: px(p.x) < W - 90
-		}));
+		const labels = pick
+			.map((p) => ({
+				key: p.team.team,
+				text: p.team.abbr ?? p.team.team,
+				x: px(p.x),
+				y: py(p.y),
+				at: py(p.y),
+				right: px(p.x) < W - 90
+			}))
+			.sort((a, b) => a.at - b.at);
+		// a label whose box overlaps one placed above it moves down below it
+		const LINE = 14;
+		const span = (l: (typeof labels)[number]) => {
+			const width = l.text.length * CHAR_W;
+			const start = l.right ? l.x + R + 7 : l.x - R - 7 - width;
+			return [start, start + width];
+		};
+		for (let i = 1; i < labels.length; i++) {
+			const [b0, b1] = span(labels[i]);
+			for (let j = 0; j < i; j++) {
+				const [a0, a1] = span(labels[j]);
+				const overlaps = a0 < b1 && b0 < a1 && Math.abs(labels[i].at - labels[j].at) < LINE;
+				if (overlaps) {
+					labels[i].at = labels[j].at + LINE;
+					j = -1; // check again against every label above
+				}
+			}
+		}
+		return labels;
 	});
 
 	let hover = $state<string | null>(null);
@@ -120,7 +154,7 @@
 				class="label"
 				class:pinned={l.key in pins}
 				x={l.right ? l.x + R + 7 : l.x - R - 7}
-				y={l.y}
+				y={l.at}
 				text-anchor={l.right ? 'start' : 'end'}
 				dominant-baseline="middle">{l.text}</text
 			>

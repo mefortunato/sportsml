@@ -132,4 +132,8 @@ describe('diverging color scale', () => {
 		expect(divergeMax([3.2, -7.4])).toBe(8);
 		expect(divergeMax([])).toBe(1);
 	});
+	it('lets a few outliers saturate instead of setting the scale', () => {
+		const values = [...Array.from({ length: 19 }, (_, i) => i - 9), -40];
+		expect(divergeMax(values)).toBe(9);
+	});
 });

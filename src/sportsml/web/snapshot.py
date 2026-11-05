@@ -347,7 +347,9 @@ class Snapshot:
             self.view.ranking_every,
         )
         later = current.loc[current[s.target].isna(), s.date]
-        dates += [later.min()] if len(later) else []
+        # a date with games still to play may be in progress: ranked once
+        if len(later) and later.min() not in set(dates):
+            dates.append(later.min())
         playing = current[s.team].unique()
         rows = []
         for date in dates:
@@ -374,7 +376,7 @@ class Snapshot:
         season = table["season"].max()
         frame = table[table["season"] == season]
         date = frame["date"].max()
-        ratings = frame[frame["date"] == date].set_index("team")["rating"]
+        ratings = frame[frame["date"] == date].groupby("team")["rating"].mean()
         predictor.update_state(self.played[self.played[s.season] <= season])
         embeddings = predictor.model.team_embeddings()
         if embeddings is None:

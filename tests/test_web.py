@@ -491,6 +491,22 @@ def test_team_map_lays_out_the_latest_seasons_teams(snapshot, games):
     np.testing.assert_allclose(umap_2d(vectors), umap_2d(vectors))
 
 
+def test_a_date_in_progress_is_ranked_once(snapshot):
+    """Some of the next date's games already played (a week in progress):
+    that date is both played and upcoming, and gets one rating per team."""
+    s = snapshot.schema
+    games = snapshot.games.copy()
+    week = games[games[s.target].isna()][s.date].min()
+    first = games.index[(games[s.date] == week) & games[s.target].isna()][:2]
+    games.loc[first, s.target] = 3.0
+    games.loc[first, s.total] = 40.0
+    later = snapshot.refreshed(games)
+    table = later.rankings_table
+    current = table[table["season"] == table["season"].max()]
+    assert not current.duplicated(["date", "team"]).any()
+    assert later.rankings()["map"]["date"] == week
+
+
 def test_performance_summarizes_the_walk_forward_pool(snapshot):
     from sportsml.backtest import summarize
 

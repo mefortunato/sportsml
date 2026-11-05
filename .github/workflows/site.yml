@@ -25,6 +25,17 @@
 # own run was cancelled is still picked up. Other changes, or a failed
 # download, run the full export, which keeps the deployed NFL lines
 # instead of spending The Odds API quota (see "Export fresh data and lines").
+#
+# The challenge files (the slowest part of an export) only change with a
+# new trained build or an exporter change: each export copies a sport's
+# from the deployed site when its challenge-keys.json entry still matches
+# (sportsml.web.export.challenge_key), and exports them again otherwise.
+#
+# Each sport exports in its own job, in parallel (the slowest sport sets
+# the time, instead of the sum of all of them); `sportsml web merge` then
+# combines their data/ for the frontend build. A sport whose download
+# fails keeps its built data, as long as some sport refreshed; a job that
+# fails fails the run, which leaves the deployed site in place.
 name: Site
 
 on:
@@ -57,9 +68,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # A frontend-only push reuses the deployed data instead of exporting it.
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    outputs:
+      base_url: ${{ steps.pages.outputs.base_url }}
+      base_path: ${{ steps.pages.outputs.base_path }}
+      reuse: ${{ steps.deployed.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v5
       - id: pages
@@ -99,6 +114,9 @@ jobs:
           get() { curl -fsSL --retry 3 --create-dirs "$BASE/$1" -o "$out/$1"; }
           get sports.json
           get export-sha.txt
+          # optional: lets the next full export reuse the challenge files
+          curl -fsL --retry 3 "$BASE/challenge-keys.json" -o "$out/challenge-keys.json" \
+            || { rm -f "$out/challenge-keys.json"; echo "no challenge-keys.json"; }
           list="$RUNNER_TEMP/data-urls"
           : > "$list"
           for sport in $(jq -r '.[].sport' "$out/sports.json"); do
@@ -117,15 +135,37 @@ jobs:
           curl -fsSL --retry 3 --create-dirs --parallel --parallel-max 16 \
             --fail-early --config "$list"
           echo "downloaded $(find "$out" -name '*.json' | wc -l) files ($(du -sh "$out" | cut -f1))"
+      - uses: actions/upload-artifact@v4
+        if: steps.deployed.outcome == 'success'
+        with:
+          name: data-deployed
+          path: web/static/data
+          retention-days: 1
+
+  export:
+    needs: plan
+    if: needs.plan.outputs.reuse != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # the run fails if any sport does: no point finishing the others
+      fail-fast: true
+      matrix:
+        sport: [nfl, cfb, nba, cbb, wnba, wcbb, nhl, mlb]
+    env:
+      # the Train workflow's cache keys, so each workflow starts from the
+      # files and lines the other fetched
+      CACHE_PREFIX: >-
+        ${{ matrix.sport == 'cfb' && 'espn-cfb-' || matrix.sport == 'nba'
+        && 'espn-nba-' || format('data-{0}-', matrix.sport) }}
+    steps:
+      - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-        if: steps.deployed.outcome != 'success'
         with:
           enable-cache: true
       - name: Install
-        if: steps.deployed.outcome != 'success'
         run: uv sync --locked --no-default-groups
       - name: Fetch the trained model
-        if: steps.deployed.outcome != 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ inputs.webdata_sha256 }}
@@ -142,40 +182,23 @@ jobs:
             sleep 30
           done
           mkdir webdata && tar -xzf webdata.tar.gz -C webdata
-      - name: Cache CFB files and lines
-        if: steps.deployed.outcome != 'success'
+      - name: Cache the files and lines
+        if: matrix.sport != 'nfl'
         uses: actions/cache@v4
         with:
-          # finished seasons' schedules and box scores, finished games' lines
-          # (a download without it makes ~12,000 odds requests)
-          path: data/cfb/espn_cache
-          key: espn-cfb-${{ github.run_id }}
-          restore-keys: espn-cfb-
-      - name: Cache ESPN NBA files and lines
-        if: steps.deployed.outcome != 'success'
-        uses: actions/cache@v4
-        with:
-          # finished seasons' schedules and box scores, finished games' lines
-          # (a download without it makes ~18,000 odds requests)
-          path: data/nba/espn_cache
-          key: espn-nba-${{ github.run_id }}
-          restore-keys: espn-nba-
-      - name: Cache the other sports' files and lines
-        if: steps.deployed.outcome != 'success'
-        uses: actions/cache@v4
-        with:
-          # college basketball, WNBA (ESPN), NHL and MLB (league APIs, ESPN
-          # lines): finished seasons and finished games' lines
+          # finished seasons' schedules and box scores, finished games'
+          # lines (a download without them makes thousands of odds requests,
+          # e.g. ~12,000 for college football, ~18,000 for the NBA)
           path: |
-            data/cbb/espn_cache
-            data/wcbb/espn_cache
-            data/wnba/espn_cache
-            data/nhl/nhl_cache
-            data/mlb/mlb_cache
-          key: data-site-${{ github.run_id }}
-          restore-keys: data-site-
+            data/${{ matrix.sport }}/espn_cache
+            data/${{ matrix.sport }}/nhl_cache
+            data/${{ matrix.sport }}/mlb_cache
+          key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
+          # data-site-: the cache all these sports shared before
+          restore-keys: |
+            ${{ env.CACHE_PREFIX }}
+            data-site-
       - name: Export fresh data and lines
-        if: steps.deployed.outcome != 'success'
         env:
           # not on a push: without the key the fetch fails and the deployed
           # lines carry over, keeping the quota for the scheduled runs
@@ -183,10 +206,48 @@ jobs:
           # men's college basketball lines (see train.yml)
           CBBD_API_KEY: ${{ secrets.CBBD_API_KEY }}
         run: >
-          uv run sportsml web export --data_dir webdata --output_dir web/static
+          uv run --no-sync sportsml web export --data_dir webdata --output_dir web/static
+          --sports '[${{ matrix.sport }}]' --require_refresh false
           --refresh true --odds "{nfl: oddsapi, cfb: espn}"
-          --odds_history "${{ steps.pages.outputs.base_url }}/data"
-          && echo "$GITHUB_SHA" > web/static/data/export-sha.txt
+          --odds_history "${{ needs.plan.outputs.base_url }}/data"
+          --challenge_from "${{ needs.plan.outputs.base_url }}/data"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-${{ matrix.sport }}
+          path: web/static/data
+          retention-days: 1
+
+  build:
+    needs: [plan, export]
+    # export is skipped when the deployed data is reused
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success'
+      && (needs.export.result == 'success'
+      || (needs.export.result == 'skipped' && needs.plan.outputs.reuse == 'true')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.reuse == 'true'
+        with:
+          name: data-deployed
+          path: web/static/data
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.reuse != 'true'
+        with:
+          pattern: data-*
+          path: parts
+      - uses: astral-sh/setup-uv@v7
+        if: needs.plan.outputs.reuse != 'true'
+        with:
+          enable-cache: true
+      - name: Merge the sports' data
+        if: needs.plan.outputs.reuse != 'true'
+        run: |
+          uv sync --locked --no-default-groups
+          uv run --no-sync sportsml web merge --parts_dir parts --output_dir web/static \
+            --require_refresh true
+          echo "$GITHUB_SHA" > web/static/data/export-sha.txt
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -195,7 +256,7 @@ jobs:
       - name: Build
         working-directory: web
         env:
-          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          BASE_PATH: ${{ needs.plan.outputs.base_path }}
         run: |
           npm ci
           npm run build

@@ -24,6 +24,7 @@ from .tune import tune
 from .web.build import build as web_build
 from .web.build import push_cache
 from .web.export import export as web_export
+from .web.export import merge as web_merge
 
 # Table arguments (``str | pd.DataFrame``) stay CSV paths on the command line
 # and are read by the command itself. Without this, jsonargparse would read an
@@ -158,6 +159,7 @@ def run(args=None):
     components["web"] = {
         "build": web_build,
         "export": web_export,
+        "merge": web_merge,
         "push_cache": push_cache,
     }
     components["version"] = version

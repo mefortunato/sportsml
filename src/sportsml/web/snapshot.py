@@ -117,6 +117,18 @@ class Snapshot:
         # ids arrive as strings in URLs; keep them strings everywhere
         self.games[schema.game_id] = self.games[schema.game_id].astype(str)
         self.played = played(self.games, schema)
+        # each team's played rows (positions), for team_summary: a scan of
+        # the whole table per summary dominated the challenge export
+        self._team_played = self.played.groupby(schema.team).indices
+        # ... and only the columns it reads (taking every column of a wide
+        # table per summary was most of the rest)
+        columns = [
+            schema.game_id, schema.season, schema.date, schema.team, schema.opp,
+            schema.target, schema.location, schema.market_spread, *view.score,
+        ]  # fmt: skip
+        self._summary_rows = self.played[
+            list(dict.fromkeys(c for c in columns if c and c in self.played))
+        ]
         self.teams = {row["team"]: py(row.to_dict()) for _, row in teams.iterrows()}
         self.meta = meta or {}
         self.model_dir = model_dir
@@ -152,14 +164,20 @@ class Snapshot:
 
     # ---------------------------------------------------------------- loading
     @classmethod
-    def load(cls, directory: str | pathlib.Path) -> Snapshot:
+    def load(
+        cls, directory: str | pathlib.Path, games: pd.DataFrame | None = None
+    ) -> Snapshot:
+        """The snapshot in ``directory``; with ``games``, built from those
+        (freshly downloaded) games instead of the saved ``games.csv``."""
         path = pathlib.Path(directory)
         meta = json.loads((path / "meta.json").read_text())
+        if games is not None:
+            meta = {**meta, "refreshed_at": _now()}
         pool_path = path / "pool.csv"
         rankings_path = path / "rankings.csv"
         return cls(
             view=get_view(meta["sport"]),
-            games=read_table(str(path / "games.csv")),
+            games=read_table(str(path / "games.csv")) if games is None else games,
             predictor=load_predictor(str(path / "model")),
             pool=read_table(str(pool_path)) if pool_path.exists() else pd.DataFrame(),
             teams=pd.DataFrame(json.loads((path / "teams.json").read_text())),
@@ -692,7 +710,7 @@ class Snapshot:
     def team_summary(self, team, season, date) -> dict:
         """``team`` as of just before ``(season, date)``: only earlier games."""
         s, view = self.schema, self.view
-        mine = self.played[self.played[s.team] == team]
+        mine = self._summary_rows.iloc[self._team_played.get(team, [])]
         before = (mine[s.season] < season) | (
             (mine[s.season] == season) & (mine[s.date] < date)
         )

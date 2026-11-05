@@ -21,6 +21,9 @@
 					{ label: 'Upcoming', href: links.upcoming(info.sport), active: route.startsWith('/[sport]/[[season') },
 					{ label: 'Recent', href: links.recent(info.sport), active: route.startsWith('/[sport]/recent') },
 					{ label: 'Rankings', href: links.rankings(info.sport), active: route === '/[sport]/rankings' },
+					...(info.has_team_map
+						? [{ label: 'Team map', href: links.teamMap(info.sport), active: route === '/[sport]/map' }]
+						: []),
 					...(info.challenge_games
 						? [{ label: 'Performance', href: links.performance(info.sport), active: route === '/[sport]/performance' }]
 						: []),

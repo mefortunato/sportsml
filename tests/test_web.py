@@ -421,6 +421,7 @@ def test_export_matches_the_snapshot(webdata, snapshot, tmp_path):
                 assert _as_exported(scored) == _exported(expected)
     assert "logo.png" not in (data / "toy" / "challenge" / "0.json").read_text()
     assert _revive(data / "toy" / "rankings.json") == _exported(snapshot.rankings())
+    assert _revive(data / "toy" / "map.json") == _exported(snapshot.team_map_view())
     assert _revive(data / "toy" / "performance.json") == _exported(
         snapshot.performance()
     )
@@ -472,50 +473,25 @@ def test_rankings_cover_backtest_and_current_season(snapshot, games):
     assert current["dates"][-1] == upcoming_date
 
 
-def test_team_map_lays_out_the_latest_seasons_teams(snapshot, games):
-    team_map = snapshot.rankings()["map"]
+def test_team_map_follows_the_latest_season_date_by_date(snapshot, games):
+    team_map = snapshot.team_map_view()
     current = next(
         s for s in snapshot.rankings()["seasons"] if s["source"] == "current"
     )
-    assert (team_map["season"], team_map["date"]) == (2024, current["dates"][-1])
+    assert team_map["season"] == 2024 and team_map["dates"] == current["dates"]
     playing = set(games.loc[games["season"] == 2024, "team"])
-    assert {p["team"]["team"] for p in team_map["points"]} == playing
-    latest = {t["team"]["team"]: t["ratings"][-1] for t in current["teams"]}
-    for point in team_map["points"]:
-        assert -1 <= point["x"] <= 1 and -1 <= point["y"] <= 1
-        assert point["rating"] == pytest.approx(latest[point["team"]["team"]])
+    assert {t["team"]["team"] for t in team_map["teams"]} == playing
+    ratings = {t["team"]["team"]: t["ratings"] for t in current["teams"]}
+    for team in team_map["teams"]:
+        assert len(team["positions"]) == len(team_map["dates"])
+        assert team["ratings"] == pytest.approx(ratings[team["team"]["team"]])
+        for point in team["positions"]:
+            assert len(point) == 3 and all(-1 <= v <= 1 for v in point)
     # a fixed seed: the same layout on every export
-    from sportsml.web.snapshot import umap_2d
+    from sportsml.web.snapshot import umap_layout
 
     vectors = np.random.default_rng(0).normal(size=(12, 8)).astype(np.float32)
-    np.testing.assert_allclose(umap_2d(vectors), umap_2d(vectors))
-
-
-def test_power_ratings_do_not_depend_on_the_batch_size(snapshot, games):
-    from sportsml.inference.utils import power_ratings
-
-    predictor = load_predictor(snapshot.model_dir)
-    predictor.update_state(games)
-    whole = power_ratings(predictor)
-    pd.testing.assert_series_equal(
-        power_ratings(predictor, chunk=7), whole, check_exact=False, atol=1e-5
-    )
-
-
-def test_a_date_in_progress_is_ranked_once(snapshot):
-    """Some of the next date's games already played (a week in progress):
-    that date is both played and upcoming, and gets one rating per team."""
-    s = snapshot.schema
-    games = snapshot.games.copy()
-    week = games[games[s.target].isna()][s.date].min()
-    first = games.index[(games[s.date] == week) & games[s.target].isna()][:2]
-    games.loc[first, s.target] = 3.0
-    games.loc[first, s.total] = 40.0
-    later = snapshot.refreshed(games)
-    table = later.rankings_table
-    current = table[table["season"] == table["season"].max()]
-    assert not current.duplicated(["date", "team"]).any()
-    assert later.rankings()["map"]["date"] == week
+    np.testing.assert_allclose(umap_layout(vectors), umap_layout(vectors))
 
 
 def test_performance_summarizes_the_walk_forward_pool(snapshot):

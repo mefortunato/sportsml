@@ -20,6 +20,9 @@ Writes, under ``<output_dir>/data/``:
   pick-dependent ``pick`` / ``correct`` / ``units``, in shards listed by
   ``<sport>/challenge/index.json`` (see :func:`write_challenge`);
 * ``<sport>/performance.json`` and ``<sport>/rankings.json``;
+* ``<sport>/map.json``: the latest season's teams in 3-D before each
+  ranking date (:meth:`Snapshot.team_map_view`; ``null`` for a model
+  without team embeddings);
 * ``<sport>/odds.json`` (with ``odds``): current sportsbook lines for the
   upcoming games (:mod:`sportsml.web.odds`).
 
@@ -226,6 +229,7 @@ def export(
         write_challenge(out / sport, challenge, teams)
         _write(out / sport / "performance.json", snap.performance(), teams)
         _write(out / sport / "rankings.json", snap.rankings(), teams)
+        _write(out / sport / "map.json", snap.team_map_view(), teams)
         print(
             f"exported {sport}: {len(by_date)} dates, {len(games)} games, "
             f"{len(recent_ids)} recent games, "

@@ -36,6 +36,8 @@ export interface SportInfo {
 	/** Seasons span two years and are keyed by the year they end (NBA). */
 	split_season?: boolean;
 	has_spread: boolean;
+	/** Whether the model has team embeddings to map (absent: older exports). */
+	has_team_map?: boolean;
 	challenge_games: number;
 	/** Markets the challenge offers (older exports: spread only). */
 	markets?: Market[];
@@ -288,30 +290,27 @@ export interface RankingSeason {
 	playoffs?: Record<string, PlayoffStage>;
 }
 
-/** A team placed on the team map. */
-export interface TeamMapPoint {
+/** One team's path through the team map, one entry per date. */
+export interface TeamMapSeries {
 	team: Team;
-	/** UMAP coordinates of the team's embedding, scaled into [-1, 1]; only
-	 * distances between teams mean anything. */
-	x: number;
-	y: number;
-	/** Average predicted margin at the map's date. */
-	rating: number;
+	/** UMAP coordinates in [-1, 1] (null: no state that date). Only
+	 * distances mean anything; the axes have no units. */
+	positions: ([number, number, number] | null)[];
+	/** Average predicted margin before each date. */
+	ratings: (number | null)[];
 }
 
-/** The latest season's teams laid out by how alike the model sees them. */
+/** The latest season's teams in 3-D before each ranking date: every
+ * (team, date) laid out together, so a team's path is its movement. */
 export interface TeamMap {
 	season: number;
-	/** The ranking date the ratings are from (before that date's games). */
-	date: number;
-	date_name?: string | null;
-	points: TeamMapPoint[];
+	dates: number[];
+	date_names?: (string | null)[] | null;
+	teams: TeamMapSeries[];
 }
 
 export interface Rankings {
 	seasons: RankingSeason[];
-	/** Absent for models without team embeddings. */
-	map?: TeamMap | null;
 	date_label: string;
 	/** Display label per playoff stage, e.g. "Won Super Bowl". */
 	playoff_labels?: Partial<Record<PlayoffStage, string>>;

@@ -365,40 +365,63 @@ class Snapshot:
         return pd.concat([baked, pd.DataFrame(rows)], ignore_index=True)
 
     def _team_map(self, predictor: Predictor) -> dict | None:
-        """The latest ranked season's teams laid out in 2-D: the served
-        model's team embeddings (from every game played) reduced with UMAP,
-        each point with the team's latest rating. ``None`` for a model
-        without embeddings or too few teams to lay out."""
+        """The latest ranked season's teams in 3-D, before each of its
+        ranking dates: the served model's team embeddings from the games
+        played until then, every (team, date) reduced together with UMAP so
+        all dates share one space and a team's path through it is its
+        movement. ``None`` for a model without embeddings or too few teams.
+        """
         table = self.rankings_table
         if not len(table):
             return None
         s = self.schema
         season = table["season"].max()
         frame = table[table["season"] == season]
-        date = frame["date"].max()
-        ratings = frame[frame["date"] == date].groupby("team")["rating"].mean()
-        predictor.update_state(self.played[self.played[s.season] <= season])
-        embeddings = predictor.model.team_embeddings()
-        if embeddings is None:
+        ratings = frame.pivot_table(index="team", columns="date", values="rating")
+        dates = list(ratings.columns)
+        vectors, cells = [], []
+        for i, date in enumerate(dates):
+            known = self.played[
+                (self.played[s.season] < season)
+                | ((self.played[s.season] == season) & (self.played[s.date] < date))
+            ]
+            predictor.update_state(known)
+            embeddings = predictor.model.team_embeddings()
+            if embeddings is None:
+                return None
+            rated = ratings[date].dropna()
+            embeddings = embeddings.loc[embeddings.index.isin(rated.index)]
+            vectors.append(embeddings.to_numpy(dtype=np.float32))
+            cells += [(team, i) for team in embeddings.index]
+        if len({team for team, _ in cells}) < MIN_MAP_TEAMS:
             return None
-        embeddings = embeddings.loc[embeddings.index.isin(ratings.index)]
-        if len(embeddings) < MIN_MAP_TEAMS:
-            return None
-        xy = umap_2d(embeddings.to_numpy(dtype=np.float32))
+        xyz = umap_layout(np.concatenate(vectors), dims=3)
+
+        positions = {team: [None] * len(dates) for team, _ in cells}
+        for (team, i), point in zip(cells, xyz):
+            positions[team][i] = [round(float(v), 4) for v in point]
         return {
             "season": season,
-            "date": date,
-            "date_name": self.date_name(season, date) if self.date_names else None,
-            "points": [
+            "dates": dates,
+            "date_names": [self.date_name(season, d) for d in dates]
+            if self.date_names
+            else None,
+            "teams": [
                 {
                     "team": team,
-                    "x": round(float(x), 4),
-                    "y": round(float(y), 4),
-                    "rating": round(float(ratings[team]), 2),
+                    "positions": positions[team],
+                    "ratings": [py(round(v, 2)) for v in ratings.loc[team]],
                 }
-                for team, (x, y) in zip(embeddings.index, xy)
+                for team in sorted(positions, key=str)
             ],
         }
+
+    def team_map_view(self) -> dict | None:
+        """The team map with team display objects, or ``None``."""
+        if self.team_map is None:
+            return None
+        teams = [{**t, "team": self.team(t["team"])} for t in self.team_map["teams"]]
+        return py({**self.team_map, "teams": teams})
 
     def _performance(self) -> dict:
         """Walk-forward backtest metrics: overall, by season, each market's
@@ -921,14 +944,6 @@ class Snapshot:
         return py(
             {
                 "seasons": seasons,
-                "map": self.team_map
-                and {
-                    **self.team_map,
-                    "points": [
-                        {**p, "team": self.team(p["team"])}
-                        for p in self.team_map["points"]
-                    ],
-                },
                 "date_label": self.view.date_label,
                 "playoff_labels": dict(self.view.playoff_labels),
             }
@@ -942,6 +957,7 @@ class Snapshot:
                 "date_label": self.view.date_label,
                 "split_season": self.view.split_season,
                 "has_spread": bool(self.schema.market_spread),
+                "has_team_map": self.team_map is not None,
                 # what the browser needs to price any line: the model's
                 # residual spreads and how much to trust its disagreements
                 "pricing": {
@@ -963,14 +979,15 @@ class Snapshot:
 MIN_MAP_TEAMS = 5
 
 
-def umap_2d(vectors: np.ndarray, seed: int = 0) -> np.ndarray:
-    """``[n, d]`` vectors laid out in 2-D with UMAP (cosine distance, a
-    fixed seed so a re-export keeps the layout), scaled into [-1, 1]."""
+def umap_layout(vectors: np.ndarray, dims: int = 3, seed: int = 0) -> np.ndarray:
+    """``[n, d]`` vectors laid out in ``dims`` dimensions with UMAP (cosine
+    distance, a fixed seed so a re-export keeps the layout), centered on
+    their bounding box and scaled into [-1, 1]."""
     import umap
 
     neighbors = max(2, min(15, len(vectors) - 1))
     reducer = umap.UMAP(
-        n_components=2,
+        n_components=dims,
         n_neighbors=neighbors,
         min_dist=0.3,
         metric="cosine",
@@ -978,10 +995,10 @@ def umap_2d(vectors: np.ndarray, seed: int = 0) -> np.ndarray:
         init="spectral" if len(vectors) > 30 else "random",
         random_state=seed,
     )
-    xy = reducer.fit_transform(vectors)
-    xy = xy - xy.mean(axis=0)
-    scale = np.abs(xy).max()
-    return xy / scale if scale > 0 else xy
+    out = reducer.fit_transform(vectors)
+    out = out - (out.min(axis=0) + out.max(axis=0)) / 2
+    scale = np.abs(out).max()
+    return out / scale if scale > 0 else out
 
 
 def _calibration(prob: pd.Series, happened: pd.Series) -> list[dict]:

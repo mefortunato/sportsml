@@ -491,6 +491,17 @@ def test_team_map_lays_out_the_latest_seasons_teams(snapshot, games):
     np.testing.assert_allclose(umap_2d(vectors), umap_2d(vectors))
 
 
+def test_power_ratings_do_not_depend_on_the_batch_size(snapshot, games):
+    from sportsml.inference.utils import power_ratings
+
+    predictor = load_predictor(snapshot.model_dir)
+    predictor.update_state(games)
+    whole = power_ratings(predictor)
+    pd.testing.assert_series_equal(
+        power_ratings(predictor, chunk=7), whole, check_exact=False, atol=1e-5
+    )
+
+
 def test_a_date_in_progress_is_ranked_once(snapshot):
     """Some of the next date's games already played (a week in progress):
     that date is both played and upcoming, and gets one rating per team."""

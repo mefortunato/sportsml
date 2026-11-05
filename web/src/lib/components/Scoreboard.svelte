@@ -39,12 +39,20 @@
 		<div>
 			{MARKET_LABELS[market]} · {record.played} played · streak {record.streak} (best {record.bestStreak})
 		</div>
-		<div>
-			agreed with the model {record.played ? pct(record.agreed / record.played) : '—'} ·
-			{market === 'spread' ? `break-even ${pct(BREAKEVEN, 1)} at −110` : 'units at the posted odds'}
+		<div class="parts">
+			<span>agreed with the model {record.played ? pct(record.agreed / record.played) : '—'}</span>
+			<span>{market === 'spread' ? `break-even ${pct(BREAKEVEN, 1)} at −110` : 'units at the posted odds'}</span>
 		</div>
-		{#if onreset && record.played}
-			<button class="small" onclick={onreset}>Reset record</button>
+		{#if onreset}
+			<!-- always laid out, so the page below never shifts when it appears -->
+			<button
+				class="small"
+				class:hidden={!record.played}
+				disabled={!record.played}
+				aria-hidden={!record.played}
+				tabindex={record.played ? 0 : -1}
+				onclick={onreset}>Reset record</button
+			>
 		{/if}
 	</div>
 </div>
@@ -80,6 +88,12 @@
 	.extra button {
 		padding: 4px 10px;
 	}
+	.extra button.hidden {
+		visibility: hidden;
+	}
+	.parts span + span::before {
+		content: ' · ';
+	}
 	@media (max-width: 640px) {
 		.scoreboard {
 			grid-template-columns: 1fr auto 1fr;
@@ -88,6 +102,13 @@
 			grid-column: 1 / -1;
 			align-items: center;
 			text-align: center;
+		}
+		/* one fixed line each, so filling in the numbers never rewraps them */
+		.parts span {
+			display: block;
+		}
+		.parts span + span::before {
+			content: none;
 		}
 	}
 </style>

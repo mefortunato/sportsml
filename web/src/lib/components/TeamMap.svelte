@@ -118,11 +118,17 @@
 				return { key: d.key, text, x, right, at: d.y, pinned: !!d.slot, span: [right ? x : x - text.length * CHAR_W, right ? x + text.length * CHAR_W : x] };
 			})
 			.sort((a, b) => a.at - b.at);
+		// (a gap just under a line, from rounding, counts as clear: otherwise
+		// a label set exactly one line below another overlaps it forever)
+		const LINE = 14;
 		for (let i = 1; i < out.length; i++)
 			for (let j = 0; j < i; j++) {
-				const overlaps = out[j].span[0] < out[i].span[1] && out[i].span[0] < out[j].span[1] && Math.abs(out[i].at - out[j].at) < 14;
+				const overlaps =
+					out[j].span[0] < out[i].span[1] &&
+					out[i].span[0] < out[j].span[1] &&
+					Math.abs(out[i].at - out[j].at) < LINE - 0.5;
 				if (overlaps) {
-					out[i].at = out[j].at + 14;
+					out[i].at = out[j].at + LINE;
 					j = -1;
 				}
 			}
@@ -240,10 +246,7 @@
 			{@const t = hovered.series}
 			{@const record = recordText(t.records?.[shown])}
 			<div class="tooltip" style:left="{tipLeft}%" style:top="{tipTop}%" class:flip={tipLeft > 60}>
-				<div class="tip-head">
-					{t.team.name}
-					{#if record}<span class="muted">&nbsp;· {record}</span>{/if}
-				</div>
+				<div class="tip-head">{t.team.name}{#if record}<span class="muted">&nbsp;· {record}</span>{/if}</div>
 				<div class="tip-row">
 					<span class="key" style:background={colorOf(hovered.value)}></span>
 					<span>{metric.label}{#if ranks.has(hovered.key)} · #{ranks.get(hovered.key)}{/if}</span>

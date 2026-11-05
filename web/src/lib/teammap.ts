@@ -1,6 +1,7 @@
-import type { TeamMapSeries } from './types';
+import { signed } from './format';
+import type { TeamMapMetric, TeamMapSeries } from './types';
 
-export type Vec3 = [number, number, number];
+export type Vec2 = [number, number];
 
 /** Linear interpolation between dates `floor(t)` and the next one; where
  * either is missing, the value at the nearest date that has one. */
@@ -24,86 +25,98 @@ function between<T>(values: (T | null)[], t: number, mix: (a: T, b: T, f: number
 /** A team's position at a fractional date index: between two dates it
  * moves in a straight line; around a date without state it stays at the
  * nearest one that has it. */
-export function positionAt(series: TeamMapSeries, t: number): Vec3 | null {
-	return between(
-		series.positions,
-		t,
-		(a, b, f) => [0, 1, 2].map((k) => a[k] + (b[k] - a[k]) * f) as Vec3
-	);
+export function positionAt(series: TeamMapSeries, t: number): Vec2 | null {
+	return between(series.positions, t, (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
 }
 
-/** A team's rating at a fractional date index, interpolated the same way. */
-export function ratingAt(series: TeamMapSeries, t: number): number | null {
-	return between(series.ratings, t, (a, b, f) => a + (b - a) * f);
+/** A metric's value at a fractional date index, interpolated the same way
+ * (but with no value before a team's first game). */
+export function valueAt(series: TeamMapSeries, key: string, t: number): number | null {
+	const values = series.values[key] ?? [];
+	const n = values.length;
+	if (!n) return null;
+	const i = Math.max(0, Math.min(n - 1, Math.floor(t)));
+	const j = Math.min(n - 1, i + 1);
+	const f = Math.max(0, Math.min(1, t - i));
+	const [a, b] = [values[i], values[j]];
+	if (a !== null && b !== null) return a + (b - a) * f;
+	return f < 0.5 ? a : b;
 }
 
-/** Rotate around the vertical axis (yaw), then tilt toward the viewer
- * (pitch). Camera space: x right, y up, z toward the viewer. */
-export function rotate([x, y, z]: Vec3, yaw: number, pitch: number): Vec3 {
-	const [cy, sy] = [Math.cos(yaw), Math.sin(yaw)];
-	const x1 = x * cy + z * sy;
-	const z1 = -x * sy + z * cy;
-	const [cp, sp] = [Math.cos(pitch), Math.sin(pitch)];
-	return [x1, y * cp - z1 * sp, y * sp + z1 * cp];
-}
-
-/** Perspective projection of a camera-space point: screen offsets from the
- * center (y down) and the point's size scale (1 at the center's depth). */
-export function project(
-	[x, y, z]: Vec3,
-	size: number,
-	distance = 4
-): { x: number; y: number; scale: number; depth: number } {
-	const scale = distance / (distance - z);
-	return { x: x * size * scale, y: -y * size * scale, scale, depth: z };
-}
-
-/** The 12 edges of the [-1, 1] cube, as pairs of corners. */
-export const CUBE_EDGES: [Vec3, Vec3][] = (() => {
-	const corners: Vec3[] = [];
-	for (const x of [-1, 1])
-		for (const y of [-1, 1]) for (const z of [-1, 1]) corners.push([x, y, z]);
-	const edges: [Vec3, Vec3][] = [];
-	for (let i = 0; i < corners.length; i++)
-		for (let j = i + 1; j < corners.length; j++) {
-			const differ = corners[i].filter((v, k) => v !== corners[j][k]).length;
-			if (differ === 1) edges.push([corners[i], corners[j]]);
-		}
-	return edges;
-})();
-
-/** The box around every position of every team on every date: its
- * center, the 12 edges (centered), and the half-diagonal, the radius that
- * keeps the whole box in view at any rotation. */
-export function extent(teams: TeamMapSeries[]): {
-	center: Vec3;
-	edges: [Vec3, Vec3][];
-	radius: number;
-} {
-	const lo: Vec3 = [Infinity, Infinity, Infinity];
-	const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+/** The box around every team's every position. */
+export function extent(teams: TeamMapSeries[]): { x0: number; x1: number; y0: number; y1: number } {
+	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const t of teams)
 		for (const p of t.positions)
-			if (p)
-				for (let k = 0; k < 3; k++) {
-					lo[k] = Math.min(lo[k], p[k]);
-					hi[k] = Math.max(hi[k], p[k]);
-				}
-	if (!Number.isFinite(lo[0])) return { center: [0, 0, 0], edges: [], radius: 1 };
-	const center = [0, 1, 2].map((k) => (lo[k] + hi[k]) / 2) as Vec3;
-	const half = [0, 1, 2].map((k) => Math.max((hi[k] - lo[k]) / 2, 0.05)) as Vec3;
-	const edges = CUBE_EDGES.map(
-		([a, b]) => [a.map((v, k) => v * half[k]), b.map((v, k) => v * half[k])] as [Vec3, Vec3]
-	);
-	return { center, edges, radius: Math.hypot(...half) };
+			if (p) [x0, x1, y0, y1] = [Math.min(x0, p[0]), Math.max(x1, p[0]), Math.min(y0, p[1]), Math.max(y1, p[1])];
+	return Number.isFinite(x0) ? { x0, x1, y0, y1 } : { x0: -1, x1: 1, y0: -1, y1: 1 };
 }
 
-/** Teams ranked by rating at a date index (1 = best), skipping nulls. */
-export function ranksAt(teams: TeamMapSeries[], index: number): Map<string, number> {
+/** Teams ranked by a metric at a date index (1 = best), skipping nulls. */
+export function ranksAt(teams: TeamMapSeries[], index: number, metric?: TeamMapMetric): Map<string, number> {
+	const key = metric?.key ?? 'rating';
+	const sign = metric && !metric.higher_is_better ? -1 : 1;
+	const at = (t: TeamMapSeries) => t.values[key]?.[index] ?? null;
 	return new Map(
 		teams
-			.filter((t) => t.ratings[index] !== null)
-			.sort((a, b) => (b.ratings[index] as number) - (a.ratings[index] as number))
+			.filter((t) => at(t) !== null)
+			.sort((a, b) => sign * ((at(b) as number) - (at(a) as number)))
 			.map((t, i) => [t.team.team, i + 1])
 	);
+}
+
+/** The neutral value of a metric's color scale at a date index. */
+export function centerAt(metric: TeamMapMetric, teams: TeamMapSeries[], index: number): number {
+	if (metric.center === 'zero') return 0;
+	if (metric.center === 'half') return 0.5;
+	const values = teams.map((t) => t.values[metric.key]?.[index]).filter((v) => v != null) as number[];
+	return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+}
+
+/** The scale's half-width: the 90th percentile of every team's distance
+ * from the center over the whole season, so it holds still during
+ * playback and a few outliers saturate instead of washing out the rest. */
+export function spread(metric: TeamMapMetric, teams: TeamMapSeries[]): number {
+	const n = teams[0]?.values[metric.key]?.length ?? 0;
+	const gaps: number[] = [];
+	for (let i = 0; i < n; i++) {
+		const center = centerAt(metric, teams, i);
+		for (const t of teams) {
+			const v = t.values[metric.key]?.[i];
+			if (v != null) gaps.push(Math.abs(v - center));
+		}
+	}
+	gaps.sort((a, b) => a - b);
+	const at = gaps[Math.min(gaps.length - 1, Math.floor(0.9 * gaps.length))] ?? 0;
+	return at > 0 ? at : 1;
+}
+
+/** How good a value is on the color scale: -1 (worst) .. 1 (best), 0 at the center. */
+export function goodness(metric: TeamMapMetric, value: number, center: number, half: number): number {
+	const t = Math.max(-1, Math.min(1, (value - center) / half));
+	return metric.higher_is_better ? t : -t;
+}
+
+/** A metric's value as the page shows it: margins signed, win percentage
+ * like .625, stats with their own decimals. */
+export function formatMetric(metric: TeamMapMetric, value: number | null): string {
+	if (value === null) return '–';
+	if (metric.key === 'win_pct') return value >= 1 ? '1.000' : value.toFixed(3).replace(/^0/, '');
+	if (metric.center === 'zero') return signed(value, metric.decimals);
+	return value.toFixed(metric.decimals);
+}
+
+/** A change in a metric, always signed: +1.5, −.125. */
+export function formatChange(metric: TeamMapMetric, change: number | null): string {
+	if (change === null) return '–';
+	const sign = change > 0 ? '+' : change < 0 ? '−' : '';
+	const size = Math.abs(change);
+	const text = metric.key === 'win_pct' ? size.toFixed(3).replace(/^0/, '') : size.toFixed(metric.decimals);
+	return sign + text;
+}
+
+/** "5–3" or "5–3–1" (with ties). */
+export function recordText(record: [number, number, number] | null | undefined): string | null {
+	if (!record || record[0] + record[1] + record[2] === 0) return null;
+	return record[2] ? record.join('–') : `${record[0]}–${record[1]}`;
 }

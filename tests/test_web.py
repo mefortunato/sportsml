@@ -481,12 +481,33 @@ def test_team_map_follows_the_latest_season_date_by_date(snapshot, games):
     assert team_map["season"] == 2024 and team_map["dates"] == current["dates"]
     playing = set(games.loc[games["season"] == 2024, "team"])
     assert {t["team"]["team"] for t in team_map["teams"]} == playing
+    keys = [m["key"] for m in team_map["metrics"]]
+    assert keys[:3] == ["rating", "margin", "win_pct"]
+    assert set(keys[3:]) == {st.key for st in snapshot.view.stats}
     ratings = {t["team"]["team"]: t["ratings"] for t in current["teams"]}
     for team in team_map["teams"]:
         assert len(team["positions"]) == len(team_map["dates"])
-        assert team["ratings"] == pytest.approx(ratings[team["team"]["team"]])
         for point in team["positions"]:
-            assert len(point) == 3 and all(-1 <= v <= 1 for v in point)
+            assert len(point) == 2 and all(-1 <= v <= 1 for v in point)
+        assert team["values"]["rating"] == pytest.approx(ratings[team["team"]["team"]])
+        assert set(team["values"]) == set(keys)
+
+    # season-to-date before each date: nothing before the first, then the
+    # games played so far
+    i = len(team_map["dates"]) - 1
+    date = team_map["dates"][i]
+    played = games[(games["season"] == 2024) & games["margin"].notna()]
+    before = played[played["week"] < date]
+    team = team_map["teams"][0]
+    rows = before[before["team"] == team["team"]["team"]]
+    assert team["values"]["win_pct"][0] is None
+    assert team["values"]["margin"][i] == pytest.approx(rows["margin"].mean(), abs=0.01)
+    wins = int((rows["margin"] > 0).sum())
+    assert team["records"][i][0] == wins
+    assert team["values"]["win_pct"][i] == pytest.approx(
+        (wins + 0.5 * (rows["margin"] == 0).sum()) / len(rows), abs=1e-3
+    )
+
     # a fixed seed: the same layout on every export
     from sportsml.web.snapshot import umap_layout
 

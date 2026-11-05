@@ -1,57 +1,76 @@
 import { describe, expect, it } from 'vitest';
-import { CUBE_EDGES, extent, positionAt, project, ranksAt, ratingAt, rotate } from './teammap';
-import type { TeamMapSeries } from './types';
+import {
+	centerAt,
+	extent,
+	formatChange,
+	formatMetric,
+	goodness,
+	positionAt,
+	ranksAt,
+	recordText,
+	spread,
+	valueAt
+} from './teammap';
+import type { TeamMapMetric, TeamMapSeries } from './types';
 
 const series = (
 	key: string,
 	positions: TeamMapSeries['positions'],
-	ratings: TeamMapSeries['ratings']
-): TeamMapSeries => ({ team: { team: key, name: key }, positions, ratings });
+	values: TeamMapSeries['values']
+): TeamMapSeries => ({ team: { team: key, name: key }, positions, values });
+
+const metric = (key: string, center: TeamMapMetric['center'], higher = true): TeamMapMetric => ({
+	key,
+	label: key,
+	decimals: 1,
+	higher_is_better: higher,
+	center
+});
+
+const a = series('A', [[0, 0], [1, -1], null], { rating: [2, 4, null], allowed: [null, 20, 30] });
+const b = series('B', [[-1, 1], [0, 0], [0.5, 0.5]], { rating: [3, 1, 0], allowed: [null, 10, 20] });
 
 describe('team paths', () => {
-	const a = series('A', [[0, 0, 0], [1, 0, -1], null], [2, 4, null]);
 	it('moves in a straight line between dates', () => {
-		expect(positionAt(a, 0.5)).toEqual([0.5, 0, -0.5]);
-		expect(ratingAt(a, 0.25)).toBeCloseTo(2.5);
+		expect(positionAt(a, 0.5)).toEqual([0.5, -0.5]);
+		expect(valueAt(a, 'rating', 0.25)).toBeCloseTo(2.5);
 	});
-	it('shows the nearest known date where one is missing', () => {
-		expect(positionAt(a, 1.2)).toEqual([1, 0, -1]);
-		expect(positionAt(a, 2)).toEqual([1, 0, -1]);
-		expect(ratingAt(a, 1.8)).toBe(4);
+	it('stays at the nearest known position where one is missing', () => {
+		expect(positionAt(a, 1.2)).toEqual([1, -1]);
+		expect(positionAt(a, 2)).toEqual([1, -1]);
 	});
-	it('ranks by rating at a date', () => {
-		const b = series('B', [null, null, null], [3, 1, 0]);
-		expect([...ranksAt([a, b], 0)]).toEqual([
-			['B', 1],
-			['A', 2]
-		]);
-		expect([...ranksAt([a, b], 2)]).toEqual([['B', 1]]);
+	it('has no value before a team has games', () => {
+		expect(valueAt(a, 'allowed', 0.2)).toBeNull();
+		expect(valueAt(a, 'allowed', 0.8)).toBe(20);
 	});
-});
-
-describe('camera', () => {
-	it('turns a quarter around the vertical axis', () => {
-		const [x, y, z] = rotate([1, 0, 0], Math.PI / 2, 0);
-		expect([x, y, z].map((v) => +v.toFixed(6))).toEqual([0, 0, -1]);
-	});
-	it('draws nearer points larger, with y down on screen', () => {
-		const near = project([0, 1, 1], 100);
-		const far = project([0, 1, -1], 100);
-		expect(near.scale).toBeGreaterThan(1);
-		expect(far.scale).toBeLessThan(1);
-		expect(near.y).toBeLessThan(0);
-	});
-	it('has a cube of 12 edges', () => {
-		expect(CUBE_EDGES).toHaveLength(12);
-	});
-});
-
-describe('extent', () => {
 	it('boxes every position on every date', () => {
-		const t = series('A', [[-1, 0, 0], null, [1, 0.5, 0.2]], [0, 0, 0]);
-		const box = extent([t]);
-		expect(box.center).toEqual([0, 0.25, 0.1]);
-		expect(box.edges).toHaveLength(12);
-		expect(box.radius).toBeCloseTo(Math.hypot(1, 0.25, 0.1));
+		expect(extent([a, b])).toEqual({ x0: -1, x1: 1, y0: -1, y1: 1 });
+	});
+});
+
+describe('metrics', () => {
+	it('ranks by a metric, lower first where lower is better', () => {
+		expect([...ranksAt([a, b], 0)]).toEqual([['B', 1], ['A', 2]]);
+		expect([...ranksAt([a, b], 1, metric('allowed', 'mean', false))]).toEqual([['B', 1], ['A', 2]]);
+	});
+	it('centers stats on the league average at that date', () => {
+		expect(centerAt(metric('allowed', 'mean'), [a, b], 1)).toBe(15);
+		expect(centerAt(metric('win_pct', 'half'), [a, b], 1)).toBe(0.5);
+	});
+	it('scales colors to how far teams spread from the center', () => {
+		expect(spread(metric('allowed', 'mean'), [a, b])).toBe(5);
+	});
+	it('turns the scale around where lower is better', () => {
+		expect(goodness(metric('allowed', 'mean', false), 10, 15, 5)).toBe(1);
+		expect(goodness(metric('rating', 'zero'), -20, 0, 5)).toBe(-1);
+	});
+	it('formats each kind of metric', () => {
+		expect(formatMetric({ ...metric('win_pct', 'half'), decimals: 3 }, 0.625)).toBe('.625');
+		expect(formatMetric(metric('rating', 'zero'), 3)).toBe('+3.0');
+		expect(formatMetric(metric('allowed', 'mean'), 21.25)).toBe('21.3');
+		expect(formatChange({ ...metric('win_pct', 'half'), decimals: 3 }, -0.125)).toBe('−.125');
+		expect(formatChange(metric('allowed', 'mean'), 2)).toBe('+2.0');
+		expect(recordText([5, 3, 0])).toBe('5–3');
+		expect(recordText([0, 0, 0])).toBeNull();
 	});
 });

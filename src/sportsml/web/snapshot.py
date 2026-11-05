@@ -365,11 +365,13 @@ class Snapshot:
         return pd.concat([baked, pd.DataFrame(rows)], ignore_index=True)
 
     def _team_map(self, predictor: Predictor) -> dict | None:
-        """The latest ranked season's teams in 3-D, before each of its
+        """The latest ranked season's teams in 2-D, before each of its
         ranking dates: the served model's team embeddings from the games
         played until then, every (team, date) reduced together with UMAP so
-        all dates share one space and a team's path through it is its
-        movement. ``None`` for a model without embeddings or too few teams.
+        all dates share one space and a team's path is its movement. Each
+        team also carries, per date, the metrics the map can be colored by
+        (:meth:`_map_metrics`). ``None`` for a model without embeddings or
+        too few teams.
         """
         table = self.rankings_table
         if not len(table):
@@ -395,26 +397,99 @@ class Snapshot:
             cells += [(team, i) for team in embeddings.index]
         if len({team for team, _ in cells}) < MIN_MAP_TEAMS:
             return None
-        xyz = umap_layout(np.concatenate(vectors), dims=3)
+        xy = umap_layout(np.concatenate(vectors), dims=2)
 
         positions = {team: [None] * len(dates) for team, _ in cells}
-        for (team, i), point in zip(cells, xyz):
+        for (team, i), point in zip(cells, xy):
             positions[team][i] = [round(float(v), 4) for v in point]
+        metrics, values, records = self._map_metrics(season, dates, ratings)
         return {
             "season": season,
             "dates": dates,
             "date_names": [self.date_name(season, d) for d in dates]
             if self.date_names
             else None,
+            "metrics": metrics,
             "teams": [
                 {
                     "team": team,
                     "positions": positions[team],
-                    "ratings": [py(round(v, 2)) for v in ratings.loc[team]],
+                    "values": {key: v.get(team) for key, v in values.items()},
+                    "records": records.get(team),
                 }
                 for team in sorted(positions, key=str)
             ],
         }
+
+    def _map_metrics(self, season, dates: list, ratings: pd.DataFrame):
+        """What the team map can be colored by, each a value per team per
+        date from the season's games before that date: the model's average
+        predicted margin, the actual average margin, win percentage (a tie
+        counts half) and the view's stats per game. Returns the metric
+        definitions, ``{key: {team: [value per date]}}`` and each team's
+        ``[wins, losses, ties]`` per date.
+
+        ``center`` says where the color scale is neutral: ``"zero"`` for
+        margins, ``"half"`` for win percentage, ``"mean"`` (the league
+        average at that date) for stats.
+        """
+        s = self.schema
+        metrics = [
+            {"key": "rating", "label": "Predicted margin", "decimals": 1,
+             "higher_is_better": True, "center": "zero"},
+            {"key": "margin", "label": "Actual margin", "decimals": 1,
+             "higher_is_better": True, "center": "zero"},
+            {"key": "win_pct", "label": "Win %", "decimals": 3,
+             "higher_is_better": True, "center": "half"},
+        ]  # fmt: skip
+        stats = [
+            st for st in self.view.stats if st.key not in {m["key"] for m in metrics}
+        ]
+        metrics += [
+            {"key": st.key, "label": st.label, "decimals": st.decimals,
+             "higher_is_better": st.higher_is_better, "center": "mean"}
+            for st in stats
+        ]  # fmt: skip
+
+        def rounded(series, decimals):
+            return {
+                team: py(round(float(v), decimals + 1)) for team, v in series.items()
+            }
+
+        teams = list(ratings.index)
+        values = {m["key"]: {t: [None] * len(dates) for t in teams} for m in metrics}
+        records = {t: [[0, 0, 0] for _ in dates] for t in teams}
+        current = self.played[self.played[s.season] == season]
+        stat_rows = self.stat_values.loc[current.index]
+        for i, date in enumerate(dates):
+            for team, v in rounded(ratings[date].dropna(), 1).items():
+                values["rating"][team][i] = v
+            before = current[current[s.date] < date]
+            if not len(before):
+                continue
+            by_team = before.groupby(s.team)
+            margin = before[s.target]
+            win = (margin > 0) + 0.5 * (margin == 0)
+            per_team = {
+                "margin": (by_team[s.target].mean(), 1),
+                "win_pct": (win.groupby(before[s.team]).mean(), 3),
+            }
+            stat_means = stat_rows.loc[before.index].groupby(before[s.team]).mean()
+            for st in stats:
+                per_team[st.key] = (stat_means[st.key].dropna(), st.decimals)
+            for key, (series, decimals) in per_team.items():
+                for team, v in rounded(series, decimals).items():
+                    if team in values[key]:
+                        values[key][team][i] = v
+            counts = (
+                pd.DataFrame({"w": margin > 0, "l": margin < 0, "t": margin == 0})
+                .groupby(before[s.team])
+                .sum()
+            )
+            for team, row in counts.iterrows():
+                if team in records:
+                    records[team][i] = [int(row["w"]), int(row["l"]), int(row["t"])]
+        return metrics, values, records
 
     def team_map_view(self) -> dict | None:
         """The team map with team display objects, or ``None``."""

@@ -290,22 +290,35 @@ export interface RankingSeason {
 	playoffs?: Record<string, PlayoffStage>;
 }
 
+/** Something the team map can be colored by. */
+export interface TeamMapMetric {
+	key: string;
+	label: string;
+	decimals: number;
+	higher_is_better: boolean;
+	/** Where the color scale is neutral: 0, 0.5, or the league average at that date. */
+	center: 'zero' | 'half' | 'mean';
+}
+
 /** One team's path through the team map, one entry per date. */
 export interface TeamMapSeries {
 	team: Team;
 	/** UMAP coordinates in [-1, 1] (null: no state that date). Only
 	 * distances mean anything; the axes have no units. */
-	positions: ([number, number, number] | null)[];
-	/** Average predicted margin before each date. */
-	ratings: (number | null)[];
+	positions: ([number, number] | null)[];
+	/** Each metric's value before each date (null: no games yet). */
+	values: Record<string, (number | null)[]>;
+	/** [wins, losses, ties] before each date. */
+	records?: [number, number, number][] | null;
 }
 
-/** The latest season's teams in 3-D before each ranking date: every
+/** The latest season's teams in 2-D before each ranking date: every
  * (team, date) laid out together, so a team's path is its movement. */
 export interface TeamMap {
 	season: number;
 	dates: number[];
 	date_names?: (string | null)[] | null;
+	metrics: TeamMapMetric[];
 	teams: TeamMapSeries[];
 }
 

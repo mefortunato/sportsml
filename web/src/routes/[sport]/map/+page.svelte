@@ -1,7 +1,7 @@
 <script lang="ts">
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
-	import TeamMap3D from '$lib/components/TeamMap3D.svelte';
-	import { dateText, seasonText, signed } from '$lib/format';
+	import TeamMap from '$lib/components/TeamMap.svelte';
+	import { dateText, seasonText } from '$lib/format';
 	import {
 		filterOptions,
 		matchesFilter,
@@ -10,7 +10,7 @@
 		type Pins,
 		type TeamFilter
 	} from '$lib/rankings';
-	import { positionAt, ranksAt } from '$lib/teammap';
+	import { formatChange, formatMetric, positionAt, ranksAt } from '$lib/teammap';
 	import { untrack } from 'svelte';
 
 	let { data } = $props();
@@ -18,6 +18,8 @@
 	const map = $derived(data.teamMap);
 
 	let frame = $state(0);
+	let metricKey = $state('rating');
+	const metric = $derived(map?.metrics.find((m) => m.key === metricKey) ?? map?.metrics[0]);
 	let filter = $state<TeamFilter>({});
 	let pins = $state<Pins>({});
 
@@ -52,25 +54,23 @@
 
 	// who the model sees most differently than at the season's first date
 	const movers = $derived.by(() => {
-		if (!map || shown === 0) return [];
-		const ranks = ranksAt(map.teams, shown);
-		const firstRanks = ranksAt(map.teams, 0);
+		if (!map || !metric || shown === 0) return [];
+		const ranks = ranksAt(map.teams, shown, metric);
+		const values = (t: (typeof map.teams)[number]) => t.values[metric.key] ?? [];
 		return map.teams
 			.filter((t) => isVisible(t.team.team))
 			.map((t) => {
 				const [a, b] = [positionAt(t, 0), positionAt(t, shown)];
-				const moved = a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : null;
-				const [r0, r1] = [t.ratings[0], t.ratings[shown]];
+				const moved = a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : null;
+				// the change since the first date the team had a value
+				const now = values(t)[shown] ?? null;
+				const first = values(t).slice(0, shown).find((v) => v !== null) ?? null;
 				return {
 					t,
 					moved,
-					rating: r1,
-					change: r0 !== null && r1 !== null ? r1 - r0 : null,
-					rank: ranks.get(t.team.team) ?? null,
-					rankChange:
-						firstRanks.has(t.team.team) && ranks.has(t.team.team)
-							? (firstRanks.get(t.team.team) as number) - (ranks.get(t.team.team) as number)
-							: null
+					value: now,
+					change: now !== null && first !== null ? now - first : null,
+					rank: ranks.get(t.team.team) ?? null
 				};
 			})
 			.filter((m) => m.moved !== null)
@@ -85,10 +85,11 @@
 	<h1>Team map</h1>
 	<p class="muted intro">
 		The model keeps an internal picture of each team, a long list of numbers learned from its recent
-		games. This map squeezes those pictures into three dimensions with UMAP, so teams the model
-		sees as alike sit close together. Every {info.date_label.toLowerCase()} of the season is
-		laid out in the same space: press play to watch teams move as their results come in. The axes
-		have no units; only closeness means anything. Color is the team's average predicted margin.
+		games. This map squeezes those pictures into two dimensions with UMAP, so teams the model sees
+		as alike sit close together. Every {info.date_label.toLowerCase()} of the season is laid out in
+		the same space: press play to watch teams move as their results come in. The axes have no units;
+		only closeness means anything. Color the teams by any stat to see what the model's picture lines
+		up with.
 	</p>
 
 	{#if !map}
@@ -129,6 +130,16 @@
 		{/if}
 
 		<div class="card">
+			<div class="controls">
+				<label class="color-by" for="team-map-metric">
+					<span class="muted small">Color by</span>
+					<select id="team-map-metric" bind:value={metricKey}>
+						{#each map.metrics as m (m.key)}
+							<option value={m.key}>{m.label}</option>
+						{/each}
+					</select>
+				</label>
+			</div>
 			<div class="legend">
 				{#each pinned as t (t.team.team)}
 					<button class="chip" onclick={() => toggle(t.team.team)} aria-label="Stop highlighting {t.team.name}">
@@ -139,7 +150,9 @@
 				{/each}
 				<span class="muted small">Highlighted teams trace their path. Click a dot to highlight it (up to {MAX_PINS}).</span>
 			</div>
-			<TeamMap3D {map} {pins} {visible} dateLabel={info.date_label} bind:frame ontoggle={toggle} />
+			{#if metric}
+				<TeamMap {map} {metric} {pins} {visible} dateLabel={info.date_label} bind:frame ontoggle={toggle} />
+			{/if}
 		</div>
 
 		<div class="card section">
@@ -152,7 +165,8 @@
 			{:else}
 				<p class="muted small note">
 					Distance each team has traveled through the map since the first {info.date_label.toLowerCase()}:
-					the teams the model has changed its mind about most.
+					the teams the model has changed its mind about most. Change is in {metric?.label.toLowerCase()}
+					since the team's first games.
 				</p>
 				<div class="scroll">
 					<table class="movers">
@@ -160,9 +174,9 @@
 							<tr>
 								<th>Team</th>
 								<th class="num">Moved</th>
+								<th class="num">{metric?.label}</th>
 								<th class="num">Rank</th>
-								<th class="num">Avg margin</th>
-								<th class="num">Since {dateAt(0)}</th>
+								<th class="num">Change</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -177,17 +191,13 @@
 										</button>
 									</td>
 									<td class="num tabular">{(m.moved as number).toFixed(2)}</td>
-									<td class="num tabular">
-										{m.rank ?? '–'}
-										{#if m.rankChange}
-											<span class:up={m.rankChange > 0} class:down={m.rankChange < 0}
-												>{m.rankChange > 0 ? '▲' : '▼'}{Math.abs(m.rankChange)}</span
-											>
-										{/if}
-									</td>
-									<td class="num tabular">{m.rating === null ? '–' : signed(m.rating)}</td>
-									<td class="num tabular" class:up={(m.change ?? 0) > 0} class:down={(m.change ?? 0) < 0}
-										>{m.change === null ? '–' : signed(m.change)}</td
+									<td class="num tabular">{metric ? formatMetric(metric, m.value) : ''}</td>
+									<td class="num tabular">{m.rank ?? '–'}</td>
+									<td
+										class="num tabular"
+										class:up={metric && !!m.change && m.change > 0 === metric.higher_is_better}
+										class:down={metric && !!m.change && m.change > 0 !== metric.higher_is_better}
+										>{metric ? formatChange(metric, m.change) : '–'}</td
 									>
 								</tr>
 							{/each}
@@ -215,14 +225,34 @@
 	.filters button {
 		cursor: pointer;
 	}
+	.controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		margin-bottom: 8px;
+	}
+	.color-by {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.color-by select {
+		font: inherit;
+		font-size: 0.9rem;
+		padding: 4px 8px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		max-width: 100%;
+	}
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
 		align-items: center;
 		margin-bottom: 8px;
-		/* clear of the camera buttons in the chart's top right */
-		padding-right: 0;
 	}
 	.chip {
 		display: inline-flex;

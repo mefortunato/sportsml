@@ -568,6 +568,10 @@ class Snapshot:
                 for name, column in sources.items()
             }
         summary["seasons"] = sorted(int(x) for x in results[s.season].unique())
+        from ..staking import performance_staking
+
+        if staked := performance_staking(results, s):
+            summary["staking"] = staked
         return py(summary)
 
     def _trust(self) -> dict:

@@ -493,3 +493,59 @@ def format_staking(report: dict) -> str:
                 "Learned win-probability fit by season\n" + fits.to_string(**fmt)
             )
     return "\n\n".join(parts)
+
+
+def edge_grid(edges: np.ndarray, n: int = 12) -> np.ndarray:
+    """``n`` edges from 0 to the 95th percentile, rounded to a readable step."""
+    top = float(np.quantile(edges, 0.95)) if len(edges) else 0.0
+    return np.round(np.linspace(0.0, top, n + 1)[1:], 4)
+
+
+def performance_staking(
+    results: pd.DataFrame,
+    schema: GameSchema,
+    min_train_seasons: int = 3,
+) -> dict:
+    """Edge-weighted staking for the web app's performance page.
+
+    Per market the model could bet: the walk-forward scoring of every
+    default policy (:func:`summarize_stakes`, each season's stakes learned
+    from earlier seasons only), and ``curve``: the learned policy fit on all
+    the bets, as units staked at a ladder of edges (at the median odds), so
+    the page can show how the stake grows with the edge. Markets with too
+    few seasons of bets are left out; ``{}`` if none has enough.
+    """
+    markets = (["spread"] if schema.market_spread else []) + ["moneyline"]
+    markets += ["total"] if "pred_total" in results else []
+    out = {}
+    for market in markets:
+        try:
+            bets = market_bets(results, schema, market)
+            policies = default_policies(market, has_prob(bets))
+            stakes, fits = walk_forward_stakes(bets, policies, min_train_seasons)
+        except (ValueError, KeyError):
+            continue
+        names = [p.name for p in policies]
+        summary = summarize_stakes(stakes, names)
+        learned = LearnedKelly().fit(bets)
+        typical = {"odds": [float(bets["odds"].median())]}
+        if has_prob(bets):
+            typical["prob"] = [float(bets["prob"].median())]
+        grid = edge_grid(bets["edge"].to_numpy())
+        curve = learned.stakes(
+            pd.DataFrame(
+                {"edge": grid, **{k: v * len(grid) for k, v in typical.items()}}
+            )
+        )
+        out[market] = {
+            "seasons": sorted(int(x) for x in stakes["season"].unique()),
+            "n": len(stakes),
+            "policies": summary.reset_index().to_dict("records"),
+            "curve": [
+                {"edge": float(e), "units": float(u)} for e, u in zip(grid, curve)
+            ],
+            "max_units": learned.max_units,
+            "fraction": learned.fraction,
+            "fit": fits.get("learned", {}).get(int(stakes["season"].max()), {}),
+        }
+    return out

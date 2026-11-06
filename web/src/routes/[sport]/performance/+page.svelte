@@ -3,7 +3,7 @@
 	import { num, pct, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import { MARKET_LABELS, unitsLabel } from '$lib/markets';
-	import type { BetRow, Market, Metrics } from '$lib/types';
+	import type { BetRow, Market, Metrics, StakingPolicy } from '$lib/types';
 
 	let { data } = $props();
 	const info = $derived(data.info);
@@ -38,6 +38,20 @@
 	);
 	const edgeLabel = (row: BetRow) =>
 		market_ === 'moneyline' ? `${Math.round(row.min_edge * 100)} pct pts` : `${row.min_edge} pts`;
+	const staking = $derived(perf.staking?.[market_]);
+	const policyLabel = (p: StakingPolicy) =>
+		p.policy === 'flat'
+			? 'Flat: 1 unit on every pick'
+			: p.policy === 'proportional'
+				? 'Proportional to the edge'
+				: p.policy === 'learned'
+					? 'Learned from past edges (Kelly)'
+					: p.policy === 'model_kelly'
+						? "Model's own probability (Kelly)"
+						: `1 unit only if edge over ${p.policy.replace('edge>', '')}`;
+	const edgeUnit = (e: number) =>
+		market_ === 'moneyline' ? `${(e * 100).toFixed(1)} pct pts` : `${e.toFixed(1)} pts`;
+	const signed = (v: number, digits = 1) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(digits)}`;
 	const overCalibration = $derived(
 		perf.over_calibration
 			? [
@@ -301,6 +315,73 @@
 							better.
 						</p>
 					{/if}
+				</div>
+			{/if}
+
+			{#if staking}
+				<div class="card">
+					<h2>Weighting bets by edge</h2>
+					<p class="muted small">
+						Flat betting risks one unit however small the edge. Here the stake grows with the edge,
+						learned only from earlier seasons: each season is staked using a fit on the seasons
+						before it, so nothing is peeked at. Stakes are relative units (average stake 1), so ROI is
+						profit per unit staked and comparable with flat.
+					</p>
+					<div class="scroll">
+						<table>
+							<thead>
+								<tr>
+									<th>Staking</th>
+									<th class="num">Bets</th>
+									<th class="num">Staked</th>
+									<th class="num">Profit</th>
+									<th class="num">ROI</th>
+									<th class="num">vs flat (95% range)</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each staking.policies as p (p.policy)}
+									<tr>
+										<td>{policyLabel(p)}</td>
+										<td class="num tabular">{p.bets}</td>
+										<td class="num tabular">{num(p.staked, 0)}</td>
+										<td class="num tabular {p.profit > 0 ? 'win' : ''}">{signed(p.profit)}</td>
+										<td class="num tabular {p.roi > 0 ? 'win' : ''}">{pct(p.roi, 1)}</td>
+										<td class="num tabular muted">
+											{#if p.policy === 'flat'}—{:else}{signed(p.roi_vs_flat * 100)} pts ({signed(p.roi_vs_flat_ci95_low * 100, 0)} to {signed(p.roi_vs_flat_ci95_high * 100, 0)}){/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					<p class="muted small">
+						Scored on {staking.n} picks from {seasonText(staking.seasons[0], info.split_season)} to
+						{seasonText(staking.seasons[staking.seasons.length - 1], info.split_season)}; the earlier
+						seasons only train the stakes.
+					</p>
+					<details>
+						<summary class="small">How the stake depends on the edge</summary>
+						<p class="muted small">
+							The learned stake fits how often a pick has won at each edge (a logistic regression on
+							the edge and the odds), then bets the Kelly fraction <code>p − (1 − p) / b</code> at the
+							pick's odds, where <code>p</code> is that win chance and <code>b</code> the payout per
+							unit. It is {staking.fraction === 0.5 ? 'half' : `${staking.fraction}×`} Kelly because
+							the fit is noisy, scaled so the average stake is 1 unit, and capped at {staking.max_units}
+							units. Below break-even the stake is 0: that edge has not beaten the odds.
+						</p>
+						<table class="small">
+							<thead><tr><th>Edge</th><th class="num">Units</th></tr></thead>
+							<tbody>
+								{#each staking.curve as c (c.edge)}
+									<tr>
+										<td>{edgeUnit(c.edge)}</td>
+										<td class="num tabular">{c.units === 0 ? 'no bet' : num(c.units, 2)}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</details>
 				</div>
 			{/if}
 

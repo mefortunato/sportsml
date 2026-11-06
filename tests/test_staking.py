@@ -202,3 +202,48 @@ def test_staking_on_walk_forward_results(toy_games, tmp_path):
     assert set(saved) == {"spread", "moneyline", "total"}
     assert 2024 in {int(k) for k in saved["spread"]["fits"]["learned"]}
     assert (tmp_path / "staking_bets.csv").exists()
+
+
+def toy_results(seasons=range(2018, 2024), n=300, seed=1):
+    """Walk-forward results whose spread picks win more often at big edges."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for season in seasons:
+        market = rng.normal(0, 6, n).round(1)
+        model = market + rng.normal(0, 3, n)
+        # the game finishes toward the model by a fraction of its edge
+        margin = (market + 0.4 * (model - market) + rng.normal(0, 12, n)).round()
+        rows.append(
+            pd.DataFrame(
+                {
+                    "season": season, "week": np.arange(n) % 18,
+                    "game_id": [f"{season}-{i}" for i in range(n)],
+                    "pred_margin": model, "market_margin": market, "margin": margin,
+                }
+            )
+        )  # fmt: skip
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_performance_staking_scores_stakes_that_grow_with_the_edge():
+    from sportsml.staking import performance_staking
+
+    out = performance_staking(toy_results(), TOY_SCHEMA)
+    spread = out["spread"]
+    assert spread["seasons"] == [2021, 2022, 2023]
+    by_policy = {p["policy"]: p for p in spread["policies"]}
+    assert {"flat", "proportional", "learned"} <= set(by_policy)
+    # flat stakes one unit per pick
+    assert by_policy["flat"]["staked"] == pytest.approx(spread["n"])
+    curve = spread["curve"]
+    edges = [c["edge"] for c in curve]
+    units = [c["units"] for c in curve]
+    assert edges == sorted(edges) and edges[0] > 0
+    assert units == sorted(units) and units[-1] > units[0]
+    assert max(units) <= spread["max_units"]
+
+
+def test_performance_staking_is_empty_without_enough_seasons():
+    from sportsml.staking import performance_staking
+
+    assert performance_staking(toy_results(seasons=[2022, 2023]), TOY_SCHEMA) == {}

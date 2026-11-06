@@ -237,6 +237,33 @@ export interface BetRow {
 
 export type AtsRow = BetRow;
 
+/** One staking policy scored on the same bets (relative units: the average
+ * stake on its training bets is 1, so ROI is comparable with flat). */
+export interface StakingPolicy {
+	policy: string;
+	bets: number;
+	staked: number;
+	profit: number;
+	roi: number;
+	roi_ci95_low: number;
+	roi_ci95_high: number;
+	roi_vs_flat: number;
+	roi_vs_flat_ci95_low: number;
+	roi_vs_flat_ci95_high: number;
+	max_drawdown: number;
+}
+
+/** Stakes sized from the model's edge, learned walk-forward, for one market. */
+export interface StakingSummary {
+	seasons: number[];
+	n: number;
+	policies: StakingPolicy[];
+	/** Units staked at a ladder of edges (points; win probability for the moneyline). */
+	curve: { edge: number; units: number }[];
+	max_units: number;
+	fraction: number;
+}
+
 export interface TotalsSummary {
 	n: number;
 	rmse: { model: number; market: number };
@@ -267,6 +294,7 @@ export interface Performance {
 	totals?: TotalsSummary;
 	totals_by_season?: Record<string, BetRow>;
 	over_calibration?: { model: CalibrationBin[]; market?: CalibrationBin[] };
+	staking?: Partial<Record<Market, StakingSummary>>;
 }
 
 export interface RankingSeries {

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import TeamMap from '$lib/components/TeamMap.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { useHeaderSearch } from '$lib/headerSearch.svelte';
 	import { dateText, seasonText } from '$lib/format';
 	import {
 		filterOptions,
@@ -53,6 +53,12 @@
 	const highlight = (team: string) => {
 		if (!(team in pins)) toggle(team);
 	};
+	useHeaderSearch(() => ({
+		teams: searchable,
+		onpick: (t) => highlight(t.team),
+		picked: (team) => team in pins,
+		placeholder: 'Find a team to highlight'
+	}));
 	const pinned = $derived(
 		map ? map.teams.filter((t) => t.team.team in pins).sort((a, b) => pins[a.team.team] - pins[b.team.team]) : []
 	);
@@ -136,12 +142,6 @@
 
 		<div class="card">
 			<div class="controls">
-				<TeamSearch
-					teams={searchable}
-					onpick={(t) => highlight(t.team)}
-					picked={(team) => team in pins}
-					placeholder="Find a team to highlight"
-				/>
 				<label class="color-by" for="team-map-metric">
 					<span class="muted small">Color by</span>
 					<select id="team-map-metric" bind:value={metricKey}>
@@ -159,7 +159,7 @@
 						<span class="x" aria-hidden="true">×</span>
 					</button>
 				{/each}
-				<span class="muted small">Highlighted teams trace their path. Search for a team or click a dot to highlight it (up to {MAX_PINS}).</span>
+				<span class="muted small">Highlighted teams trace their path. Search above for a team or click a dot to highlight it (up to {MAX_PINS}).</span>
 			</div>
 			{#if metric}
 				<TeamMap {map} {metric} {pins} {visible} dateLabel={info.date_label} bind:frame ontoggle={toggle} />

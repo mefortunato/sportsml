@@ -2,7 +2,7 @@
 	import { dateText, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { headerSearch, useHeaderSearch } from '$lib/headerSearch.svelte';
 	import { matchesGame } from '$lib/search';
 	import { gameOdds } from '$lib/odds';
 	import { SORT_LABELS, sortGames, sortOptions, type GameSort } from '$lib/upcoming';
@@ -25,7 +25,8 @@
 	// a remembered market this week's games have no lines for falls back to kickoff
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
 	// kept across dates: the reader is following one team through the schedule
-	let query = $state('');
+	useHeaderSearch();
+	const query = $derived(headerSearch.query);
 	const games = $derived(sortGames(upcoming.games, active).filter((g) => matchesGame(g, query)));
 
 	function choose(next: GameSort) {
@@ -80,7 +81,6 @@
 		</div>
 	{:else}
 		<div class="toolbar">
-			<TeamSearch bind:query />
 			{#if options.length > 1}
 				<div class="sort" role="group" aria-label="Order games">
 					<span class="muted small">Sort by</span>

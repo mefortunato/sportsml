@@ -1,7 +1,7 @@
 <script lang="ts">
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { headerSearch, useHeaderSearch } from '$lib/headerSearch.svelte';
 	import { matchesTeam } from '$lib/search';
 	import { dateText, seasonText, signed } from '$lib/format';
 	import {
@@ -70,7 +70,7 @@
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);
 	// narrows the table while typing; picking a suggestion highlights the team
-	let query = $state('');
+	const query = $derived(headerSearch.query);
 	const rows = $derived(
 		season
 			? rankAt(season, shown).filter((r) => isVisible(r.team.team) && matchesTeam(r.team, query))
@@ -82,6 +82,12 @@
 	const highlight = (team: string) => {
 		if (!(team in pins)) toggle(team);
 	};
+	useHeaderSearch(() => ({
+		teams: searchable,
+		onpick: (t) => highlight(t.team),
+		picked: (team) => team in pins,
+		placeholder: 'Find a team to highlight'
+	}));
 	const finalists = $derived(season && hasPlayoffs ? playoffRanks(season, shown) : []);
 	const divisionLabel = (conference: string, division: string) =>
 		division.startsWith(`${conference} `) ? division.slice(conference.length + 1) : division;
@@ -164,13 +170,6 @@
 
 		<div class="card">
 			<div class="legend">
-				<TeamSearch
-					bind:query
-					teams={searchable}
-					onpick={(t) => highlight(t.team)}
-					picked={(team) => team in pins}
-					placeholder="Find a team to highlight"
-				/>
 				{#each pinnedTeams as t (t.team.team)}
 					<button class="chip" onclick={() => toggle(t.team.team)} aria-label="Stop highlighting {t.team.name}">
 						<span class="swatch" style:background="var(--series-{pins[t.team.team]})"></span>
@@ -179,7 +178,7 @@
 					</button>
 				{/each}
 				<span class="muted small">
-					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Search, or click a line
+					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Search above, or click a line
 					or a row, to highlight a team (up to {MAX_PINS}).
 				</span>
 			</div>

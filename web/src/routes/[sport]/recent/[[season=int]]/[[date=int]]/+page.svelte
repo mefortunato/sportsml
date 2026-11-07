@@ -3,7 +3,7 @@
 	import { links } from '$lib/links';
 	import { unitsLabel } from '$lib/markets';
 	import PlayedGameCard from '$lib/components/PlayedGameCard.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { headerSearch, useHeaderSearch } from '$lib/headerSearch.svelte';
 	import { matchesGame } from '$lib/search';
 	import {
 		RECENT_SORT_LABELS,
@@ -37,7 +37,8 @@
 	let sort = $state<RecentSort>('kickoff');
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
 	// kept across dates: the reader is following one team back through the window
-	let query = $state('');
+	useHeaderSearch();
+	const query = $derived(headerSearch.query);
 	const searching = $derived(query.trim() !== '');
 	const games = $derived(sortPlayed(recent.games, active).filter((g) => matchesGame(g, query)));
 	// the window's other dates the searched team played on, newest first
@@ -193,7 +194,6 @@
 
 		{#if recent.games.length}
 			<div class="toolbar">
-				<TeamSearch bind:query />
 				{#if options.length > 1}
 					<div class="sort" role="group" aria-label="Order games">
 						<span class="muted small">Sort by</span>

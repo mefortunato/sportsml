@@ -4,6 +4,8 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { pct, seasonsText } from '$lib/format';
+	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { headerSearch } from '$lib/headerSearch.svelte';
 	import { effectiveTheme, otherTheme, storeTheme, storedTheme, type Theme } from '$lib/theme';
 
 	let { data, children } = $props();
@@ -104,6 +106,17 @@
 				</select>
 			{/if}
 		</div>
+		{#if headerSearch.config}
+			<div class="header-search">
+				<TeamSearch
+					bind:query={headerSearch.query}
+					teams={headerSearch.config.teams}
+					onpick={headerSearch.config.onpick}
+					picked={headerSearch.config.picked}
+					placeholder={headerSearch.config.placeholder}
+				/>
+			</div>
+		{/if}
 		<button
 			class="theme"
 			type="button"
@@ -240,6 +253,17 @@
 	.theme {
 		margin-left: auto;
 	}
+	/* the search sits just left of the theme toggle, pushing both right */
+	.header-search {
+		display: flex;
+		justify-content: flex-end;
+		flex: 0 1 240px;
+		min-width: 0;
+		margin-left: auto;
+	}
+	.header-search + .theme {
+		margin-left: -12px;
+	}
 	.menus {
 		display: none;
 	}
@@ -274,6 +298,26 @@
 		}
 		.theme {
 			margin-left: 0;
+		}
+		/* phones: no room beside the dropdowns, so the search takes a row */
+		.bar:has(.header-search) {
+			flex-wrap: wrap;
+		}
+		/* ...while the dropdowns shrink to keep the toggle on the first row */
+		.bar:has(.header-search) .menus {
+			flex: 1 1 0;
+			justify-content: flex-end;
+		}
+		.header-search {
+			order: 1;
+			flex: 1 0 100%;
+			margin-left: 0;
+		}
+		.header-search + .theme {
+			margin-left: 0;
+		}
+		.header-search :global(.search) {
+			width: 100%;
 		}
 	}
 	main {

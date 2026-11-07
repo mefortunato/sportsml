@@ -1,8 +1,7 @@
 <script lang="ts">
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
-	import { matchesTeam } from '$lib/search';
+	import { onTeamPick } from '$lib/headerSearch.svelte';
 	import { dateText, seasonText, signed } from '$lib/format';
 	import {
 		filterOptions,
@@ -65,23 +64,29 @@
 	$effect(() => {
 		if (!season) return;
 		const top = rankAt(season, season.dates.length - 1).filter((r) => isVisible(r.team.team));
-		untrack(() => (pins = reconcilePins({}, top)));
+		untrack(() => {
+			pins = reconcilePins({}, top);
+			// a team picked while the filter hid it, now shown again
+			if (queued && !(queued in pins)) pins = togglePin(pins, queued);
+			queued = null;
+		});
 	});
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);
-	// narrows the table while typing; picking a suggestion highlights the team
-	let query = $state('');
-	const rows = $derived(
-		season
-			? rankAt(season, shown).filter((r) => isVisible(r.team.team) && matchesTeam(r.team, query))
-			: []
+	const rows = $derived(season ? rankAt(season, shown).filter((r) => isVisible(r.team.team)) : []);
+	// a team picked in the header search: highlighted, after showing every
+	// team again if the filter hides it
+	let queued: string | null = null;
+	onTeamPick(
+		() => info.sport,
+		'Highlight',
+		({ team }) => {
+			if (!isVisible(team)) {
+				queued = team;
+				filter = {};
+			} else if (!(team in pins)) toggle(team);
+		}
 	);
-	const searchable = $derived(
-		season ? season.teams.filter((t) => isVisible(t.team.team)).map((t) => t.team) : []
-	);
-	const highlight = (team: string) => {
-		if (!(team in pins)) toggle(team);
-	};
 	const finalists = $derived(season && hasPlayoffs ? playoffRanks(season, shown) : []);
 	const divisionLabel = (conference: string, division: string) =>
 		division.startsWith(`${conference} `) ? division.slice(conference.length + 1) : division;
@@ -164,13 +169,6 @@
 
 		<div class="card">
 			<div class="legend">
-				<TeamSearch
-					bind:query
-					teams={searchable}
-					onpick={(t) => highlight(t.team)}
-					picked={(team) => team in pins}
-					placeholder="Find a team to highlight"
-				/>
 				{#each pinnedTeams as t (t.team.team)}
 					<button class="chip" onclick={() => toggle(t.team.team)} aria-label="Stop highlighting {t.team.name}">
 						<span class="swatch" style:background="var(--series-{pins[t.team.team]})"></span>
@@ -179,7 +177,7 @@
 					</button>
 				{/each}
 				<span class="muted small">
-					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Search, or click a line
+					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Search above, or click a line
 					or a row, to highlight a team (up to {MAX_PINS}).
 				</span>
 			</div>
@@ -237,9 +235,6 @@
 							</td>
 						</tr>
 					{/each}
-					{#if !rows.length && query.trim()}
-						<tr><td colspan="4" class="muted small">No {filterLabel ? `${filterLabel} ` : ''}team matches “{query.trim()}”.</td></tr>
-					{/if}
 				</tbody>
 			</table>
 		</div>

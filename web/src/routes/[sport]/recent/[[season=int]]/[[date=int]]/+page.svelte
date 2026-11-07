@@ -3,8 +3,9 @@
 	import { links } from '$lib/links';
 	import { unitsLabel } from '$lib/markets';
 	import PlayedGameCard from '$lib/components/PlayedGameCard.svelte';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
-	import { matchesGame } from '$lib/search';
+	import TeamBadge from '$lib/components/TeamBadge.svelte';
+	import { onTeamPick } from '$lib/headerSearch.svelte';
+	import type { Team } from '$lib/types';
 	import {
 		RECENT_SORT_LABELS,
 		sortPlayed,
@@ -36,17 +37,21 @@
 	);
 	let sort = $state<RecentSort>('kickoff');
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
-	// kept across dates: the reader is following one team back through the window
-	let query = $state('');
-	const searching = $derived(query.trim() !== '');
-	const games = $derived(sortPlayed(recent.games, active).filter((g) => matchesGame(g, query)));
-	// the window's other dates the searched team played on, newest first
+	// a team picked in the header search; kept across dates (the reader is
+	// following one team back through the window), not across sports
+	let picked = $state<{ sport: string; team: Team } | null>(null);
+	const shownTeam = $derived(picked?.sport === info.sport ? picked.team : null);
+	onTeamPick(() => info.sport, 'Show games', (team) => (picked = { sport: info.sport, team }));
+	const plays = (g: { home: Team; away: Team }) =>
+		!shownTeam || g.home.team === shownTeam.team || g.away.team === shownTeam.team;
+	const games = $derived(sortPlayed(recent.games, active).filter(plays));
+	// the window's other dates the picked team played on, newest first
 	const elsewhere = $derived(
-		searching
+		shownTeam
 			? recent.dates.filter(
 					(d) =>
 						!(d.season === recent.season && d.date === recent.date) &&
-						recent.all.some((g) => g.season === d.season && g.date === d.date && matchesGame(g, query))
+						recent.all.some((g) => g.season === d.season && g.date === d.date && plays(g))
 				)
 			: []
 	);
@@ -193,7 +198,13 @@
 
 		{#if recent.games.length}
 			<div class="toolbar">
-				<TeamSearch bind:query />
+				{#if shownTeam}
+					<button class="chip" onclick={() => (picked = null)} aria-label="Show every team's games">
+						<TeamBadge team={shownTeam} label="none" size={18} />
+						{shownTeam.name}
+						<span class="x" aria-hidden="true">×</span>
+					</button>
+				{/if}
 				{#if options.length > 1}
 					<div class="sort" role="group" aria-label="Order games">
 						<span class="muted small">Sort by</span>
@@ -208,11 +219,11 @@
 					</div>
 				{/if}
 			</div>
-			{#if searching}
+			{#if shownTeam}
 				<p class="muted small found" aria-live="polite">
 					{games.length
 						? `${games.length} of ${recent.games.length} games`
-						: `No games for “${query.trim()}” this ${info.date_label.toLowerCase()}`}{#if elsewhere.length}
+						: `No games for ${shownTeam.name} this ${info.date_label.toLowerCase()}`}{#if elsewhere.length}
 						{' · also played '}
 						{#each elsewhere as d, i (`${d.season}-${d.date}`)}
 							{i ? ', ' : ''}<a href={links.recent(info.sport, d.season, d.date)}
@@ -324,6 +335,17 @@
 	}
 	.note {
 		margin: 12px 0 16px;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 10px;
+		border-radius: 999px;
+		font-size: 0.85rem;
+	}
+	.chip .x {
+		color: var(--muted);
 	}
 	.toolbar {
 		display: flex;

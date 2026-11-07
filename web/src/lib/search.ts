@@ -49,3 +49,75 @@ export function searchTeams(teams: Team[], query: string, limit = 8): Team[] {
 		.slice(0, limit)
 		.map((m) => m.team);
 }
+
+/** A page the header search can go to. */
+export interface PageResult {
+	sport: string;
+	sportLabel: string;
+	label: string;
+	href: string;
+}
+
+/** A team the header search can show, with the sport it plays in. */
+export interface TeamResult {
+	sport: string;
+	sportLabel: string;
+	team: Team;
+}
+
+export interface SearchResults {
+	pages: PageResult[];
+	teams: TeamResult[];
+}
+
+const words = (text: string) => normalize(text).split(' ').filter(Boolean);
+
+/** Search every sport's pages and teams. A word naming a sport ("nba")
+ * narrows both to it; the other words find pages by their name ("rank") and
+ * teams as `teamScore` does. The current sport's results come first among
+ * equals. */
+export function globalSearch(
+	query: string,
+	pages: PageResult[],
+	teams: TeamResult[],
+	current?: string | null,
+	limits = { pages: 6, teams: 8 }
+): SearchResults {
+	const all = words(query);
+	if (!all.length) return { pages: [], teams: [] };
+	const sportNames = new Map<string, string>();
+	for (const p of [...pages, ...teams]) {
+		sportNames.set(normalize(p.sport), p.sport);
+		sportNames.set(normalize(p.sportLabel), p.sport);
+	}
+	const sports = new Set(all.flatMap((w) => sportNames.get(w) ?? []));
+	const rest = all.filter((w) => !sportNames.has(w));
+	const inSport = (sport: string) => !sports.size || sports.has(sport);
+	const currentFirst = (a: { sport: string }, b: { sport: string }) =>
+		Number(b.sport === current) - Number(a.sport === current);
+
+	const pageWords = (p: PageResult) => words(p.label);
+	const foundPages = pages
+		.filter(
+			(p) =>
+				inSport(p.sport) &&
+				rest.every((w) => pageWords(p).some((word) => word.startsWith(w))) &&
+				(rest.length || sports.size)
+		)
+		.map((p, i) => ({ p, i }))
+		.sort((a, b) => currentFirst(a.p, b.p) || a.i - b.i)
+		.slice(0, limits.pages)
+		.map(({ p }) => p);
+
+	const teamQuery = rest.join(' ');
+	const foundTeams = teamQuery
+		? teams
+				.filter((t) => inSport(t.sport))
+				.map((t, i) => ({ t, i, score: teamScore(t.team, teamQuery) }))
+				.filter((m): m is { t: TeamResult; i: number; score: number } => m.score !== null)
+				.sort((a, b) => b.score - a.score || currentFirst(a.t, b.t) || a.i - b.i)
+				.slice(0, limits.teams)
+				.map(({ t }) => t)
+		: [];
+	return { pages: foundPages, teams: foundTeams };
+}

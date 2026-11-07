@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { links } from '$lib/links';
+	import { links, sportPages, type PageKey } from '$lib/links';
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { pct, seasonsText } from '$lib/format';
-	import TeamSearch from '$lib/components/TeamSearch.svelte';
-	import { headerSearch } from '$lib/headerSearch.svelte';
+	import GlobalSearch from '$lib/components/GlobalSearch.svelte';
 	import { effectiveTheme, otherTheme, storeTheme, storedTheme, type Theme } from '$lib/theme';
 
 	let { data, children } = $props();
@@ -17,23 +16,16 @@
 	const backtest = $derived(info?.backtest);
 
 	// the current sport's pages, shared by the desktop links and the phone dropdown
+	const isActive: Record<PageKey, (route: string) => boolean> = {
+		upcoming: (r) => r.startsWith('/[sport]/[[season'),
+		recent: (r) => r.startsWith('/[sport]/recent'),
+		rankings: (r) => r === '/[sport]/rankings',
+		map: (r) => r === '/[sport]/map',
+		performance: (r) => r === '/[sport]/performance',
+		challenge: (r) => r === '/[sport]/challenge'
+	};
 	const pages = $derived(
-		info
-			? [
-					{ label: 'Upcoming', href: links.upcoming(info.sport), active: route.startsWith('/[sport]/[[season') },
-					{ label: 'Recent', href: links.recent(info.sport), active: route.startsWith('/[sport]/recent') },
-					{ label: 'Rankings', href: links.rankings(info.sport), active: route === '/[sport]/rankings' },
-					...(info.has_team_map
-						? [{ label: 'Team map', href: links.teamMap(info.sport), active: route === '/[sport]/map' }]
-						: []),
-					...(info.challenge_games
-						? [{ label: 'Performance', href: links.performance(info.sport), active: route === '/[sport]/performance' }]
-						: []),
-					...(info.challenge_games && (info.has_spread || info.markets?.length)
-						? [{ label: 'Beat the model', href: links.challenge(info.sport), active: route === '/[sport]/challenge' }]
-						: [])
-				]
-			: []
+		info ? sportPages(info).map((p) => ({ ...p, active: isActive[p.key](route) })) : []
 	);
 	const activePage = $derived(pages.find((p) => p.active));
 
@@ -106,17 +98,9 @@
 				</select>
 			{/if}
 		</div>
-		{#if headerSearch.config}
-			<div class="header-search">
-				<TeamSearch
-					bind:query={headerSearch.query}
-					teams={headerSearch.config.teams}
-					onpick={headerSearch.config.onpick}
-					picked={headerSearch.config.picked}
-					placeholder={headerSearch.config.placeholder}
-				/>
-			</div>
-		{/if}
+		<div class="header-search">
+			<GlobalSearch sports={data.sports} current={info?.sport} />
+		</div>
 		<button
 			class="theme"
 			type="button"
@@ -255,9 +239,8 @@
 	}
 	/* the search sits just left of the theme toggle, pushing both right */
 	.header-search {
-		display: flex;
-		justify-content: flex-end;
-		flex: 0 1 240px;
+		flex: 1 1 140px;
+		max-width: 280px;
 		min-width: 0;
 		margin-left: auto;
 	}
@@ -292,32 +275,27 @@
 		.menus select:first-child {
 			flex: none;
 		}
+		/* phones: no room beside the dropdowns, so the search takes a row
+		   under them, and they shrink to keep the toggle on the first */
 		.bar {
-			flex-wrap: nowrap;
+			flex-wrap: wrap;
 			gap: 8px;
 		}
 		.theme {
 			margin-left: 0;
 		}
-		/* phones: no room beside the dropdowns, so the search takes a row */
-		.bar:has(.header-search) {
-			flex-wrap: wrap;
-		}
-		/* ...while the dropdowns shrink to keep the toggle on the first row */
-		.bar:has(.header-search) .menus {
+		.menus {
 			flex: 1 1 0;
 			justify-content: flex-end;
 		}
 		.header-search {
 			order: 1;
 			flex: 1 0 100%;
+			max-width: none;
 			margin-left: 0;
 		}
 		.header-search + .theme {
 			margin-left: 0;
-		}
-		.header-search :global(.search) {
-			width: 100%;
 		}
 	}
 	main {

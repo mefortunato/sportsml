@@ -2,8 +2,9 @@
 	import { dateText, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
-	import { headerSearch, useHeaderSearch } from '$lib/headerSearch.svelte';
-	import { matchesGame } from '$lib/search';
+	import TeamBadge from '$lib/components/TeamBadge.svelte';
+	import { onTeamPick } from '$lib/headerSearch.svelte';
+	import type { Team } from '$lib/types';
 	import { gameOdds } from '$lib/odds';
 	import { SORT_LABELS, sortGames, sortOptions, type GameSort } from '$lib/upcoming';
 
@@ -24,10 +25,16 @@
 	const options = $derived(sortOptions(upcoming.games));
 	// a remembered market this week's games have no lines for falls back to kickoff
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
-	// kept across dates: the reader is following one team through the schedule
-	useHeaderSearch();
-	const query = $derived(headerSearch.query);
-	const games = $derived(sortGames(upcoming.games, active).filter((g) => matchesGame(g, query)));
+	// a team picked in the header search; kept across dates (the reader is
+	// following one team through the schedule), not across sports
+	let picked = $state<{ sport: string; team: Team } | null>(null);
+	const shownTeam = $derived(picked?.sport === info.sport ? picked.team : null);
+	onTeamPick(() => info.sport, 'Show games', (team) => (picked = { sport: info.sport, team }));
+	const games = $derived(
+		sortGames(upcoming.games, active).filter(
+			(g) => !shownTeam || g.home.team === shownTeam.team || g.away.team === shownTeam.team
+		)
+	);
 
 	function choose(next: GameSort) {
 		sort = next;
@@ -80,30 +87,39 @@
 			</p>
 		</div>
 	{:else}
-		<div class="toolbar">
-			{#if options.length > 1}
-				<div class="sort" role="group" aria-label="Order games">
-					<span class="muted small">Sort by</span>
-					{#each options as option (option)}
-						<button
-							class="pill"
-							class:accent={active === option}
-							aria-pressed={active === option}
-							onclick={() => choose(option)}>{SORT_LABELS[option]}</button
-						>
-					{/each}
-					{#if active !== 'kickoff'}
-						<span class="muted small">biggest disagreement with the market first</span>
-					{/if}
-				</div>
-			{/if}
-		</div>
-		{#if query.trim()}
+		{#if shownTeam || options.length > 1}
+			<div class="toolbar">
+				{#if shownTeam}
+					<button class="chip" onclick={() => (picked = null)} aria-label="Show every team's games">
+						<TeamBadge team={shownTeam} label="none" size={18} />
+						{shownTeam.name}
+						<span class="x" aria-hidden="true">×</span>
+					</button>
+				{/if}
+				{#if options.length > 1}
+					<div class="sort" role="group" aria-label="Order games">
+						<span class="muted small">Sort by</span>
+						{#each options as option (option)}
+							<button
+								class="pill"
+								class:accent={active === option}
+								aria-pressed={active === option}
+								onclick={() => choose(option)}>{SORT_LABELS[option]}</button
+							>
+						{/each}
+						{#if active !== 'kickoff'}
+							<span class="muted small">biggest disagreement with the market first</span>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
+		{#if shownTeam}
 			<p class="muted small found" aria-live="polite">
 				{#if games.length}
 					{games.length} of {upcoming.games.length} games
 				{:else}
-					No games for “{query.trim()}” this {info.date_label.toLowerCase()}{upcoming.dates.length > 1
+					No games for {shownTeam.name} this {info.date_label.toLowerCase()}{upcoming.dates.length > 1
 						? '. Try another one above.'
 						: '.'}
 				{/if}
@@ -164,6 +180,17 @@
 	}
 	.dates a:hover {
 		text-decoration: none;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 10px;
+		border-radius: 999px;
+		font-size: 0.85rem;
+	}
+	.chip .x {
+		color: var(--muted);
 	}
 	.toolbar {
 		display: flex;

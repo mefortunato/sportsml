@@ -1,7 +1,7 @@
 <script lang="ts">
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import TeamMap from '$lib/components/TeamMap.svelte';
-	import { useHeaderSearch } from '$lib/headerSearch.svelte';
+	import { onTeamPick } from '$lib/headerSearch.svelte';
 	import { dateText, seasonText } from '$lib/format';
 	import {
 		filterOptions,
@@ -46,19 +46,27 @@
 	$effect(() => {
 		if (!map) return;
 		const top = [...ranksAt(map.teams, last).keys()].filter(isVisible).slice(0, MAX_PINS);
-		untrack(() => (pins = Object.fromEntries(top.map((team, i) => [team, i + 1]))));
+		untrack(() => {
+			pins = Object.fromEntries(top.map((team, i) => [team, i + 1]));
+			// a team picked while the filter hid it, now shown again
+			if (queued && !(queued in pins)) pins = togglePin(pins, queued);
+			queued = null;
+		});
 	});
 	const toggle = (team: string) => (pins = togglePin(pins, team));
-	const searchable = $derived(map ? map.teams.filter((t) => isVisible(t.team.team)).map((t) => t.team) : []);
-	const highlight = (team: string) => {
-		if (!(team in pins)) toggle(team);
-	};
-	useHeaderSearch(() => ({
-		teams: searchable,
-		onpick: (t) => highlight(t.team),
-		picked: (team) => team in pins,
-		placeholder: 'Find a team to highlight'
-	}));
+	// a team picked in the header search: highlighted, after showing every
+	// team again if the filter hides it
+	let queued: string | null = null;
+	onTeamPick(
+		() => info.sport,
+		'Highlight',
+		({ team }) => {
+			if (!isVisible(team)) {
+				queued = team;
+				filter = {};
+			} else if (!(team in pins)) toggle(team);
+		}
+	);
 	const pinned = $derived(
 		map ? map.teams.filter((t) => t.team.team in pins).sort((a, b) => pins[a.team.team] - pins[b.team.team]) : []
 	);

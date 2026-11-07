@@ -3,6 +3,8 @@
 	import { links } from '$lib/links';
 	import { unitsLabel } from '$lib/markets';
 	import PlayedGameCard from '$lib/components/PlayedGameCard.svelte';
+	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { matchesGame } from '$lib/search';
 	import {
 		RECENT_SORT_LABELS,
 		sortPlayed,
@@ -34,7 +36,20 @@
 	);
 	let sort = $state<RecentSort>('kickoff');
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
-	const games = $derived(sortPlayed(recent.games, active));
+	// kept across dates: the reader is following one team back through the window
+	let query = $state('');
+	const searching = $derived(query.trim() !== '');
+	const games = $derived(sortPlayed(recent.games, active).filter((g) => matchesGame(g, query)));
+	// the window's other dates the searched team played on, newest first
+	const elsewhere = $derived(
+		searching
+			? recent.dates.filter(
+					(d) =>
+						!(d.season === recent.season && d.date === recent.date) &&
+						recent.all.some((g) => g.season === d.season && g.date === d.date && matchesGame(g, query))
+				)
+			: []
+	);
 
 	const record = (r: MarketRecord) => `${r.wins}-${r.losses}${r.pushes ? `-${r.pushes}` : ''}`;
 	const rate = (r: MarketRecord) =>
@@ -177,18 +192,35 @@
 		</p>
 
 		{#if recent.games.length}
-			{#if options.length > 1}
-				<div class="sort" role="group" aria-label="Order games">
-					<span class="muted small">Sort by</span>
-					{#each options as option (option)}
-						<button
-							class="pill"
-							class:accent={active === option}
-							aria-pressed={active === option}
-							onclick={() => (sort = option)}>{RECENT_SORT_LABELS[option]}</button
-						>
-					{/each}
-				</div>
+			<div class="toolbar">
+				<TeamSearch bind:query />
+				{#if options.length > 1}
+					<div class="sort" role="group" aria-label="Order games">
+						<span class="muted small">Sort by</span>
+						{#each options as option (option)}
+							<button
+								class="pill"
+								class:accent={active === option}
+								aria-pressed={active === option}
+								onclick={() => (sort = option)}>{RECENT_SORT_LABELS[option]}</button
+							>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			{#if searching}
+				<p class="muted small found" aria-live="polite">
+					{games.length
+						? `${games.length} of ${recent.games.length} games`
+						: `No games for “${query.trim()}” this ${info.date_label.toLowerCase()}`}{#if elsewhere.length}
+						{' · also played '}
+						{#each elsewhere as d, i (`${d.season}-${d.date}`)}
+							{i ? ', ' : ''}<a href={links.recent(info.sport, d.season, d.date)}
+								>{dateText(info.date_label, d.date, d.name)}</a
+							>
+						{/each}
+					{/if}
+				</p>
 			{/if}
 			<div class="games">
 				{#each games as game (game.game_id)}
@@ -293,12 +325,21 @@
 	.note {
 		margin: 12px 0 16px;
 	}
+	.toolbar {
+		display: flex;
+		align-items: center;
+		gap: 8px 16px;
+		flex-wrap: wrap;
+		margin-bottom: 16px;
+	}
 	.sort {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		flex-wrap: wrap;
-		margin-bottom: 16px;
+	}
+	.found {
+		margin: -8px 0 16px;
 	}
 	.games {
 		display: grid;

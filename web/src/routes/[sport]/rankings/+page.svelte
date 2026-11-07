@@ -1,6 +1,8 @@
 <script lang="ts">
 	import RankingsChart from '$lib/components/RankingsChart.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
+	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { matchesTeam } from '$lib/search';
 	import { dateText, seasonText, signed } from '$lib/format';
 	import {
 		filterOptions,
@@ -67,7 +69,19 @@
 	});
 
 	const shown = $derived(season ? (index ?? season.dates.length - 1) : 0);
-	const rows = $derived(season ? rankAt(season, shown).filter((r) => isVisible(r.team.team)) : []);
+	// narrows the table while typing; picking a suggestion highlights the team
+	let query = $state('');
+	const rows = $derived(
+		season
+			? rankAt(season, shown).filter((r) => isVisible(r.team.team) && matchesTeam(r.team, query))
+			: []
+	);
+	const searchable = $derived(
+		season ? season.teams.filter((t) => isVisible(t.team.team)).map((t) => t.team) : []
+	);
+	const highlight = (team: string) => {
+		if (!(team in pins)) toggle(team);
+	};
 	const finalists = $derived(season && hasPlayoffs ? playoffRanks(season, shown) : []);
 	const divisionLabel = (conference: string, division: string) =>
 		division.startsWith(`${conference} `) ? division.slice(conference.length + 1) : division;
@@ -150,6 +164,13 @@
 
 		<div class="card">
 			<div class="legend">
+				<TeamSearch
+					bind:query
+					teams={searchable}
+					onpick={(t) => highlight(t.team)}
+					picked={(team) => team in pins}
+					placeholder="Find a team to highlight"
+				/>
 				{#each pinnedTeams as t (t.team.team)}
 					<button class="chip" onclick={() => toggle(t.team.team)} aria-label="Stop highlighting {t.team.name}">
 						<span class="swatch" style:background="var(--series-{pins[t.team.team]})"></span>
@@ -158,8 +179,8 @@
 					</button>
 				{/each}
 				<span class="muted small">
-					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Click a line or a row
-					to highlight it (up to {MAX_PINS}).
+					Gray lines are the other {filterLabel ? `${filterLabel} ` : ''}teams. Search, or click a line
+					or a row, to highlight a team (up to {MAX_PINS}).
 				</span>
 			</div>
 			<RankingsChart {season} {visible} dateLabel={info.date_label} {pins} bind:index ontoggle={toggle} />
@@ -216,6 +237,9 @@
 							</td>
 						</tr>
 					{/each}
+					{#if !rows.length && query.trim()}
+						<tr><td colspan="4" class="muted small">No {filterLabel ? `${filterLabel} ` : ''}team matches “{query.trim()}”.</td></tr>
+					{/if}
 				</tbody>
 			</table>
 		</div>

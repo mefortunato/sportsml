@@ -2,6 +2,8 @@
 	import { dateText, seasonText } from '$lib/format';
 	import { links } from '$lib/links';
 	import GameCard from '$lib/components/GameCard.svelte';
+	import TeamSearch from '$lib/components/TeamSearch.svelte';
+	import { matchesGame } from '$lib/search';
 	import { gameOdds } from '$lib/odds';
 	import { SORT_LABELS, sortGames, sortOptions, type GameSort } from '$lib/upcoming';
 
@@ -22,7 +24,9 @@
 	const options = $derived(sortOptions(upcoming.games));
 	// a remembered market this week's games have no lines for falls back to kickoff
 	const active = $derived(options.includes(sort) ? sort : 'kickoff');
-	const games = $derived(sortGames(upcoming.games, active));
+	// kept across dates: the reader is following one team through the schedule
+	let query = $state('');
+	const games = $derived(sortGames(upcoming.games, active).filter((g) => matchesGame(g, query)));
 
 	function choose(next: GameSort) {
 		sort = next;
@@ -75,21 +79,35 @@
 			</p>
 		</div>
 	{:else}
-		{#if options.length > 1}
-			<div class="sort" role="group" aria-label="Order games">
-				<span class="muted small">Sort by</span>
-				{#each options as option (option)}
-					<button
-						class="pill"
-						class:accent={active === option}
-						aria-pressed={active === option}
-						onclick={() => choose(option)}>{SORT_LABELS[option]}</button
-					>
-				{/each}
-				{#if active !== 'kickoff'}
-					<span class="muted small">biggest disagreement with the market first</span>
+		<div class="toolbar">
+			<TeamSearch bind:query />
+			{#if options.length > 1}
+				<div class="sort" role="group" aria-label="Order games">
+					<span class="muted small">Sort by</span>
+					{#each options as option (option)}
+						<button
+							class="pill"
+							class:accent={active === option}
+							aria-pressed={active === option}
+							onclick={() => choose(option)}>{SORT_LABELS[option]}</button
+						>
+					{/each}
+					{#if active !== 'kickoff'}
+						<span class="muted small">biggest disagreement with the market first</span>
+					{/if}
+				</div>
+			{/if}
+		</div>
+		{#if query.trim()}
+			<p class="muted small found" aria-live="polite">
+				{#if games.length}
+					{games.length} of {upcoming.games.length} games
+				{:else}
+					No games for “{query.trim()}” this {info.date_label.toLowerCase()}{upcoming.dates.length > 1
+						? '. Try another one above.'
+						: '.'}
 				{/if}
-			</div>
+			</p>
 		{/if}
 		<div class="games">
 			{#each games as game (game.game_id)}
@@ -147,12 +165,21 @@
 	.dates a:hover {
 		text-decoration: none;
 	}
+	.toolbar {
+		display: flex;
+		align-items: center;
+		gap: 8px 16px;
+		flex-wrap: wrap;
+		margin-bottom: 16px;
+	}
 	.sort {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		flex-wrap: wrap;
-		margin-bottom: 16px;
+	}
+	.found {
+		margin: -8px 0 16px;
 	}
 	.games {
 		display: grid;

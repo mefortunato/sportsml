@@ -266,6 +266,9 @@ jobs:
 
   deploy:
     needs: build
+    # explicit: the default success() also checks build's own needs, so a
+    # skipped export (a frontend-only push) would skip the deploy too
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

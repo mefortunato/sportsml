@@ -1,6 +1,8 @@
 import dataclasses
 import json
+import pathlib
 import random
+import re
 import shutil
 import types
 
@@ -904,3 +906,21 @@ def test_ranking_every_thins_backtest_and_current_rankings(
     )
     upcoming_week = games.loc[games["margin"].isna(), "week"].min()
     assert current["dates"] == [*ranking_dates(weeks[2024], 5), upcoming_week]
+
+
+def test_a_frontend_only_deploy_downloads_every_exported_file(webdata, tmp_path):
+    """The Site workflow's frontend-only path re-downloads the deployed data
+    from a fixed list of files; one the export writes but the list lacks
+    disappears from the site on the next frontend-only deploy."""
+    export(data_dir=str(webdata), output_dir=str(tmp_path))
+    sport = tmp_path / "data" / "toy"
+    written = {
+        p.relative_to(sport).as_posix()
+        for p in sport.rglob("*.json")
+        if p.parent.name != "challenge"  # the shards come from the index
+    }
+    workflow = (
+        pathlib.Path(__file__).parents[1] / ".github" / "workflows" / "site.yml"
+    ).read_text()
+    listed = set(re.findall(r"[\w/]+\.json", workflow))
+    assert written - {"meta.json"} <= listed, written - listed

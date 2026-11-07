@@ -123,8 +123,11 @@ jobs:
             get "$sport/challenge/index.json"
             shards="$(jq -er '[.data.games[][1]] | unique | .[] | "challenge/\(.).json"' \
               "$out/$sport/challenge/index.json")"
+            # every file the export writes for a sport (tests/test_web.py checks
+            # this list against the exporter): a missing one would be absent
+            # from the deployed site, and its page with it
             for file in upcoming.json games.json recent.json recent_games.json performance.json \
-              rankings.json $shards; do
+              rankings.json map.json $shards; do
               printf 'url = "%s"\noutput = "%s"\n' \
                 "$BASE/$sport/$file" "$out/$sport/$file" >> "$list"
             done
